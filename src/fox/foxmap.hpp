@@ -1,10 +1,10 @@
 /*---------------------------------------------------------------------------=\
 |                                                                             |
-| file:      queen.h                                                          |
-| author:    Fox                                                              |
-| purpose:   queen mapper header                                              |
+| file:      foxmap.h                                                         |
+| author:    longfei                                                          |
+| purpose:   foxmap                                                           |
 | version:   0.1                                                              |
-| date:      2022-5-26                                                        |
+| date:      2025-3-23                                                        |
 \---------------------------------------------------------------------------=*/
 
 #pragma once
@@ -12,6 +12,8 @@
 #include <cassert>
 #include <vector>
 #include <cstdint>
+
+#include "utility.hpp"
 
 #include "base/abc/abc.h"
 
@@ -36,6 +38,8 @@ using truth = uint64_t;
 enum class OptTarget { Timing,  Area, Routability };
 enum class Algorithm { Praetor, Flow, Exact       };
 
+#define GetSign(id) (1u << id % (sizeof(Sign) - 1))
+
 //==----------------------------------------------------------------==//
 //                              Param class                           //
 //==----------------------------------------------------------------==//
@@ -43,14 +47,17 @@ class Param
 {
 public:
     /* the parammeters for technology mapping */
-    OptTarget       tar             = OptTarget::Timing;
-    Algorithm       algo            = Algorithm::Praetor;
-    bool            verbose         = false;  // print log
-    uint32_t        required        = 0;      // the target delay of mapped LUT netlist
-    uint32_t        lut_size        = 6;      // max LUT input size
-    uint32_t        flow__pass_num  = 4;      // the number of pass performing with effective area heuristic method
-    uint32_t        exact_pass_num  = 4;      // the number of pass performing with area-flow      heuristic method
-    uint32_t        praet_pass_num  = 4;      // the number of pass performing with effective area heuristic method
+    OptTarget       tar               = OptTarget::Timing;
+    Algorithm       algo              = Algorithm::Praetor;
+
+    bool            verbose           = false;  // print log
+    bool            always_enum_cut   = false;  // always enumerates cuts during each mapping pass
+
+    std::size_t     required          = 0;      // the target delay of mapped LUT netlist
+    std::size_t     lut_size          = 6;      // max LUT input size
+    std::size_t     praetor_pass_num  = 4;      // the number of pass performing with effective area heuristic method
+    std::size_t     flow_pass_num     = 4;      // the number of pass performing with area-flow      heuristic method
+    std::size_t     exact_pass_num    = 4;      // the number of pass performing with exact area     heuristic method
 
     bool AreaDriven()  const { return tar == OptTarget::Area; }
     bool RouteDriven() const { return tar == OptTarget::Area; }
@@ -59,9 +66,8 @@ public:
 //==----------------------------------------------------------------==//
 //                              Cut class                             //
 //==----------------------------------------------------------------==//
-class Cut
+struct Cut
 {
-public:
     truth      tt    {0};
     Area       area  {0};
     Edge       edge  {0};
@@ -71,7 +77,21 @@ public:
 
     uint32_t   leaves[kMaxLutSize] {0};  // cut leafs
 
+    Cut() : delay(0), size(0) {}
+
+    Cut(Area area, Edge edge, Sign sign, uint32_t size, uint32_t root)
+    : area(area), edge(edge), sign(sign), size(size)
+    {
+        leaves[0] = root;
+    }
+
+    ~Cut() = default;
+    
+    Cut(const Cut &cut) = default;
+    Cut(Cut &&cut) noexcept = default;
+    
     void ComputeCost(Algorithm algo);
+
 };
 
 //==----------------------------------------------------------------==//
@@ -119,12 +139,17 @@ public:
     ~Node()
     {
         if (_cut_set)
-            delete _cut_set;
+            delete[] _cut_set;
     }
 
     static Node *&GetNodeSet()
     {
         return Node::_const_1;
+    }
+
+    static Node *GetNode(int id)
+    {
+        return Node::_const_1 + id;
     }
     
     /**
@@ -141,7 +166,37 @@ public:
     bool IsPo()  const { return _type == NodeType::PO;  }
     bool IsAnd() const { return _type == NodeType::And; }
 
-    void CutEnum(FoxMap &mapper);
+    uint32_t &GetRefNum()
+    {
+        return _ref;
+    }
+
+    void CutEnum(FoxMap *mapper);
+};
+
+
+//==----------------------------------------------------------------==//
+//                           Pruner class                             //
+//==----------------------------------------------------------------==//
+class Pruner
+{
+
+
+public:
+
+    /**
+     * @brief pop the stored cuts into cut_set
+     * 
+     * @param cut_set 
+     */
+    void pop(Cut *&cut_set);
+
+    /**
+     * @brief push a cut into storage
+     * 
+     * @param cut 
+     */
+    void push(Cut *cut);
 };
 
 //==----------------------------------------------------------------==//
@@ -166,16 +221,22 @@ class Solution
 class FoxMap
 {
     /* technology mapping property and flags */
-    Param     *_map_param {nullptr};   // parammeters of mapping algo
-    Node      *_nodes     {nullptr};   // all nodes
-    Abc_Ntk_t *_pAig      {nullptr};   // AIG for mapping
+    Param               *_map_param     {nullptr};   // parammeters of mapping algo
+    Node                *_nodes         {nullptr};   // all nodes
+    uint32_t             _num_nodes      {0};
+    Abc_Ntk_t           *_pAig          {nullptr};   // AIG for mapping
 
-    std::vector<Node *> _prim_inputs;
-    std::vector<Node *> _prim_outputs;
+    fox::LutLib          _lut_lib;
+    std::vector<Node *>  _prim_inputs;
+    std::vector<Node *>  _prim_outputs;
 
-    double   _cpu__time  {0};
-    double   _wall_time  {0};
-    uint32_t _num_nodes  {0};
+    double               _cpu_time       {0};
+    double               _wall_time      {0};
+    float                _lut_cost[10]   {1.0};
+
+    friend class Node;
+    friend class Cut;
+    friend class Solution;
 
 public:
     FoxMap(Param *param, Abc_Ntk_t *pAig) : _map_param(param), _pAig(pAig), _num_nodes(_pAig->vObjs->nSize + 1) {}
@@ -189,9 +250,15 @@ public:
 
 private:
 
-    std::size_t NumPi()  const { return _prim_inputs.size(); }
-    std::size_t NumPo()  const { return _prim_inputs.size(); }
-    std::size_t NumAnd() const { return _num_nodes - NumPi() - NumPo() - 2; }
+    std::size_t NumPi()  const  { return _prim_inputs.size(); }
+    std::size_t NumPo()  const  { return _prim_inputs.size(); }
+    std::size_t NumAnd() const  { return _num_nodes - NumPi() - NumPo() - 2; }
+
+    Param *GetParam()    const  { return _map_param; }
+
+    Area GetLutCost(int size) const  { return _lut_lib.GetLutCost(size); }
+
+    
 
     /**
      * @brief Perform a LUT mapping pass

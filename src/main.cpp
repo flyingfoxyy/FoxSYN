@@ -40,7 +40,7 @@ int Foxmap_Command(Abc_Frame_t *pAbc, int argc, char **argv)
             param.lut_size = *(argv[++i] + 1) - '0';
             if (param.lut_size > 6 || param.lut_size < 2)
             {
-                std::cout << "FoxMap: invalid LUT size " << param.lut_size << "\n";
+                printf("foxmap: invalid LUT size %d\n", param.lut_size);
                 return 1;
             }
             break;
@@ -57,13 +57,13 @@ int Foxmap_Command(Abc_Frame_t *pAbc, int argc, char **argv)
 
     if (!pAig)
     {
-        std::cout << "foxmap: current network is empty\n";
+        printf("foxmap: current network is empty\n");
         return 1;
     }
 
     if (!Abc_NtkIsStrash(pAig))
     {
-        std::cout << "foxmap: current network is not an AIG\n";
+        printf("foxmap: current network is not an AIG\n");
         return 1;
     }
 
@@ -71,7 +71,7 @@ int Foxmap_Command(Abc_Frame_t *pAbc, int argc, char **argv)
 
     if (!pMapped)
     {
-        std::cout << "foxmap: technology mapping failed\n";
+        printf("foxmap: technology mapping failed\n");
         return 1;
     }
 
@@ -82,10 +82,11 @@ int Foxmap_Command(Abc_Frame_t *pAbc, int argc, char **argv)
 usage:
     Abc_Print(-2, "usage: foxmap [-kEFA num] [-av]\n");
     Abc_Print(-2, "\t           performs FPGA technology mapping of the network\n");
-    Abc_Print(-2, "\t-k num   : the number of LUT inputs (2 < num < %d) [default = %s]\n", kMaxLutSize + 1, kMaxLutSize);
-    Abc_Print(-2, "\t-E num   : the number of effective area iterations (num >= 0) [default = %d]\n", param.praet_pass_num);
-    Abc_Print(-2, "\t-F num   : the number of area flow iterations (num >= 0) [default = %d]\n", param.flow__pass_num);
+    Abc_Print(-2, "\t-k num   : the number of LUT inputs (2 < num < %d) [default = %d]\n", kMaxLutSize + 1, kMaxLutSize);
+    Abc_Print(-2, "\t-E num   : the number of effective area iterations (num >= 0) [default = %d]\n", param.praetor_pass_num);
+    Abc_Print(-2, "\t-F num   : the number of area flow iterations (num >= 0) [default = %d]\n", param.flow_pass_num);
     Abc_Print(-2, "\t-A num   : the number of exact area recovery iterations (num >= 0) [default = %d]\n", param.exact_pass_num);
+    Abc_Print(-2, "\t-a       : toggles area-oriented technology mapping\n");
     Abc_Print(-2, "\t-v       : toggles verbose log print\n");
     Abc_Print(-2, "\n");
     Abc_Print(-2, "\t         This command is contribute by Longfei Fan [changqingfans@gmail.com]");

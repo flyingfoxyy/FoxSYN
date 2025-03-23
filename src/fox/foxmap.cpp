@@ -1,6 +1,6 @@
 /*============================================================================\
 |                                                                             |
-| file:      foxmap.cpp                                                        |
+| file:      foxmap.cpp                                                       |
 | author:    Longfei                                                          |
 | purpose:   implementation of foxmap                                         |
 | version:   0.1                                                              |
@@ -59,25 +59,39 @@ Node::Node(Abc_Obj_t *abc_node)
 }
 
 void
+Node::CutEnum(FoxMap *mapper)
+{
+    Algorithm alo = mapper->_map_param->algo;
+
+    if (IsPi())
+    {
+        _cut_set = new Cut[1];
+        
+
+    }
+}
+
+void
 FoxMap::Initialize()
 {
     _prim_inputs.reserve(Abc_NtkPiNum(_pAig));
     _prim_outputs.reserve(Abc_NtkPoNum(_pAig));
 
     // creat mapping graph
-    Node *&nodes = Node::GetNodeSet();
-    nodes = new Node[_pAig->vObjs->nSize + 1];
+    _num_nodes = _pAig->vObjs->nSize + 1;
+    Node::_const_1 = new Node[_num_nodes];
 
     for (int i = 0; i != _pAig->vObjs->nSize; ++i)
     {
         Abc_Obj_t *pObj = Abc_NtkObj(_pAig, i);
-        Node *node = nodes + i;
+        Node *node = Node::_const_1 + i;
         if (pObj) {
             pObj->pTemp = static_cast<void *>(new (node)Node(pObj));
             if (node->IsPi())
                 _prim_inputs.push_back(node);
             else if (node->IsPo())
                 _prim_outputs.push_back(node);
+            node->GetRefNum() = Abc_ObjFanoutNum(pObj);
         }
     }
     Abc_NtkCleanCopy(_pAig);
@@ -92,9 +106,13 @@ FoxMap::MapToLut()
     if (_map_param->verbose)
         printf("mapping graph -- Pi %ld, Po %ld, And %ld\n", NumPi(), NumPo(), NumAnd());
 
-    // cut enumeration
+    // set up LUT library
+
+
+    // iterative cut selection
     
-    
+
+    // mapping solution 
     
     return nullptr;
 }
@@ -104,7 +122,7 @@ FoxMap::MapToLut()
 Abc_Ntk_t *
 PerformFoxMap(Abc_Ntk_t *pAig, foxmap::Param *param)
 {
-    foxmap::Node::GetNodeSet() = nullptr;
+    foxmap::Node::_const_1 = nullptr;
     foxmap::FoxMap mapper(param, pAig);
 
     return mapper.MapToLut();
