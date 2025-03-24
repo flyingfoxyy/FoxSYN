@@ -32,9 +32,9 @@ class FoxMap;
 
 using Area      = float;
 using Edge      = float;
-using Time     = uint32_t;
+using Time      = uint32_t;
 using Sign      = uint32_t;
-using truth     = uint64_t;
+using word      = uint64_t;
 using CutRanker = std::function<int(Cut *lhs, Cut *rhs)>;
 
 /**
@@ -59,6 +59,8 @@ public:
 
     bool            verbose           = false;  // print log
     bool            always_enum_cut   = false;  // always enumerates cuts during each mapping pass
+    int             ref_est_way       = 0;      // 0 (est = last pass) , 1 (est = (last + a * init) / (1 + a))
+    float           alpha             = 2.5;    //
 
     std::size_t     required          = 0;      // the target delay of mapped LUT netlist
     std::size_t     lut_size          = 6;      // max LUT input size
@@ -75,34 +77,38 @@ public:
 //==----------------------------------------------------------------==//
 struct Cut
 {
-    truth      tt    {0};
-    Area       area  {0};
-    Edge       edge  {0};
-    Sign       sign  {0};
-    Time      delay : 28;
-    uint32_t   size  :  4;
+    word   truth {0};   // truth table
+    Area   area  {0};   // effective area / area-flow / exact area
+    Edge   edge  {0};   // edge
+    Sign   sign  {0};   // signature
+    Time   arr   : 28;  // cut root arrival time
+    uint   size  :  4;  // cut-size
 
-    uint32_t   leaves[kMaxLutSize] {0};  // cut leafs
+    uint   leaves[kMaxLutSize] {0};  // cut leafs
 
-    Cut() : delay(0), size(1) {}
-
-    // Cut(Area area, Edge edge, Sign sign, uint32_t size, uint32_t root)
-    // : area(area), edge(edge), sign(sign), size(size)
-    // {
-    //     leaves[0] = root;
-    // }
-
-    ~Cut() = default;
+    Cut() : arr(0), size(1) {}
     
     Cut(const Cut &cut) = default;
     Cut(Cut &&cut) noexcept = default;
 
-    void ComputeCost(Cut *lhs, Cut *rhs, float fanoutl, float fanoutr, FoxMap *mapper);
+    /**
+     * @brief Compute the cost properties
+     * 
+     */
+    void ComputeCost(Cut *lhs, Cut *rhs, float lhs_est_ref, float rhs_est_ref, FoxMap *mapper);
 
-    void ComputeTruth(Cut *lhs, Cut *rhs);
+    /**
+     * @brief Compute cut truth table
+     * 
+     */
+    void ComputeTruth(Cut *lhs, Cut *rhs, int compl0, int compl1);
 
-    bool MergeCut(Cut *lhs, Cut *rhs, int lut_size);
-
+    /**
+     * @brief Merge two sub-cuts to form cut-set
+     * 
+     * @return k-feasible or not
+     */
+    bool MergeCut(Cut *lhs, Cut *rhs, int k);
 };
 
 //==----------------------------------------------------------------==//
@@ -111,7 +117,7 @@ struct Cut
 class Node 
 {
 public:
-    enum class NodeType : uint { Const, PI, PO, And, None };
+    enum class NodeType { Const, PI, PO, And, None };
 
     static thread_local Node *_const_1;
 
@@ -124,8 +130,8 @@ private:
     NodeType  _type     :   4;  // node type
     /* mapping properties */
     uint      _num_cuts :  28;  // node type
-    Time      _arr   {0};     // the arrival  time
-    Time      _req   {0};     // the required time
+    Time      _arr   {0};       // the arrival  time
+    Time      _req   {0};       // the required time
 
     Cut      *_cut_set{nullptr};
 
@@ -206,7 +212,7 @@ private:
 
     mode _mode;
 
-    Area _epsion;
+    Area _epsilon;
     Area _min_area;
 
     CutRanker _ranker;
@@ -236,17 +242,24 @@ public:
 class Solution
 {
 public:
-    FoxMap *mapper {nullptr};
+    FoxMap *mapper;
 
     std::vector<Cut *>     cuts;
     std::vector<uint32_t>  num_lut;
 
-    uint32_t total_lut   {0};
-    uint32_t total_edge  {0};
-    uint32_t total_delay {0};
+    uint sum_lut  {0};
+    uint sum_edge {0};
+    uint max_arr  {0};
+
+    Solution(FoxMap *map) : mapper(map) {}
+
+    ~Solution()
+    {
+        for (Cut *cut : cuts)
+            delete cut;
+    }
 
     bool operator<(const Solution &rhs);
-
 };
 
 //==----------------------------------------------------------------==//
@@ -255,10 +268,10 @@ public:
 class FoxMap
 {
     /* technology mapping property and flags */
-    Param               *_map_param     {nullptr};   // parammeters of mapping algo
-    Node                *_nodes         {nullptr};   // all nodes
-    uint32_t             _num_nodes     {0};
-    Abc_Ntk_t           *_pAig          {nullptr};   // AIG for mapping
+    Param               *_map_param   {nullptr};   // parammeters of mapping algo
+    Node                *_nodes       {nullptr};   // all nodes
+    uint32_t             _num_nodes   {0};
+    Abc_Ntk_t           *_pAig        {nullptr};   // AIG for mapping
 
     std::vector<Node *>  _prim_inputs;
     std::vector<Node *>  _prim_outputs;
@@ -266,12 +279,13 @@ class FoxMap
     std::vector<uint>    _num_refs;
     std::vector<float>   _est_refs;
 
-    double               _cpu_time       {0  };
-    double               _wall_time      {0  };
-    float                _lut_lib[10]    {1.0};
+    double     _cpu_time       {0   };
+    double     _wall_time      {0   };
+    float      _lut_lib[10]    {1.0 };
+    bool       _first_pass     {true};
 
-    Pruner    _pruner;
-    Solution  _best_mapping;
+    Pruner     _pruner;
+    Solution  *_best_mapping;
 
     friend class Node;
     friend class Cut;
@@ -285,6 +299,11 @@ public:
         delete []GetNode(0);
     }
 
+    /**
+     * @brief Map the network into look-up tables
+     * 
+     * @return Abc_Ntk_t* 
+     */
     Abc_Ntk_t *MapToLut();
 
 private:

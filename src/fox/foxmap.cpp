@@ -11,6 +11,8 @@
 
 #include "foxmap.hpp"
 
+#include "misc/util/utilTruth.h"
+
 namespace fox
 {
 namespace foxmap
@@ -27,11 +29,11 @@ Cut::MergeCut(Cut *lhs, Cut *rhs, int lut_size)
     uint *pC   = leaves;
     int i, k, c, s;
     // the case of the largest cut sizes
-    if ( nSize0 == lut_size && nSize1 == lut_size )
+    if (nSize0 == lut_size && nSize1 == lut_size)
     {
-        for ( i = 0; i < nSize0; i++ )
+        for (i = 0; i < nSize0; i++)
         {
-            if ( pC0[i] != pC1[i] )
+            if (pC0[i] != pC1[i])
                 return 0;
             pC[i] = pC0[i];
         }
@@ -40,9 +42,11 @@ Cut::MergeCut(Cut *lhs, Cut *rhs, int lut_size)
     }
     // compare two cuts with different numbers
     i = k = c = s = 0;
-    if ( nSize0 == 0 ) goto FlushCut1;
-    if ( nSize1 == 0 ) goto FlushCut0;
-    while ( 1 )
+    if (nSize0 == 0)
+        goto FlushCut1;
+    if (nSize1 == 0)
+        goto FlushCut0;
+    while (1)
     {
         if (c == lut_size)
             return 0;
@@ -120,6 +124,35 @@ Cut::ComputeCost(Cut *lhs, Cut *rhs, float est_ref_l, float est_ref_r, FoxMap *m
     }
 }
 
+void
+Cut::ComputeTruth(Cut *lhs, Cut *rhs, int compl0, int compl1)
+{
+    auto TtExpand = [](word * pTruth0, int nVars, Cut *sub, Cut *cut) -> void
+    {
+        int i, k;
+        for (i = cut->size - 1, k = sub->size - 1; i >= 0 && k >= 0; i--)
+        {
+            if (cut->leaves[i] > sub->leaves[k])
+                continue;
+            // assert(cut->leaves[i]->id() == sub->leaves[k]->id());
+            if ( k < i )
+                Abc_TtSwapVars(pTruth0, nVars, k, i);
+            k--;
+        }
+        assert( k == -1 );
+    };
+
+    word truth0 = lhs->truth;
+    word truth1 = rhs->truth;
+    TtExpand(&truth0, size, lhs, this);
+    TtExpand(&truth1, size, rhs, this);
+    if (compl0)
+        truth0 = ~truth0;
+    if (compl1)
+        truth1 = ~truth1;
+    truth = truth0 & truth1;
+}
+
 Node::Node(Abc_Obj_t *abc_node)
 {
     if (!abc_node)
@@ -168,11 +201,19 @@ Node::CutEnum(FoxMap *mapper)
     if (!IsPi() && !IsAnd())
         return;
 
+    if (mapper->GetParam()->always_enum_cut && _cut_set)
+    {
+        delete _cut_set;
+        _cut_set = nullptr;
+    }
+
     if (IsPi())
     {
         _cut_set = new Cut[1];
         _cut_set->leaves[0] = GetId();
         _cut_set->sign = GetSign(GetId());
+        if (mapper->GetParam()->algo == Algorithm::Praetor)
+            _cut_set->area = mapper->GetLutCost(1);
         return;
     }
 
@@ -185,7 +226,8 @@ Node::CutEnum(FoxMap *mapper)
     float est_ref1 = mapper->GetEstRef(_fanin1);
 
     const int k = mapper->GetParam()->lut_size;
-    // merge the cuts from fanisns
+
+    // merge the cuts from fanins
     for (int i = 0; i != fanin0->GetCutNum(); ++i)
     {
         Cut *lhs = fanin0->GetCut(i);
@@ -201,20 +243,44 @@ Node::CutEnum(FoxMap *mapper)
             cut->sign = lhs->sign | rhs->sign;
             cut->ComputeCost(lhs, rhs, est_ref0, est_ref1, mapper);
             if (pruner.push(cut))
-                cut->ComputeTruth(lhs, rhs);
+                cut->ComputeTruth(lhs, rhs, _compl0, _compl1);
         }
     }
 
     // pop the cuts
     _num_cuts = pruner.pop(_cut_set);
     
-    // create trivival cut
+    // create trivial cut
     Cut *trival_cut = _cut_set + _num_cuts - 1;
     if (mapper->GetParam()->algo == Algorithm::Praetor)
         trival_cut->area = GetCut(0)->area + mapper->GetLutCost(GetCut(0)->size);
     else
         trival_cut->area = GetCut(0)->area;
-    trival_cut->edge = GetCut(0)->edge; // ? using minimal edge for propagation ?
+    trival_cut->edge = GetCut(0)->edge;
+}
+
+Cut *
+Pruner::GetCandidate()
+{
+
+}
+
+int 
+Pruner::pop(Cut *&cut_set)
+{
+
+}
+
+bool
+Pruner::push(Cut *cut)
+{
+
+}
+
+bool
+Solution::operator<(const Solution& rhs)
+{
+    return true;
 }
 
 void
@@ -255,7 +321,53 @@ FoxMap::Initialize()
 Solution *
 FoxMap::PerformMapping()
 {
+    // compute the reference count
+    int i = 0;
+    if (_map_param->ref_est_way)
+    {
+        for (float &est_ref : _est_refs)
+            est_ref = (est_ref + _map_param->alpha * _num_refs[i++]) / (1.0 + _map_param->alpha);
+    }
+    else {
+        if (_first_pass)
+        {
+            for (float &est_ref : _est_refs)
+                est_ref = _num_refs[i++];
+        }
+    }
 
+    // enumerate cuts or update cut cost
+    if (_map_param->always_enum_cut || _first_pass) {
+        for (int i = 0; i != _num_nodes; ++i) {
+            Node *node = GetNode(i);
+            if (node->IsPi() || node->IsAnd())
+                node->CutEnum(this);
+        }
+    } else {
+
+    }
+
+    Solution *mapping = new Solution(this);
+
+    // perform cut selection
+    for (int i = _num_nodes - 1; i != -1; --i)
+    {
+        Node *node = GetNode(i);
+        if (node->IsPi() || node->IsAnd())
+        {
+            node->CutEnum(this);
+        }
+    }
+
+    _first_pass = false;
+
+    return mapping;
+}
+
+Abc_Ntk_t *
+GenMappedNetwork(Solution *final)
+{
+    
 }
 
 Abc_Ntk_t *
@@ -269,7 +381,9 @@ FoxMap::MapToLut()
 
     // set up LUT library
 
+    // the mapping, which is always the best one
     Solution *curr_mapping = nullptr;
+
     auto update_mapping = [&curr_mapping](Solution *new_mapping) -> void {
         if (!curr_mapping)
             curr_mapping = new_mapping;
