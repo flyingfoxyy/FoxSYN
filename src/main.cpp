@@ -1,3 +1,12 @@
+/*---------------------------------------------------------------------------=\
+|                                                                             |
+| file:      main.cpp                                                         |
+| author:    longfei                                                          |
+| purpose:   FoxSYN entry and commands register                               |
+| version:   0.1                                                              |
+| date:      2025-3-23                                                        |
+\---------------------------------------------------------------------------=*/
+
 #include <iostream>
 
 #include "misc/util/abc_global.h"
@@ -9,12 +18,6 @@
 extern "C"
 {
     int Abc_RealMain(int argc, char *argv[]);
-}
-
-int Hello_Command(Abc_Frame_t *pAbc, int argc, char **argv)
-{
-    std::cout << "Hello world!" << std::endl;
-    return 0;
 }
 
 int Foxmap_Command(Abc_Frame_t *pAbc, int argc, char **argv)
@@ -40,7 +43,7 @@ int Foxmap_Command(Abc_Frame_t *pAbc, int argc, char **argv)
             param.lut_size = *(argv[++i] + 1) - '0';
             if (param.lut_size > 6 || param.lut_size < 2)
             {
-                printf("foxmap: invalid LUT size %d\n", param.lut_size);
+                printf("foxmap: invalid LUT size %ld\n", param.lut_size);
                 return 1;
             }
             break;

@@ -11,6 +11,7 @@
 
 #include <cassert>
 #include <vector>
+#include <functional>
 #include <cstdint>
 
 #include "utility.hpp"
@@ -24,18 +25,24 @@ namespace foxmap
 constexpr uint32_t kMaxLutSize = 6;
 constexpr uint32_t kMaxId      = (1 << 30);
 
-class FoxMap;
 class Param;
 class Node;
 class Cut;
+class FoxMap;
 
-using Area  = float;
-using Edge  = float;
-using Delay = uint32_t;
-using Sign  = uint32_t;
-using truth = uint64_t;
+using Area      = float;
+using Edge      = float;
+using Time     = uint32_t;
+using Sign      = uint32_t;
+using truth     = uint64_t;
+using CutRanker = std::function<int(Cut *lhs, Cut *rhs)>;
 
+/**
+ * Optimization objects supported for foxmap
+ */
 enum class OptTarget { Timing,  Area, Routability };
+
+
 enum class Algorithm { Praetor, Flow, Exact       };
 
 #define GetSign(id) (1u << id % (sizeof(Sign) - 1))
@@ -72,25 +79,29 @@ struct Cut
     Area       area  {0};
     Edge       edge  {0};
     Sign       sign  {0};
-    Delay      delay : 28;
+    Time      delay : 28;
     uint32_t   size  :  4;
 
     uint32_t   leaves[kMaxLutSize] {0};  // cut leafs
 
-    Cut() : delay(0), size(0) {}
+    Cut() : delay(0), size(1) {}
 
-    Cut(Area area, Edge edge, Sign sign, uint32_t size, uint32_t root)
-    : area(area), edge(edge), sign(sign), size(size)
-    {
-        leaves[0] = root;
-    }
+    // Cut(Area area, Edge edge, Sign sign, uint32_t size, uint32_t root)
+    // : area(area), edge(edge), sign(sign), size(size)
+    // {
+    //     leaves[0] = root;
+    // }
 
     ~Cut() = default;
     
     Cut(const Cut &cut) = default;
     Cut(Cut &&cut) noexcept = default;
-    
-    void ComputeCost(Algorithm algo);
+
+    void ComputeCost(Cut *lhs, Cut *rhs, float fanoutl, float fanoutr, FoxMap *mapper);
+
+    void ComputeTruth(Cut *lhs, Cut *rhs);
+
+    bool MergeCut(Cut *lhs, Cut *rhs, int lut_size);
 
 };
 
@@ -100,26 +111,23 @@ struct Cut
 class Node 
 {
 public:
-    enum class NodeType { Const, PI, PO, And, None };
+    enum class NodeType : uint { Const, PI, PO, And, None };
 
     static thread_local Node *_const_1;
 
 private:
-    /* netlist */
-    uint32_t   _fanin0 :  31;  // fanin0
-    uint32_t   _compl0 :   1;  // the complemented attribute for fanin0
-    uint32_t   _fanin1 :  31;  // fanin1
-    uint32_t   _compl1 :   1;  // the complemented attribute for fanin1
-    NodeType   _type        ;  // node type
-    
-    /* mapping property */
-    uint32_t   _ref   {0};     // reference count
-    Area       _area  {0};     // area (effective, flow, exact)
-    Edge       _edge  {0};     // edge flow
-    Delay      _arr   {0};     // the arrival  time
-    Delay      _req   {0};     // the required time
+    /* graph info */
+    uint      _fanin0   :  31;  // fanin0
+    uint      _compl0   :   1;  // the complemented attribute for fanin0
+    uint      _fanin1   :  31;  // fanin1
+    uint      _compl1   :   1;  // the complemented attribute for fanin1
+    NodeType  _type     :   4;  // node type
+    /* mapping properties */
+    uint      _num_cuts :  28;  // node type
+    Time      _arr   {0};     // the arrival  time
+    Time      _req   {0};     // the required time
 
-    Cut       *_cut_set{nullptr};
+    Cut      *_cut_set{nullptr};
 
 public:
     /**
@@ -131,7 +139,8 @@ public:
 
     Node()
     {
-        _fanin0 = _fanin0 = kMaxId;
+        _fanin0 = kMaxId;
+        _fanin1 = kMaxId;
         _compl0 = _compl1 = 0;
         _type   = NodeType::None;
     }
@@ -142,15 +151,8 @@ public:
             delete[] _cut_set;
     }
 
-    static Node *&GetNodeSet()
-    {
-        return Node::_const_1;
-    }
-
-    static Node *GetNode(int id)
-    {
-        return Node::_const_1 + id;
-    }
+    Node *GetFanin0() const { return Node::_const_1 + _fanin0; }
+    Node *GetFanin1() const { return Node::_const_1 + _fanin1; }
     
     /**
      * @brief Get the Node Id
@@ -166,10 +168,19 @@ public:
     bool IsPo()  const { return _type == NodeType::PO;  }
     bool IsAnd() const { return _type == NodeType::And; }
 
-    uint32_t &GetRefNum()
-    {
-        return _ref;
-    }
+    Edge GetEdge() const { return _cut_set[0].area; }
+    Edge GetArea() const { return _cut_set[0].edge; }
+    Time GetArr()  const { return _arr;  }
+    Time GetReq()  const { return _req;  }
+
+    /**
+     * 
+     */
+    // uint &GetRefNum() { return _ref; }
+
+    uint GetCutNum() { return _num_cuts; }
+
+    Cut *GetCut(int idx) { return _cut_set + idx; }
 
     void CutEnum(FoxMap *mapper);
 };
@@ -180,23 +191,43 @@ public:
 //==----------------------------------------------------------------==//
 class Pruner
 {
+public:
+    enum class mode
+    {
+        SIL,
+        SILK,
+        SL
+    };
 
+private:
+    std::vector<std::vector<Cut *>> _idxed_list;
+    std::vector<Cut *> _unified_list;
+    std::vector<Cut *> _temp_lsit;
+
+    mode _mode;
+
+    Area _epsion;
+    Area _min_area;
+
+    CutRanker _ranker;
 
 public:
+
+    Cut *GetCandidate();
 
     /**
      * @brief pop the stored cuts into cut_set
      * 
      * @param cut_set 
      */
-    void pop(Cut *&cut_set);
+    int pop(Cut *&cut_set);
 
     /**
      * @brief push a cut into storage
      * 
      * @param cut 
      */
-    void push(Cut *cut);
+    bool push(Cut *cut);
 };
 
 //==----------------------------------------------------------------==//
@@ -204,14 +235,17 @@ public:
 //==----------------------------------------------------------------==//
 class Solution
 {
+public:
     FoxMap *mapper {nullptr};
 
-    std::vector<int8_t>    cut_idx;
+    std::vector<Cut *>     cuts;
     std::vector<uint32_t>  num_lut;
 
     uint32_t total_lut   {0};
     uint32_t total_edge  {0};
     uint32_t total_delay {0};
+
+    bool operator<(const Solution &rhs);
 
 };
 
@@ -223,27 +257,32 @@ class FoxMap
     /* technology mapping property and flags */
     Param               *_map_param     {nullptr};   // parammeters of mapping algo
     Node                *_nodes         {nullptr};   // all nodes
-    uint32_t             _num_nodes      {0};
+    uint32_t             _num_nodes     {0};
     Abc_Ntk_t           *_pAig          {nullptr};   // AIG for mapping
 
-    fox::LutLib          _lut_lib;
     std::vector<Node *>  _prim_inputs;
     std::vector<Node *>  _prim_outputs;
 
-    double               _cpu_time       {0};
-    double               _wall_time      {0};
-    float                _lut_cost[10]   {1.0};
+    std::vector<uint>    _num_refs;
+    std::vector<float>   _est_refs;
+
+    double               _cpu_time       {0  };
+    double               _wall_time      {0  };
+    float                _lut_lib[10]    {1.0};
+
+    Pruner    _pruner;
+    Solution  _best_mapping;
 
     friend class Node;
     friend class Cut;
     friend class Solution;
 
 public:
-    FoxMap(Param *param, Abc_Ntk_t *pAig) : _map_param(param), _pAig(pAig), _num_nodes(_pAig->vObjs->nSize + 1) {}
+    FoxMap(Param *param, Abc_Ntk_t *pAig) : _map_param(param), _num_nodes(_pAig->vObjs->nSize + 1), _pAig(pAig) {}
 
     ~FoxMap()
     {
-        delete []Node::GetNodeSet();
+        delete []GetNode(0);
     }
 
     Abc_Ntk_t *MapToLut();
@@ -254,11 +293,35 @@ private:
     std::size_t NumPo()  const  { return _prim_inputs.size(); }
     std::size_t NumAnd() const  { return _num_nodes - NumPi() - NumPo() - 2; }
 
-    Param *GetParam()    const  { return _map_param; }
+    /**
+     * Get the node 'idx'
+     */
+    Node *GetNode(int idx) const { return Node::_const_1 + idx; }
 
-    Area GetLutCost(int size) const  { return _lut_lib.GetLutCost(size); }
+    /**
+     * Get the estimated reference count for node idx
+     */
+    float GetEstRef(uint id) const { return _est_refs[id]; }
 
-    
+    /**
+     * Get the mapping parameters
+     */
+    Param *GetParam() const { return _map_param; }
+
+    /**
+     * Get LUT area cost for different input size
+     */
+    Area GetLutCost(int size) const { return _lut_lib[size]; }
+
+    /**
+     * Generate mapped network according to final solution
+     */
+    Abc_Ntk_t *GenMappedNetwork(Solution *final);
+
+    /**
+     * Return the pruner for cut enumeration
+     */
+    Pruner &GetPruner() { return _pruner; }
 
     /**
      * @brief Perform a LUT mapping pass
@@ -266,7 +329,7 @@ private:
      * @param algo 
      * @return Solution 
      */
-    Solution PerformMapping();
+    Solution *PerformMapping();
 
     /**
      * @brief Initialize the mapping graph from input AIG
