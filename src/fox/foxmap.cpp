@@ -109,7 +109,7 @@ FlushCut1:
 void
 Cut::ComputeCost(Cut *lhs, Cut *rhs, float est_ref_l, float est_ref_r, FoxMap *mapper)
 {
-    Algo algo = mapper->GetParam()->algo;
+    Algo algo = mapper->GetParam()->curr_algo;
     if (algo == Algo::Praetor)
     {
         area = mapper->GetLutCost(size);
@@ -170,7 +170,7 @@ Cut::ComputeTruth(Cut *lhs, Cut *rhs, int compl0, int compl1)
     truth = truth0 & truth1;
 }
 
-Node::Node(Abc_Obj_t *abc_node)
+Node::Node(Abc_Obj_t *abc_node) : _num_cuts(0)
 {
     if (!abc_node)
     {
@@ -230,12 +230,12 @@ Node::CutEnum(FoxMap *mapper)
         _cut_set = new Cut[1];
         _cut_set->leaves[0] = GetId();
         _cut_set->sign = GetSign(GetId());
-        if (mapper->GetParam()->algo == Algo::Praetor)
+        if (mapper->GetParam()->curr_algo == Algo::Praetor)
             _cut_set->area = mapper->GetLutCost(1);
         return;
     }
 
-    Pruner &pruner = mapper->GetPruner();
+    Prune *prune = mapper->GetPrune();
 
     Node *fanin0 = GetFanin0();
     Node *fanin1 = GetFanin1();
@@ -254,23 +254,23 @@ Node::CutEnum(FoxMap *mapper)
             Cut *rhs = fanin1->GetCut(m);
             if (lhs->size + rhs->sign > k && fox::popcount(lhs->sign | rhs->sign) > k)
                 continue;
-            Cut *cut = pruner.GetCandidate();
+            Cut *cut = prune->GetCandidate();
             // check cut is k-feasible or not
             if (!cut->MergeCut(lhs, rhs, k))
                 continue;
             cut->sign = lhs->sign | rhs->sign;
             cut->ComputeCost(lhs, rhs, est_ref0, est_ref1, mapper);
-            if (pruner.push(cut))
+            if (prune->Push(cut))
                 cut->ComputeTruth(lhs, rhs, _compl0, _compl1);
         }
     }
 
     // pop the cuts
-    _num_cuts = pruner.pop(_cut_set);
+    _num_cuts = prune->Pop(_cut_set);
     
     // create trivial cut
     Cut *trival_cut = _cut_set + _num_cuts - 1;
-    if (mapper->GetParam()->algo == Algo::Praetor)
+    if (mapper->GetParam()->curr_algo == Algo::Praetor)
         trival_cut->area = GetCut(0)->area + mapper->GetLutCost(GetCut(0)->size);
     else
         trival_cut->area = GetCut(0)->area;
@@ -279,16 +279,30 @@ Node::CutEnum(FoxMap *mapper)
 }
 
 int 
-Pruner::pop(Cut *&cut_set)
+Prune::Pop(Cut *&cut_set)
 {
+    std::vector<Cut *> cuts;
+    for (auto it = _unified_list.begin(); it != _unified_list.end(); ++it)
+    {
+        if (*it)
+            cuts.push_back(*it);
+        else
+            break;
+    }
+    cut_set = new Cut[cuts.size() + 1];  // extra one for trivial cut
+    int cut_num = 0;
+    for (Cut *cut : cuts)
+        cut_set[cut_num++] = *cut;
 
+    std::fill(_unified_list.begin(), _unified_list.end(), nullptr);
+
+    return cut_num;
 }
 
 bool
-Pruner::push(Cut *cut)
+Prune::Push(Cut *cut)
 {
     std::vector<Cut *> &cut_set = _unified_list;
-
     for (int i = 0; i != cut_set.size(); ++i)
     {
         if (!cut_set[i])
@@ -298,18 +312,21 @@ Pruner::push(Cut *cut)
             cut_set[i] = cut;
             break;
         }
-
         if (const int cmp_res = CmpCutAreaEdge(cut, cut_set[i], _epsilon); cmp_res == 1)
         {
-            for (int m = cut_set.size() - 1; m != -1; --m)
+            for (int m = cut_set.size() - 1; m != i; --m)
                 cut_set[m] = cut_set[m-1];
             cut_set[i] = cut;
         }
-        
+        // same quality, only keep one
+        else if (cmp_res == 0)
+        {
+            return false;
+        }
     }
 
     if (cut_set.back())
-        cut_set.back() == nullptr;
+        cut_set.back() = nullptr;
 
     return true;
 }
@@ -323,8 +340,15 @@ Solution::Solution(FoxMap *map) : _mapper(map)
 bool
 Solution::operator<(const Solution& rhs)
 {
-
-    return true;
+    if (GetLutNum() < rhs.GetLutNum())
+        return true;
+    if (GetLutNum() > rhs.GetLutNum())
+        return false;
+    if (GetEdgeNum() < rhs.GetEdgeNum())
+        return true;
+    if (GetEdgeNum() > rhs.GetEdgeNum())
+        return false;
+    return false;
 }
 
 void
@@ -355,7 +379,6 @@ FoxMap::Initialize()
         
             int num_fanout = Abc_ObjFanoutNum(pObj);
             _num_refs[i] = num_fanout;
-            _est_refs[i] = static_cast<float>(num_fanout);
         }
     }
 
@@ -373,20 +396,22 @@ FoxMap::PerformMapping(Algo algo)
 {
     auto mapping_start = clock();
     // set the algorithm used for cut cost computation
-    _map_param->algo = algo;
+    _map_param->curr_algo = algo;
 
     // compute the reference count
-    int i = 0;
-    if (_map_param->ref_est_way)
+    if (_first_pass)
     {
+        int i = 0;
         for (float &est_ref : _est_refs)
-            est_ref = (_map_param->alpha * est_ref + _num_refs[i++]) / (1.0 + _map_param->alpha);
+            est_ref = _num_refs[i++];
     }
-    else {
-        if (_first_pass)
+    else
+    {
+        if (_map_param->ref_est_way)
         {
+            int i = 0;
             for (float &est_ref : _est_refs)
-                est_ref = _num_refs[i++];
+                est_ref = (_map_param->alpha * est_ref + _num_refs[i++]) / (1.0 + _map_param->alpha);
         }
     }
 
@@ -402,7 +427,6 @@ FoxMap::PerformMapping(Algo algo)
     else
     {
         // update the cut cost
-
     }
 
     Solution *mapping = new Solution(this);
@@ -547,16 +571,19 @@ FoxMap::MapToLut()
     };
 
     // perform mapping pass with different heuristics
-    for (int i = 0; i != _map_param->praetor_pass_num; ++i)
-    {
-        Solution *mapping = PerformMapping(Algo::Praetor);
-        update_mapping(mapping);
-    }
+    // for (int i = 0; i != _map_param->praetor_pass_num; ++i)
+    // {
+    //     Solution *mapping = PerformMapping(Algo::Praetor);
+    //     update_mapping(mapping);
+    // }
 
     for (int i = 0; i != _map_param->flow_pass_num; ++i)
     {
         Solution *mapping = PerformMapping(Algo::Flow);
         update_mapping(mapping);
+        int k = 0;
+        for (float &est_ref : _est_refs)
+            est_ref = static_cast<float>(curr_mapping->GetRefCount(k++));
     }
 
     // mapping solution

@@ -92,7 +92,7 @@ usage:
     Abc_Print(-2, "\t-a       : toggles area-oriented technology mapping\n");
     Abc_Print(-2, "\t-v       : toggles verbose log print\n");
     Abc_Print(-2, "\n");
-    Abc_Print(-2, "\t         This command is contribute by Longfei Fan [changqingfans@gmail.com]");
+    Abc_Print(-2, "\t         This command is contributed by Longfei Fan. E-mail: changqingfans@gmail.com\n");
 
     return 1;
 }

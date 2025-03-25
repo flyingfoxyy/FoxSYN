@@ -24,6 +24,7 @@ namespace foxmap
 {
 constexpr uint32_t kMaxLutSize = 6;
 constexpr uint32_t kMaxId      = (1 << 30);
+constexpr uint32_t kMaxCutNum  = 16;
 
 class Param;
 class Node;
@@ -41,8 +42,7 @@ using rank  = std::function<int(Cut *lhs, Cut *rhs, float epsilon)>;
  * Optimization objects supported for foxmap
  */
 enum class OptTarget { Timing,  Area, Routability };
-
-enum class Algo { Praetor, Flow, Exact       };
+enum class Algo      { Praetor, Flow, Exact       };
 
 #define GetSign(id) (1u << id % (sizeof(Sign) - 1))
 
@@ -54,12 +54,11 @@ class Param
 public:
     /* the parammeters for technology mapping */
     OptTarget    tar               = OptTarget::Timing;
-    Algo         algo              = Algo::Praetor;
-
-    bool         verbose           = false; // print log
-    bool         always_enum_cut   = false; // always enumerates cuts during each mapping pass
+    Algo         curr_algo         = Algo::Flow;
+    bool         verbose           = true; // print log
+    bool         always_enum_cut   = true ; // always enumerates cuts during each mapping pass
     int          ref_est_way       = 0;     // 0 (est = last pass) , 1 (est = (last + a * init) / (1 + a))
-    float        alpha             = 2.5;   //
+    float        alpha             = 2.5;   // value for above equation
 
     std::size_t  required          = 0;     // the target delay of mapped LUT netlist
     std::size_t  lut_size          = 6;     // max LUT input size
@@ -90,6 +89,17 @@ struct Cut
 
     Cut(const Cut &cut) = default;
     Cut(Cut &&cut) noexcept = default;
+    Cut &operator=(const Cut &cut) = default;
+
+    /**
+     * @brief Print this cut on consol
+     * 
+     */
+    void Print() const
+    {
+        printf("Area %4.1f Edge %4.1f [%4d, %4d, %4d, %4d, %4d, %4d]\n",
+            area, edge, leaves[0], leaves[1], leaves[2], leaves[3], leaves[4], leaves[5]);
+    }
 
     /**
      * @brief Compute the cost properties
@@ -127,11 +137,11 @@ private:
     uint      _compl0   :   1;  // the complemented attribute for fanin0
     uint      _fanin1   :  31;  // fanin1
     uint      _compl1   :   1;  // the complemented attribute for fanin1
-    NodeType  _type     :   4;  // node type
+    NodeType  _type     :   6;  // node type
     /* mapping properties */
-    uint      _num_cuts :  28;  // node type
-    Time      _arr   {0};       // the arrival  time
-    Time      _req   {0};       // the required time
+    uint      _num_cuts :  26;  // node type
+    Time      _arr    {0};      // the arrival  time
+    Time      _req    {0};      // the required time
 
     Cut      *_cut_set{nullptr};
 
@@ -143,13 +153,7 @@ public:
      */
     Node(Abc_Obj_t *abc_node);
 
-    Node()
-    {
-        _fanin0 = kMaxId;
-        _fanin1 = kMaxId;
-        _compl0 = _compl1 = 0;
-        _type   = NodeType::None;
-    }
+    Node() : _fanin0(kMaxId), _compl0(0), _fanin1(kMaxId), _compl1(0), _type(NodeType::None), _num_cuts(0) {}
 
     ~Node()
     {
@@ -157,8 +161,8 @@ public:
             delete[] _cut_set;
     }
 
-    Node *GetFanin0() const { _fanin0 == kMaxId ? nullptr : Node::_const_1 + _fanin0; }
-    Node *GetFanin1() const { _fanin1 == kMaxId ? nullptr : Node::_const_1 + _fanin1; }
+    Node *GetFanin0() const { return _fanin0 == kMaxId ? nullptr : Node::_const_1 + _fanin0; }
+    Node *GetFanin1() const { return _fanin1 == kMaxId ? nullptr : Node::_const_1 + _fanin1; }
     
     /**
      * @brief Get the Node Id
@@ -193,9 +197,9 @@ public:
 
 
 //==----------------------------------------------------------------==//
-//                           Pruner class                             //
+//                            Prune class                             //
 //==----------------------------------------------------------------==//
-class Pruner
+class Prune
 {
 public:
     enum class PruneMode
@@ -220,26 +224,41 @@ private:
     Cut *_temp_cuts;
 
 public:
-    Pruner(Param *param, PruneMode mode) : _mode(mode), _temp_cuts(new Cut[256])
+    Prune(Param *param, PruneMode mode) : _mode(mode), _temp_cuts(new Cut[kMaxCutNum * kMaxCutNum])
     {
         _unified_size = param->c_value;
     }
 
+    /**
+     * @brief Get the a general cut candidate
+     * 
+     * @return Cut* 
+     */
     Cut *GetCandidate() { return _temp_cuts + _used_num++; }
+
+    /**
+     * @brief Reset the status of this prune
+     * 
+     */
+    void Reset()
+    {
+        memset(_temp_cuts, 0, sizeof(Cut) * _used_num);
+        _used_num = 0;
+    }
 
     /**
      * @brief pop the stored cuts into cut_set
      * 
      * @param cut_set 
      */
-    int pop(Cut *&cut_set);
+    int Pop(Cut *&cut_set);
 
     /**
      * @brief push a cut into storage
      * 
      * @param cut 
      */
-    bool push(Cut *cut);
+    bool Push(Cut *cut);
 };
 
 //==----------------------------------------------------------------==//
@@ -306,7 +325,7 @@ class FoxMap
     float      _lut_lib[10]    {1.0 };
     bool       _first_pass     {true};
 
-    Pruner    *_pruner{nullptr};
+    Prune     *_prune{nullptr};
     Solution  *_best_mapping{nullptr};
 
     friend class Node;
@@ -314,11 +333,17 @@ class FoxMap
     friend class Solution;
 
 public:
-    FoxMap(Param *param, Abc_Ntk_t *pAig) : _map_param(param), _num_nodes(_pAig->vObjs->nSize + 1), _pAig(pAig) {}
+    FoxMap(Param *param, Abc_Ntk_t *pAig)
+    :   _map_param(param),
+        _num_nodes(_pAig->vObjs->nSize + 1),
+        _pAig(pAig),
+        _prune(new Prune(param, Prune::PruneMode::SIL))
+    {}
 
     ~FoxMap()
     {
         delete []GetNode(0);
+        delete _prune;
     }
 
     /**
@@ -344,8 +369,6 @@ private:
      */
     float GetEstRef(uint id) const { return _est_refs[id]; }
 
-    void PrintMapping(Algo algo, Solution *map);
-
     /**
      * Get the mapping parameters
      */
@@ -362,9 +385,9 @@ private:
     Abc_Ntk_t *GenMappedNetwork(Solution *final);
 
     /**
-     * Return the pruner for cut enumeration
+     * Return the Prune for cut enumeration
      */
-    Pruner *GetPruner() { return _pruner; }
+    Prune *GetPrune() { _prune->Reset(); return _prune; }
 
     Cut *SelectBestCut(Solution *curr_map, Cut *cut_set, int num, Algo algo);
 
