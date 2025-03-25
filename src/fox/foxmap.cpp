@@ -19,6 +19,23 @@ namespace foxmap
 {
 thread_local Node *foxmap::Node::_const_1 = nullptr;
 
+static int CmpCutAreaEdge(Cut *lhs, Cut *rhs, float epsilon)
+{
+    if (lhs->area + epsilon < rhs->area)
+        return 1;
+    if (lhs->area - epsilon > rhs->area)
+        return -1;
+    if (lhs->edge + epsilon < rhs->edge)
+        return 1;
+    if (lhs->edge - epsilon > rhs->edge)
+        return -1;
+    if (lhs->size < rhs->size)
+        return 1;
+    if (lhs->size > rhs->size)
+        return -1;
+    return 0;
+}
+
 bool
 Cut::MergeCut(Cut *lhs, Cut *rhs, int lut_size)
 {
@@ -92,8 +109,8 @@ FlushCut1:
 void
 Cut::ComputeCost(Cut *lhs, Cut *rhs, float est_ref_l, float est_ref_r, FoxMap *mapper)
 {
-    Algorithm algo = mapper->GetParam()->algo;
-    if (algo == Algorithm::Praetor)
+    Algo algo = mapper->GetParam()->algo;
+    if (algo == Algo::Praetor)
     {
         area = mapper->GetLutCost(size);
         area += (lhs->area - mapper->GetLutCost(lhs->size)) / est_ref_l;
@@ -106,7 +123,7 @@ Cut::ComputeCost(Cut *lhs, Cut *rhs, float est_ref_l, float est_ref_r, FoxMap *m
         // TODO: delay
     }
     else
-    if (algo == Algorithm::Flow)
+    if (algo == Algo::Flow)
     {
         area = mapper->GetLutCost(size);
         edge = static_cast<Edge>(size);
@@ -201,8 +218,9 @@ Node::CutEnum(FoxMap *mapper)
     if (!IsPi() && !IsAnd())
         return;
 
-    if (mapper->GetParam()->always_enum_cut && _cut_set)
+    if (_cut_set)
     {
+        assert(mapper->GetParam()->always_enum_cut);
         delete _cut_set;
         _cut_set = nullptr;
     }
@@ -212,7 +230,7 @@ Node::CutEnum(FoxMap *mapper)
         _cut_set = new Cut[1];
         _cut_set->leaves[0] = GetId();
         _cut_set->sign = GetSign(GetId());
-        if (mapper->GetParam()->algo == Algorithm::Praetor)
+        if (mapper->GetParam()->algo == Algo::Praetor)
             _cut_set->area = mapper->GetLutCost(1);
         return;
     }
@@ -252,17 +270,12 @@ Node::CutEnum(FoxMap *mapper)
     
     // create trivial cut
     Cut *trival_cut = _cut_set + _num_cuts - 1;
-    if (mapper->GetParam()->algo == Algorithm::Praetor)
+    if (mapper->GetParam()->algo == Algo::Praetor)
         trival_cut->area = GetCut(0)->area + mapper->GetLutCost(GetCut(0)->size);
     else
         trival_cut->area = GetCut(0)->area;
     trival_cut->edge = GetCut(0)->edge;
-}
-
-Cut *
-Pruner::GetCandidate()
-{
-
+    trival_cut->sign = GetSign(GetId());
 }
 
 int 
@@ -274,12 +287,43 @@ Pruner::pop(Cut *&cut_set)
 bool
 Pruner::push(Cut *cut)
 {
+    std::vector<Cut *> &cut_set = _unified_list;
 
+    for (int i = 0; i != cut_set.size(); ++i)
+    {
+        if (!cut_set[i])
+        {
+            if (i == cut_set.size() - 1)
+                return false;
+            cut_set[i] = cut;
+            break;
+        }
+
+        if (const int cmp_res = CmpCutAreaEdge(cut, cut_set[i], _epsilon); cmp_res == 1)
+        {
+            for (int m = cut_set.size() - 1; m != -1; --m)
+                cut_set[m] = cut_set[m-1];
+            cut_set[i] = cut;
+        }
+        
+    }
+
+    if (cut_set.back())
+        cut_set.back() == nullptr;
+
+    return true;
+}
+
+Solution::Solution(FoxMap *map) : _mapper(map)
+{
+    _cuts.resize(_mapper->_num_nodes);
+    _ref_counter.resize(_mapper->_num_nodes);
 }
 
 bool
 Solution::operator<(const Solution& rhs)
 {
+
     return true;
 }
 
@@ -318,15 +362,25 @@ FoxMap::Initialize()
     Abc_NtkCleanCopy(_pAig);
 }
 
-Solution *
-FoxMap::PerformMapping()
+Cut *
+FoxMap::SelectBestCut(Solution *curr_map, Cut *cut_set, int num, Algo algo)
 {
+    return cut_set;
+}
+
+Solution *
+FoxMap::PerformMapping(Algo algo)
+{
+    auto mapping_start = clock();
+    // set the algorithm used for cut cost computation
+    _map_param->algo = algo;
+
     // compute the reference count
     int i = 0;
     if (_map_param->ref_est_way)
     {
         for (float &est_ref : _est_refs)
-            est_ref = (est_ref + _map_param->alpha * _num_refs[i++]) / (1.0 + _map_param->alpha);
+            est_ref = (_map_param->alpha * est_ref + _num_refs[i++]) / (1.0 + _map_param->alpha);
     }
     else {
         if (_first_pass)
@@ -336,38 +390,135 @@ FoxMap::PerformMapping()
         }
     }
 
-    // enumerate cuts or update cut cost
-    if (_map_param->always_enum_cut || _first_pass) {
+    // enumerate cuts
+    if (_map_param->always_enum_cut || _first_pass)
+    {
         for (int i = 0; i != _num_nodes; ++i) {
             Node *node = GetNode(i);
             if (node->IsPi() || node->IsAnd())
                 node->CutEnum(this);
         }
-    } else {
+    }
+    else
+    {
+        // update the cut cost
 
     }
 
     Solution *mapping = new Solution(this);
-
+    
     // perform cut selection
-    for (int i = _num_nodes - 1; i != -1; --i)
+    for (Node *po : _prim_outputs)
     {
-        Node *node = GetNode(i);
-        if (node->IsPi() || node->IsAnd())
-        {
-            node->CutEnum(this);
-        }
+        if (Node *fanin = po->GetFanin0(); fanin && fanin->IsAnd())
+            ++mapping->GetRefCount(fanin->GetId());
     }
 
-    _first_pass = false;
+    for (int i = _num_nodes - 1; i != -1; --i)
+    {
+        if (mapping->GetRefCount(i) == 0)
+            continue;
+        Node *node = GetNode(i);
+        // find the best cut for current mapping
+        Cut *best = SelectBestCut(mapping, node->GetCut(0), node->GetCutNum(), algo);
+        for (int m = 0; m != best->size; ++m)
+            ++mapping->GetRefCount(best->leaves[m]);
+        mapping->Add(i, *best);
+    }
+
+    if (_first_pass)
+        _first_pass = false;
+
+    auto mapping_end = clock();
+
+    if (_map_param->verbose)
+    {
+        const char *algo_str = algo == Algo::Praetor ? "EF" : (algo == Algo::Flow ? "FL" : "EX");
+        printf("%s: Area = %6d  Edge = %6d\n", algo_str, mapping->GetLutNum(), mapping->GetEdgeNum());
+    }
 
     return mapping;
 }
 
 Abc_Ntk_t *
-GenMappedNetwork(Solution *final)
+FoxMap::GenMappedNetwork(Solution *final_mapping)
 {
-    
+    Abc_Ntk_t *mapped = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    int i;
+    Abc_Obj_t *pNode;
+
+    // create ports
+    Abc_NtkForEachPi(_pAig, pNode, i)
+    {
+        Abc_Obj_t *pPi = Abc_NtkCreatePi(mapped);
+        Abc_ObjAssignName(pPi, Abc_ObjName(pNode), nullptr);
+        pNode->pCopy = pPi;
+    }
+
+    Abc_NtkForEachPo(_pAig, pNode, i)
+    {
+        Abc_Obj_t *pPo = Abc_NtkCreatePi(mapped);
+        Abc_ObjAssignName(pPo, Abc_ObjName(pNode), nullptr);
+    }
+
+    Abc_Obj_t *pConst1 = Abc_NtkCreateObj(mapped, ABC_OBJ_NODE);
+    pConst1->pData = Abc_SopCreateConst1((Mem_Flex_t *)mapped->pManFunc);
+
+    Abc_NtkObj(_pAig, 0)->pCopy = pConst1;
+
+    // create LUT nodes
+    for (int i = 1; i != _num_nodes; ++i)
+    {
+        if (!GetNode(i)->IsAnd() || final_mapping->GetRefCount(i) == 0)
+            continue;
+        Cut *cut = final_mapping->GetSol(i);
+        Abc_Obj_t *pLut = Abc_NtkCreateObj(mapped, ABC_OBJ_NODE);
+        if (word truth = cut->truth; truth == 0ul || truth == ~0ul)
+        {
+            Abc_ObjAddFanin(pLut, pConst1);
+            if (truth == 0ul)
+                pLut->pData = Abc_SopCreateInv((Mem_Flex_t *)mapped->pManFunc);
+            else
+                pLut->pData = Abc_SopCreateBuf((Mem_Flex_t *)mapped->pManFunc);
+        }
+        else
+        {
+            for (int m = 0; m != cut->size; ++m)
+                Abc_ObjAddFanin(pLut, Abc_NtkObj(_pAig, cut->leaves[m])->pCopy);
+            pLut->pData = Abc_SopRegister((Mem_Flex_t*)mapped->pManFunc,
+                Abc_SopCreateFromTruth((Mem_Flex_t *)mapped->pManFunc, cut->size, (unsigned *)&truth));
+        }
+        Abc_NtkObj(_pAig, i)->pCopy = pLut;
+    }
+
+    Abc_NtkForEachPo(mapped, pNode, i)
+    {
+        Abc_Obj_t *pOldPo = Abc_NtkPo(_pAig, i);
+        Abc_Obj_t *pFanin = Abc_ObjFanin0(pOldPo)->pCopy;
+        if (pOldPo->fCompl0)
+        {
+            if (Abc_ObjFanoutNum(Abc_ObjFanin0(pOldPo)) || Abc_ObjFanin0(pOldPo)->Type == ABC_OBJ_PI)
+            {
+                Abc_Obj_t *pInv = Abc_NtkCreateNode(mapped);
+                pInv->pData = Abc_SopCreateInv((Mem_Flex_t *)mapped->pManFunc);
+                Abc_ObjAddFanin(pInv, pFanin);
+                Abc_ObjAddFanin(pNode, pInv);
+            }
+            else
+            {
+                Abc_SopComplement((char *)pFanin->pData);
+                Abc_ObjAddFanin(pNode, pFanin);
+            }
+        }
+        else
+        {
+            Abc_ObjAddFanin(pNode, pFanin);
+        }
+    }
+
+    Abc_NtkCleanCopy(_pAig);
+
+    return mapped;
 }
 
 Abc_Ntk_t *
@@ -398,13 +549,13 @@ FoxMap::MapToLut()
     // perform mapping pass with different heuristics
     for (int i = 0; i != _map_param->praetor_pass_num; ++i)
     {
-        Solution *mapping = PerformMapping();
+        Solution *mapping = PerformMapping(Algo::Praetor);
         update_mapping(mapping);
     }
 
     for (int i = 0; i != _map_param->flow_pass_num; ++i)
     {
-        Solution *mapping = PerformMapping();
+        Solution *mapping = PerformMapping(Algo::Flow);
         update_mapping(mapping);
     }
 
@@ -417,6 +568,14 @@ FoxMap::MapToLut()
 Abc_Ntk_t *
 PerformFoxMap(Abc_Ntk_t *pAig, foxmap::Param *param)
 {
+    if (Abc_NtkGetChoiceNum(pAig))
+    {
+        Abc_Ntk_t *pNew = Abc_NtkStrash(pAig = Abc_NtkDup(pAig), 0, 1, 0);
+        Abc_NtkDelete(pAig);
+        pAig = pNew;
+        printf("foxmap: choices in AIG are removed.\n");
+    }
+
     foxmap::Node::_const_1 = nullptr;
     foxmap::FoxMap mapper(param, pAig);
 

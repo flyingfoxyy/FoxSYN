@@ -30,20 +30,19 @@ class Node;
 class Cut;
 class FoxMap;
 
-using Area      = float;
-using Edge      = float;
-using Time      = uint32_t;
-using Sign      = uint32_t;
-using word      = uint64_t;
-using CutRanker = std::function<int(Cut *lhs, Cut *rhs)>;
+using Area  = float;
+using Edge  = float;
+using Time  = uint32_t;
+using Sign  = uint32_t;
+using word  = uint64_t;
+using rank  = std::function<int(Cut *lhs, Cut *rhs, float epsilon)>;
 
 /**
  * Optimization objects supported for foxmap
  */
 enum class OptTarget { Timing,  Area, Routability };
 
-
-enum class Algorithm { Praetor, Flow, Exact       };
+enum class Algo { Praetor, Flow, Exact       };
 
 #define GetSign(id) (1u << id % (sizeof(Sign) - 1))
 
@@ -54,19 +53,20 @@ class Param
 {
 public:
     /* the parammeters for technology mapping */
-    OptTarget       tar               = OptTarget::Timing;
-    Algorithm       algo              = Algorithm::Praetor;
+    OptTarget    tar               = OptTarget::Timing;
+    Algo         algo              = Algo::Praetor;
 
-    bool            verbose           = false;  // print log
-    bool            always_enum_cut   = false;  // always enumerates cuts during each mapping pass
-    int             ref_est_way       = 0;      // 0 (est = last pass) , 1 (est = (last + a * init) / (1 + a))
-    float           alpha             = 2.5;    //
+    bool         verbose           = false; // print log
+    bool         always_enum_cut   = false; // always enumerates cuts during each mapping pass
+    int          ref_est_way       = 0;     // 0 (est = last pass) , 1 (est = (last + a * init) / (1 + a))
+    float        alpha             = 2.5;   //
 
-    std::size_t     required          = 0;      // the target delay of mapped LUT netlist
-    std::size_t     lut_size          = 6;      // max LUT input size
-    std::size_t     praetor_pass_num  = 4;      // the number of pass performing with effective area heuristic method
-    std::size_t     flow_pass_num     = 4;      // the number of pass performing with area-flow      heuristic method
-    std::size_t     exact_pass_num    = 4;      // the number of pass performing with exact area     heuristic method
+    std::size_t  required          = 0;     // the target delay of mapped LUT netlist
+    std::size_t  lut_size          = 6;     // max LUT input size
+    std::size_t  praetor_pass_num  = 4;     // the number of pass performing with effective area heuristic method
+    std::size_t  flow_pass_num     = 4;     // the number of pass performing with area-flow      heuristic method
+    std::size_t  exact_pass_num    = 4;     // the number of pass performing with exact area     heuristic method
+    std::size_t  c_value           = 8;     // the number of cuts stored for each node
 
     bool AreaDriven()  const { return tar == OptTarget::Area; }
     bool RouteDriven() const { return tar == OptTarget::Area; }
@@ -77,7 +77,7 @@ public:
 //==----------------------------------------------------------------==//
 struct Cut
 {
-    word   truth {0};   // truth table
+    word   truth    ;   // truth table
     Area   area  {0};   // effective area / area-flow / exact area
     Edge   edge  {0};   // edge
     Sign   sign  {0};   // signature
@@ -86,8 +86,8 @@ struct Cut
 
     uint   leaves[kMaxLutSize] {0};  // cut leafs
 
-    Cut() : arr(0), size(1) {}
-    
+    Cut() : truth(0xAAAAAAAAAAAAAAAA), arr(0), size(1) {}
+
     Cut(const Cut &cut) = default;
     Cut(Cut &&cut) noexcept = default;
 
@@ -157,8 +157,8 @@ public:
             delete[] _cut_set;
     }
 
-    Node *GetFanin0() const { return Node::_const_1 + _fanin0; }
-    Node *GetFanin1() const { return Node::_const_1 + _fanin1; }
+    Node *GetFanin0() const { _fanin0 == kMaxId ? nullptr : Node::_const_1 + _fanin0; }
+    Node *GetFanin1() const { _fanin1 == kMaxId ? nullptr : Node::_const_1 + _fanin1; }
     
     /**
      * @brief Get the Node Id
@@ -198,7 +198,7 @@ public:
 class Pruner
 {
 public:
-    enum class mode
+    enum class PruneMode
     {
         SIL,
         SILK,
@@ -206,20 +206,26 @@ public:
     };
 
 private:
-    std::vector<std::vector<Cut *>> _idxed_list;
-    std::vector<Cut *> _unified_list;
-    std::vector<Cut *> _temp_lsit;
+    std::vector<std::vector<Cut *>> _indexed_list;
+    std::vector<Cut *>              _unified_list;
 
-    mode _mode;
+    PruneMode _mode;
 
-    Area _epsilon;
-    Area _min_area;
+    Area _epsilon  {0.001f      };
+    Area _min_area {120000000.0f};
 
-    CutRanker _ranker;
+    uint _unified_size {0};
+    uint _used_num     {0};
+
+    Cut *_temp_cuts;
 
 public:
+    Pruner(Param *param, PruneMode mode) : _mode(mode), _temp_cuts(new Cut[256])
+    {
+        _unified_size = param->c_value;
+    }
 
-    Cut *GetCandidate();
+    Cut *GetCandidate() { return _temp_cuts + _used_num++; }
 
     /**
      * @brief pop the stored cuts into cut_set
@@ -241,25 +247,41 @@ public:
 //==----------------------------------------------------------------==//
 class Solution
 {
+    std::vector<Cut *>  _cuts;
+    std::vector<uint>   _ref_counter;
+
+    uint    _num_lut[kMaxLutSize + 1] {0};
+    uint    _sum_lut  {0};
+    uint    _sum_edge {0};
+    uint    _max_arr  {0};
+    FoxMap *_mapper;
+
 public:
-    FoxMap *mapper;
-
-    std::vector<Cut *>     cuts;
-    std::vector<uint32_t>  num_lut;
-
-    uint sum_lut  {0};
-    uint sum_edge {0};
-    uint max_arr  {0};
-
-    Solution(FoxMap *map) : mapper(map) {}
+    Solution(FoxMap *map);
 
     ~Solution()
     {
-        for (Cut *cut : cuts)
+        for (Cut *cut : _cuts)
             delete cut;
     }
 
     bool operator<(const Solution &rhs);
+
+    void Add(uint node, Cut &cut)
+    {
+        assert(_cuts[node] == nullptr);
+        _cuts[node] = new Cut(cut);
+        ++_num_lut[cut.size];
+        ++_sum_lut;
+        _sum_edge += cut.size;
+    }
+
+    Cut *GetSol(uint node) const { return _cuts[node]; }
+
+    uint &GetRefCount(uint id) { return _ref_counter[id]; }
+
+    uint GetLutNum()  const { return _sum_lut;  }
+    uint GetEdgeNum() const { return _sum_edge; }
 };
 
 //==----------------------------------------------------------------==//
@@ -284,8 +306,8 @@ class FoxMap
     float      _lut_lib[10]    {1.0 };
     bool       _first_pass     {true};
 
-    Pruner     _pruner;
-    Solution  *_best_mapping;
+    Pruner    *_pruner{nullptr};
+    Solution  *_best_mapping{nullptr};
 
     friend class Node;
     friend class Cut;
@@ -322,6 +344,8 @@ private:
      */
     float GetEstRef(uint id) const { return _est_refs[id]; }
 
+    void PrintMapping(Algo algo, Solution *map);
+
     /**
      * Get the mapping parameters
      */
@@ -340,7 +364,9 @@ private:
     /**
      * Return the pruner for cut enumeration
      */
-    Pruner &GetPruner() { return _pruner; }
+    Pruner *GetPruner() { return _pruner; }
+
+    Cut *SelectBestCut(Solution *curr_map, Cut *cut_set, int num, Algo algo);
 
     /**
      * @brief Perform a LUT mapping pass
@@ -348,7 +374,7 @@ private:
      * @param algo 
      * @return Solution 
      */
-    Solution *PerformMapping();
+    Solution *PerformMapping(Algo algo);
 
     /**
      * @brief Initialize the mapping graph from input AIG
