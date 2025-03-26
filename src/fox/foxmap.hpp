@@ -23,7 +23,7 @@ namespace fox
 namespace foxmap
 {
 constexpr uint32_t kMaxLutSize = 6;
-constexpr uint32_t kMaxId      = (1 << 30);
+constexpr uint32_t kMaxId      = 123456789;
 constexpr uint32_t kMaxCutNum  = 16;
 
 class Param;
@@ -178,8 +178,8 @@ public:
     bool IsPo()  const { return _type == NodeType::PO;  }
     bool IsAnd() const { return _type == NodeType::And; }
 
-    Edge GetEdge() const { return _cut_set[0].area; }
-    Edge GetArea() const { return _cut_set[0].edge; }
+    Area GetArea() const { return _cut_set[0].area; }
+    Edge GetEdge() const { return _cut_set[0].edge; }
     Time GetArr()  const { return _arr;  }
     Time GetReq()  const { return _req;  }
 
@@ -191,6 +191,8 @@ public:
     uint GetCutNum() { return _num_cuts; }
 
     Cut *GetCut(int idx) { return _cut_set + idx; }
+
+    Cut *GetTrivialCut() const { return _cut_set + _num_cuts - 1; }
 
     void CutEnum(FoxMap *mapper);
 };
@@ -221,12 +223,22 @@ private:
     uint _unified_size {0};
     uint _used_num     {0};
 
-    Cut *_temp_cuts;
+    Cut *_temp_cuts {nullptr};
 
 public:
-    Prune(Param *param, PruneMode mode) : _mode(mode), _temp_cuts(new Cut[kMaxCutNum * kMaxCutNum])
+    Prune(Param *param, PruneMode mode) : _mode(mode), _temp_cuts(new Cut[(kMaxCutNum + 1) * (kMaxCutNum + 1)])
     {
+        // initialize unified list
         _unified_size = param->c_value;
+        _unified_list.resize(_unified_size, nullptr);
+        // initialize indexed list
+        _indexed_list.resize(kMaxLutSize + 1, std::vector<Cut *>(6));
+    }
+
+    ~Prune()
+    {
+        if (_temp_cuts)
+            delete[] _temp_cuts;
     }
 
     /**
@@ -242,7 +254,8 @@ public:
      */
     void Reset()
     {
-        memset(_temp_cuts, 0, sizeof(Cut) * _used_num);
+        std::fill(_temp_cuts, _temp_cuts + _used_num, Cut{});
+        _min_area = 120000000.0f;
         _used_num = 0;
     }
 
@@ -335,7 +348,6 @@ class FoxMap
 public:
     FoxMap(Param *param, Abc_Ntk_t *pAig)
     :   _map_param(param),
-        _num_nodes(_pAig->vObjs->nSize + 1),
         _pAig(pAig),
         _prune(new Prune(param, Prune::PruneMode::SIL))
     {}
@@ -355,8 +367,8 @@ public:
 
 private:
 
-    std::size_t NumPi()  const  { return _prim_inputs.size(); }
-    std::size_t NumPo()  const  { return _prim_inputs.size(); }
+    std::size_t NumPi()  const  { return _prim_inputs.size();  }
+    std::size_t NumPo()  const  { return _prim_outputs.size(); }
     std::size_t NumAnd() const  { return _num_nodes - NumPi() - NumPo() - 2; }
 
     /**
