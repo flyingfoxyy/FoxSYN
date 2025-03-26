@@ -163,6 +163,9 @@ public:
 
     Node *GetFanin0() const { return _fanin0 == kMaxId ? nullptr : Node::_const_1 + _fanin0; }
     Node *GetFanin1() const { return _fanin1 == kMaxId ? nullptr : Node::_const_1 + _fanin1; }
+
+    uint GetFanin0Id() const { return _fanin0; }
+    uint GetFanin1Id() const { return _fanin1; }
     
     /**
      * @brief Get the Node Id

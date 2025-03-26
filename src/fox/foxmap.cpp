@@ -278,6 +278,7 @@ Node::CutEnum(FoxMap *mapper)
     else
         trival_cut->area = GetCut(0)->area;
     trival_cut->edge = GetCut(0)->edge;
+    std::cout << "Node " << GetId() << " Area " << GetCut(0)->area << "\n";
 }
 
 int 
@@ -416,6 +417,8 @@ FoxMap::PerformMapping(Algo algo)
         }
     }
 
+    Area estimated = 0;
+
     // enumerate cuts
     if (_map_param->always_enum_cut || _first_pass)
     {
@@ -428,6 +431,12 @@ FoxMap::PerformMapping(Algo algo)
     else
     {
         // update the cut cost
+    }
+
+    if (_map_param->verbose)
+    {
+        for (Node *node : _prim_outputs)
+            estimated += node->GetFanin0()->GetArea() / GetEstRef(node->GetFanin0Id());
     }
 
     Solution *mapping = new Solution(this);
@@ -459,7 +468,7 @@ FoxMap::PerformMapping(Algo algo)
     if (_map_param->verbose)
     {
         const char *algo_str = algo == Algo::Praetor ? "EF" : (algo == Algo::Flow ? "FL" : "EX");
-        printf("%s: Area = %6d  Edge = %6d\n", algo_str, mapping->GetLutNum(), mapping->GetEdgeNum());
+        printf("%s  Est = %4.1f Area = %6d  Edge = %6d\n", algo_str, estimated, mapping->GetLutNum(), mapping->GetEdgeNum());
     }
 
     return mapping;
