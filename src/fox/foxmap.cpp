@@ -445,7 +445,11 @@ FoxMap::PerformMapping(Algo algo)
     if (_map_param->verbose)
     {
         for (Node *node : _prim_outputs)
-            estimated += node->GetFanin0()->GetArea() / GetEstRef(node->GetFanin0Id());
+        {
+            Node *fanin = node->GetFanin0();
+            if (fanin && fanin->IsAnd())
+                estimated += fanin->GetArea() / GetEstRef(node->GetFanin0Id());
+        }
     }
 
     Solution *mapping = new Solution(this);
@@ -507,6 +511,11 @@ FoxMap::GenMappedNetwork(Solution *final_mapping)
         Abc_ObjAssignName(pPo, Abc_ObjName(pNode), nullptr);
     }
 
+    // hook the const
+    Abc_Obj_t *pConst1 = Abc_NtkCreateObj(mapped, ABC_OBJ_NODE);
+    pConst1->pData = Abc_SopCreateConst1((Mem_Flex_t *)mapped->pManFunc);
+    Abc_NtkObj(_pAig, 0)->pCopy = pConst1;
+
     // create LUT nodes
     for (int i = 1; i != _num_nodes; ++i)
     {
@@ -516,13 +525,6 @@ FoxMap::GenMappedNetwork(Solution *final_mapping)
         Abc_Obj_t *pLut = Abc_NtkCreateObj(mapped, ABC_OBJ_NODE);
         if (word truth = cut->truth; truth == 0ul || truth == ~0ul)
         {
-            Abc_Obj_t *pConst1 = Abc_NtkObj(_pAig, 0)->pCopy;
-            if (pConst1 == nullptr)
-            {
-                pConst1 = Abc_NtkCreateObj(mapped, ABC_OBJ_NODE);
-                pConst1->pData = Abc_SopCreateConst1((Mem_Flex_t *)mapped->pManFunc);
-                Abc_NtkObj(_pAig, 0)->pCopy = pConst1;
-            }
             Abc_ObjAddFanin(pLut, pConst1);
             if (truth == 0ul)
                 pLut->pData = Abc_SopCreateBuf((Mem_Flex_t *)mapped->pManFunc);

@@ -65,7 +65,7 @@ public:
     std::size_t  praetor_pass_num  = 4;     // the number of pass performing with effective area heuristic method
     std::size_t  flow_pass_num     = 4;     // the number of pass performing with area-flow      heuristic method
     std::size_t  exact_pass_num    = 4;     // the number of pass performing with exact area     heuristic method
-    std::size_t  c_value           = 8;     // the number of cuts stored for each node
+    std::size_t  c_value           = 8;     // the cut solution stored for each node
 
     bool AreaDriven()  const { return tar == OptTarget::Area; }
     bool RouteDriven() const { return tar == OptTarget::Area; }
