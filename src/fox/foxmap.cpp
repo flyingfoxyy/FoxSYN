@@ -418,12 +418,15 @@ FoxMap::PerformMapping(Algo algo)
     }
     else
     {
-        if (_map_param->ref_est_way)
-        {
-            int i = 0;
-            for (float &est_ref : _est_refs)
-                est_ref = (_map_param->alpha * est_ref + _num_refs[i++]) / (1.0 + _map_param->alpha);
-        }
+        // if (_map_param->ref_est_way)
+        // {
+        //     int i = 0;
+        //     for (float &est_ref : _est_refs)
+        //     {
+        //         est_ref = (_map_param->alpha * est_ref + _num_refs[i++]) / (1.0 + _map_param->alpha);
+        //         assert(est_ref);
+        //     }
+        // }
     }
 
     Area estimated = 0;
@@ -472,6 +475,11 @@ FoxMap::PerformMapping(Algo algo)
             ++mapping->GetRefCount(best->leaves[m]);
         mapping->Add(i, *best);
     }
+
+    // update reference counter
+    int i = 0;
+    for (float &ref : _est_refs)
+        ref = static_cast<float>(mapping->GetRefCount(i++));
 
     if (_first_pass)
         _first_pass = false;
