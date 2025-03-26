@@ -209,6 +209,7 @@ class Prune
 public:
     enum class PruneMode
     {
+        None,
         SIL,
         SILK,
         SL
@@ -218,13 +219,13 @@ private:
     std::vector<std::vector<Cut *>> _indexed_list;
     std::vector<Cut *>              _unified_list;
 
-    PruneMode _mode;
+    PruneMode _mode {PruneMode::None};
 
-    Area _epsilon  {0.001f      };
-    Area _min_area {120000000.0f};
+    Area _epsilon   {0.001f      };
+    Area _min_area  {120000000.0f};
 
-    uint _unified_size {0};
-    uint _used_num     {0};
+    uint _unified_used_num  {0};
+    uint _temp_used_num     {0};
 
     Cut *_temp_cuts {nullptr};
 
@@ -232,8 +233,7 @@ public:
     Prune(Param *param, PruneMode mode) : _mode(mode), _temp_cuts(new Cut[(kMaxCutNum + 1) * (kMaxCutNum + 1)])
     {
         // initialize unified list
-        _unified_size = param->c_value;
-        _unified_list.resize(_unified_size, nullptr);
+        _unified_list.resize(param->c_value + 1, nullptr); // the last one is not used
         // initialize indexed list
         _indexed_list.resize(kMaxLutSize + 1, std::vector<Cut *>(6));
     }
@@ -249,7 +249,7 @@ public:
      * 
      * @return Cut* 
      */
-    Cut *GetCandidate() { return _temp_cuts + _used_num++; }
+    Cut *GetCandidate() { return _temp_cuts + _temp_used_num++; }
 
     /**
      * @brief Reset the status of this prune
@@ -257,9 +257,12 @@ public:
      */
     void Reset()
     {
-        std::fill(_temp_cuts, _temp_cuts + _used_num, Cut{});
+        std::fill(_temp_cuts, _temp_cuts + _temp_used_num, Cut{});
         _min_area = 120000000.0f;
-        _used_num = 0;
+        _temp_used_num = 0;
+        _unified_used_num = 0;
+        _unified_list.resize(_unified_list.size(), nullptr);
+        _indexed_list.resize(kMaxLutSize + 1, std::vector<Cut *>(6));
     }
 
     /**
@@ -335,13 +338,13 @@ class FoxMap
 
     std::vector<uint>    _num_refs;
     std::vector<float>   _est_refs;
+    std::vector<float>   _lut_lib;
 
     double     _cpu_time       {0   };
     double     _wall_time      {0   };
-    float      _lut_lib[10]    {1.0 };
     bool       _first_pass     {true};
 
-    Prune     *_prune{nullptr};
+    Prune      _prune;
     Solution  *_best_mapping{nullptr};
 
     friend class Node;
@@ -352,13 +355,14 @@ public:
     FoxMap(Param *param, Abc_Ntk_t *pAig)
     :   _map_param(param),
         _pAig(pAig),
-        _prune(new Prune(param, Prune::PruneMode::SIL))
-    {}
+        _prune(param, Prune::PruneMode::SIL)
+    {
+        _lut_lib.resize(10, 1.0000f);
+    }
 
     ~FoxMap()
     {
         delete []GetNode(0);
-        delete _prune;
     }
 
     /**
@@ -402,7 +406,7 @@ private:
     /**
      * Return the Prune for cut enumeration
      */
-    Prune *GetPrune() { _prune->Reset(); return _prune; }
+    Prune &GetPrune() { _prune.Reset(); return _prune; }
 
     Cut *SelectBestCut(Solution *curr_map, Cut *cut_set, int num, Algo algo);
 

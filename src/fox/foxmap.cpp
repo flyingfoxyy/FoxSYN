@@ -236,7 +236,7 @@ Node::CutEnum(FoxMap *mapper)
         return;
     }
 
-    Prune *prune = mapper->GetPrune();
+    Prune &prune = mapper->GetPrune();
 
     Node *fanin0 = GetFanin0();
     Node *fanin1 = GetFanin1();
@@ -255,19 +255,19 @@ Node::CutEnum(FoxMap *mapper)
             Cut *rhs = fanin1->GetCut(m);
             if (lhs->size + rhs->sign > k && fox::popcount(lhs->sign | rhs->sign) > k)
                 continue;
-            Cut *cut = prune->GetCandidate();
+            Cut *cut = prune.GetCandidate();
             // check cut is k-feasible or not
             if (!cut->MergeCut(lhs, rhs, k))
                 continue;
             cut->sign = lhs->sign | rhs->sign;
             cut->ComputeCost(lhs, rhs, est_ref0, est_ref1, mapper);
-            if (prune->Push(cut))
+            if (prune.Push(cut))
                 cut->ComputeTruth(lhs, rhs, _compl0, _compl1);
         }
     }
 
     // pop the cuts
-    _num_cuts = prune->Pop(_cut_set);
+    _num_cuts = prune.Pop(_cut_set);
 
     // create trivial cut
     Cut *trival_cut = GetTrivialCut();
@@ -278,7 +278,6 @@ Node::CutEnum(FoxMap *mapper)
     else
         trival_cut->area = GetCut(0)->area;
     trival_cut->edge = GetCut(0)->edge;
-    std::cout << "Node " << GetId() << " Area " << GetCut(0)->area << "\n";
 }
 
 int 
@@ -293,6 +292,7 @@ Prune::Pop(Cut *&cut_set)
             break;
     }
     cut_set = new Cut[cuts.size() + 1];  // extra one for trivial cut
+
     int cut_num = 0;
     for (Cut *cut : cuts)
         cut_set[cut_num++] = *cut;
@@ -305,32 +305,41 @@ Prune::Pop(Cut *&cut_set)
 bool
 Prune::Push(Cut *cut)
 {
-    std::vector<Cut *> &cut_set = _unified_list;
-    for (int i = 0; i != cut_set.size(); ++i)
+    for (int i = 0; i != _unified_list.size(); ++i)
     {
-        if (!cut_set[i])
+        // rank to the last one
+        if (!_unified_list[i])
         {
-            if (i == cut_set.size() - 1)
+            if (i == _unified_list.size() - 1)
+            {
+                assert(_unified_used_num == _unified_list.size() - 1);
                 return false;
-            cut_set[i] = cut;
-            break;
+            }
+            _unified_list[i] = cut;
+            _unified_used_num++;
+            assert(_unified_list[i - 1]);
+            return true;
         }
-        if (const int cmp_res = CmpCutAreaEdge(cut, cut_set[i], _epsilon); cmp_res == 1)
+        // compare with current cut
+        const int cmp_res = CmpCutAreaEdge(cut, _unified_list[i], _epsilon);
+        // win
+        if (cmp_res == 1)
         {
-            for (int m = cut_set.size() - 1; m != i; --m)
-                cut_set[m] = cut_set[m-1];
-            cut_set[i] = cut;
+            for (int m = std::min(_unified_list.size() - 1, (std::size_t)_unified_used_num); m != i; --m)
+                _unified_list[m] = _unified_list[m - 1];
+            _unified_list[i] = cut;
+            if (_unified_list.back())
+                _unified_list.back() = nullptr;
+            else
+                _unified_used_num++;
+            return true;
         }
         // same quality, only keep one
         else if (cmp_res == 0)
-        {
             return false;
-        }
     }
 
-    if (cut_set.back())
-        cut_set.back() = nullptr;
-
+    assert(0 && "should arrival here");
     return true;
 }
 
