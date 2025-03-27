@@ -30,6 +30,7 @@ class Param;
 class Node;
 class Cut;
 class FoxMap;
+class Solution;
 
 using Area  = float;
 using Edge  = float;
@@ -67,8 +68,8 @@ public:
     std::size_t  exact_pass_num    = 4;     // the number of pass performing with exact area     heuristic method
     std::size_t  c_value           = 8;     // the cut solution stored for each node
 
-    bool AreaDriven()  const { return tar == OptTarget::Area; }
-    bool RouteDriven() const { return tar == OptTarget::Area; }
+    bool AreaDriven()  const { return tar == OptTarget::Area;        }
+    bool RouteDriven() const { return tar == OptTarget::Routability; }
 };
 
 //==----------------------------------------------------------------==//
@@ -119,6 +120,9 @@ struct Cut
      * @return k-feasible or not
      */
     bool MergeCut(Cut *lhs, Cut *rhs, int k);
+
+    Area RefMFFC(Solution *mapping, bool update = false);
+    Edge RipMFFC(Solution *mapping, bool update = false);
 };
 
 //==----------------------------------------------------------------==//
@@ -139,7 +143,8 @@ private:
     uint      _compl1   :   1;  // the complemented attribute for fanin1
     NodeType  _type     :   6;  // node type
     /* mapping properties */
-    uint      _num_cuts :  26;  // node type
+    uint      _num_cuts :  20;  // node type
+    uint      _best_cut :   6;
     Time      _arr    {0};      // the arrival  time
     Time      _req    {0};      // the required time
 
@@ -153,7 +158,7 @@ public:
      */
     Node(Abc_Obj_t *abc_node);
 
-    Node() : _fanin0(kMaxId), _compl0(0), _fanin1(kMaxId), _compl1(0), _type(NodeType::None), _num_cuts(0) {}
+    Node() : _fanin0(kMaxId), _compl0(0), _fanin1(kMaxId), _compl1(0), _type(NodeType::None), _num_cuts(0), _best_cut(0) {}
 
     ~Node()
     {
@@ -186,16 +191,12 @@ public:
     Time GetArr()  const { return _arr;  }
     Time GetReq()  const { return _req;  }
 
-    /**
-     * 
-     */
-    // uint &GetRefNum() { return _ref; }
-
-    uint GetCutNum() { return _num_cuts; }
-
-    Cut *GetCut(int idx) { return _cut_set + idx; }
-
+    uint GetCutNum()     const { return _num_cuts;                }
+    Cut *GetCut(int idx) const { return _cut_set + idx;           }
+    Cut *GetBestCut()    const { return _cut_set + _best_cut;     }
     Cut *GetTrivialCut() const { return _cut_set + _num_cuts - 1; }
+
+    void SetBestCut(uint idx) { _best_cut = idx; }
 
     void CutEnum(FoxMap *mapper);
 };
@@ -287,7 +288,7 @@ public:
 class Solution
 {
     std::vector<Cut *>  _cuts;
-    std::vector<uint>   _ref_counter;
+    std::vector<uint>    _ref_counter;
 
     uint    _num_lut[kMaxLutSize + 1] {0};
     uint    _sum_lut  {0};
@@ -306,14 +307,27 @@ public:
 
     bool operator<(const Solution &rhs);
 
-    void Add(uint node, Cut &cut)
+    void Add(uint id, Cut *cut)
     {
-        assert(_cuts[node] == nullptr);
-        _cuts[node] = new Cut(cut);
-        ++_num_lut[cut.size];
+        assert(_cuts[id] == nullptr);
+        _cuts[id] = new Cut(*cut);
+        ++_num_lut[cut->size];
         ++_sum_lut;
-        _sum_edge += cut.size;
+        _sum_edge += cut->size;
     }
+
+    void Remove(uint id)
+    {
+        assert(_cuts[id]);
+        Cut *cut = _cuts[id];
+        _cuts[id] = nullptr;
+        --_num_lut[cut->size];
+        --_sum_lut;
+        _sum_edge -= cut->size;
+        delete cut;
+    }
+
+    FoxMap *Mapper() const { return _mapper; }
 
     Cut *GetSol(uint node) const { return _cuts[node]; }
 
@@ -321,6 +335,11 @@ public:
 
     uint GetLutNum()  const { return _sum_lut;  }
     uint GetEdgeNum() const { return _sum_edge; }
+
+    void Print(const char *algo)
+    {
+        printf("%s: Area = %6d  Edge = %6d\n", algo, GetLutNum(), GetEdgeNum());
+    }
 };
 
 //==----------------------------------------------------------------==//
@@ -383,7 +402,7 @@ private:
     /**
      * Get the node 'idx'
      */
-    Node *GetNode(int idx) const { return Node::_const_1 + idx; }
+    static Node *GetNode(int idx) { return Node::_const_1 + idx; }
 
     /**
      * Get the estimated reference count for node idx
@@ -415,7 +434,7 @@ private:
     /**
      * Get LUT area cost for different input size
      */
-    Area GetLutCost(int size) const { return _lut_lib[size]; }
+    Area GetLutAreaCost(int size) const { return _lut_lib[size]; }
 
     /**
      * Generate mapped network according to final solution
@@ -426,6 +445,8 @@ private:
      * Return the Prune for cut enumeration
      */
     Prune &GetPrune() { _prune.Reset(); return _prune; }
+
+    void ImproveMapping(Solution *mapping);
 
     Cut *SelectBestCut(Solution *curr_map, Cut *cut_set, int num, Algo algo);
 

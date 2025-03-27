@@ -112,9 +112,9 @@ Cut::ComputeCost(Cut *lhs, Cut *rhs, float est_ref_l, float est_ref_r, FoxMap *m
     Algo algo = mapper->GetParam()->curr_algo;
     if (algo == Algo::Praetor)
     {
-        area = mapper->GetLutCost(size);
-        area += (lhs->area - mapper->GetLutCost(lhs->size)) / est_ref_l;
-        area += (rhs->area - mapper->GetLutCost(rhs->size)) / est_ref_r;
+        area = mapper->GetLutAreaCost(size);
+        area += (lhs->area - mapper->GetLutAreaCost(lhs->size)) / est_ref_l;
+        area += (rhs->area - mapper->GetLutAreaCost(rhs->size)) / est_ref_r;
         edge = static_cast<Edge>(size);
         for (int i = 0; i != size; ++i)
         {
@@ -124,7 +124,7 @@ Cut::ComputeCost(Cut *lhs, Cut *rhs, float est_ref_l, float est_ref_r, FoxMap *m
     }
     else if (algo == Algo::Flow)
     {
-        area = mapper->GetLutCost(size);
+        area = mapper->GetLutAreaCost(size);
         edge = static_cast<Edge>(size);
         for (int i = 0; i != size; ++i)
         {
@@ -138,6 +138,41 @@ Cut::ComputeCost(Cut *lhs, Cut *rhs, float est_ref_l, float est_ref_r, FoxMap *m
     {
 
     }
+}
+
+Area
+Cut::RefMFFC(Solution *mapping, bool update)
+{
+    Area area = mapping->Mapper()->GetLutAreaCost(size);
+    for (int i = 0; i != size; ++i)
+    {
+        uint id = leaves[i];
+        if (mapping->GetRefCount(id)++ > 0 || !FoxMap::GetNode(id)->IsAnd())
+            continue;
+        // with/without update, the best cut is always located on the first place
+        Cut *best = FoxMap::GetNode(id)->GetBestCut();
+        if (update)
+            mapping->Add(id, best);
+        area += best->RefMFFC(mapping, update);
+    }
+    return area;
+}
+
+Edge
+Cut::RipMFFC(Solution *mapping, bool update)
+{
+    Edge edge = static_cast<Edge>(size);
+    for (int i = 0; i != size; ++i)
+    {
+        uint id = leaves[i];
+        if (--mapping->GetRefCount(id) > 0 || !FoxMap::GetNode(id)->IsAnd())
+            continue;
+        Cut *curr = update ? mapping->GetSol(id) : FoxMap::GetNode(id)->GetBestCut();
+        edge += curr->RipMFFC(mapping, update);
+        if (update)
+            mapping->Remove(id);
+    }
+    return edge;
 }
 
 void
@@ -232,7 +267,7 @@ Node::CutEnum(FoxMap *mapper)
         trivial_cut->leaves[0] = GetId();
         trivial_cut->sign = GetSign(GetId());
         if (mapper->GetParam()->curr_algo == Algo::Praetor)
-            trivial_cut->area = mapper->GetLutCost(1);
+            trivial_cut->area = mapper->GetLutAreaCost(1);
         return;
     }
 
@@ -274,7 +309,7 @@ Node::CutEnum(FoxMap *mapper)
     trival_cut->leaves[0] = GetId();
     trival_cut->sign = GetSign(GetId());
     if (mapper->GetParam()->curr_algo == Algo::Praetor)
-        trival_cut->area = GetCut(0)->area + mapper->GetLutCost(1);
+        trival_cut->area = GetCut(0)->area + mapper->GetLutAreaCost(1);
     else
         trival_cut->area = GetCut(0)->area;
     trival_cut->edge = GetCut(0)->edge;
@@ -400,7 +435,46 @@ FoxMap::Initialize()
 Cut *
 FoxMap::SelectBestCut(Solution *curr_map, Cut *cut_set, int num, Algo algo)
 {
+    if (algo == Algo::Flow)
+        return cut_set;
     return cut_set;
+}
+
+void
+FoxMap::ImproveMapping(Solution *mapping)
+{
+    for (int i = 0; i != _num_nodes; ++i)
+    {
+        Node *node = GetNode(i);
+        if (!node->IsAnd())
+            continue;
+        const bool refed = mapping->GetRefCount(i);
+        if (refed)
+        {
+            mapping->GetSol(i)->RipMFFC(mapping, true);
+            mapping->Remove(i);
+        }
+        // reorder the cuts for minimal MFFC size
+        int best_idx = -1;
+        for (int m = 0; m != node->GetCutNum() - 1; ++m)
+        {
+            Cut *cut = node->GetCut(m);
+            cut->area = cut->RefMFFC(mapping);
+            cut->edge = cut->RipMFFC(mapping);
+            if (best_idx == -1 || CmpCutAreaEdge(cut, node->GetCut(best_idx), 0.1) == 1)
+                best_idx = m;
+        }
+        // update
+        node->SetBestCut(best_idx);
+        if (refed)
+        {
+            mapping->Add(i, node->GetBestCut());
+            node->GetBestCut()->RefMFFC(mapping, true);
+        }
+    }
+
+    if (_map_param->verbose)
+        mapping->Print("EX");
 }
 
 Solution *
@@ -470,7 +544,7 @@ FoxMap::PerformMapping(Algo algo)
         Cut *best = SelectBestCut(mapping, node->GetCut(0), node->GetCutNum(), algo);
         for (int m = 0; m != best->size; ++m)
             ++mapping->GetRefCount(best->leaves[m]);
-        mapping->Add(i, *best);
+        mapping->Add(i, best);
     }
 
     if (_first_pass)
@@ -479,10 +553,9 @@ FoxMap::PerformMapping(Algo algo)
     auto mapping_end = clock();
 
     if (_map_param->verbose)
-    {
-        const char *algo_str = algo == Algo::Praetor ? "EF" : (algo == Algo::Flow ? "FL" : "EX");
-        printf("%s  Est = %4.1f Area = %6d  Edge = %6d\n", algo_str, estimated, mapping->GetLutNum(), mapping->GetEdgeNum());
-    }
+        mapping->Print(algo == Algo::Praetor ? "EF" : (algo == Algo::Flow ? "FL" : "EX"));
+    
+    ImproveMapping(mapping);
 
     return mapping;
 }
@@ -592,7 +665,10 @@ FoxMap::MapToLut()
     // }
 
     for (int i = 0; i != _map_param->flow_pass_num; ++i)
-        UpdateMapping(PerformMapping(Algo::Flow));
+    {
+        Solution *mapping = PerformMapping(Algo::Flow);
+        UpdateMapping(mapping);
+    }
 
     // mapping solution
     return GenMappedNetwork(_best_mapping);
