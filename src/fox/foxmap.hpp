@@ -55,19 +55,18 @@ class Param
 public:
     /* the parammeters for technology mapping */
     OptTarget    tar               = OptTarget::Timing;
-    Algo         curr_algo         = Algo::Flow;
     bool         verbose           = true;  // print log
     bool         always_enum_cut   = true ; // always enumerates cuts during each mapping pass
 
-    std::size_t  required          = 0;     // the target delay of mapped LUT netlist
     std::size_t  lut_size          = 6;     // max LUT input size
+    std::size_t  required          = 0;     // the target delay of mapped LUT netlist
+    std::size_t  c_value           = 8;     // the cut solution stored for each node
     std::size_t  praetor_pass_num  = 4;     // the number of pass performing with effective area heuristic method
     std::size_t  flow_pass_num     = 4;     // the number of pass performing with area-flow      heuristic method
     std::size_t  exact_pass_num    = 4;     // the number of pass performing with exact area     heuristic method
-    std::size_t  c_value           = 8;     // the cut solution stored for each node
 
-    bool AreaDriven()  const { return tar == OptTarget::Area;        }
-    bool RouteDriven() const { return tar == OptTarget::Routability; }
+    bool AreaDriven()  const { return tar == OptTarget::Area;        }  // area/routability/timing
+    bool RouteDriven() const { return tar == OptTarget::Routability; }  // routability/area/timing
 };
 
 //==----------------------------------------------------------------==//
@@ -279,15 +278,7 @@ public:
      * @brief Reset the status of this prune
      * 
      */
-    void Reset()
-    {
-        std::fill(_temp_cuts, _temp_cuts + _temp_used_num, Cut{});
-        _min_area = 120000000.0f;
-        _temp_used_num = 0;
-        _unified_used_num = 0;
-        _unified_list.resize(_unified_list.size(), nullptr);
-        _indexed_list.resize(kMaxLutSize + 1, std::vector<Cut *>(kUpperValue));
-    }
+    void Reset();
 
     /**
      * @brief pop the stored cuts into cut_set
@@ -387,17 +378,18 @@ public:
 class FoxMap
 {
     /* technology mapping property and flags */
-    Param               *_map_param   {nullptr};   // parammeters of mapping algo
-    Node                *_nodes       {nullptr};   // all nodes
-    uint32_t             _num_nodes   {0};
-    Abc_Ntk_t           *_pAig        {nullptr};   // AIG for mapping
+    Param       *_map_param   {nullptr};        // parammeters of mapping algo
+    Algo         _algo        {Algo::Praetor};  // algorithm during each pass
+    Node        *_nodes       {nullptr};        // all nodes
+    uint32_t     _num_nodes   {0};              // total node number
+    Abc_Ntk_t   *_pAig        {nullptr};        // AIG for mapping
 
     std::vector<Node *>  _prim_inputs;
     std::vector<Node *>  _prim_outputs;
 
     std::vector<uint>    _num_refs;  // real reference count in AIG
     std::vector<float>   _est_refs;  // estimated reference count for next pass
-    std::vector<float>   _lut_lib;
+    std::vector<float>   _lut_lib;   // area cost for different LUT size
 
     double     _cpu_time       {0   };
     double     _wall_time      {0   };
@@ -454,22 +446,18 @@ private:
     Param *GetParam() const { return _map_param; }
 
     /**
+     * @brief Get the algorithm for current mapping
+     * 
+     * @return Algo 
+     */
+    Algo GetAlgo() const { return _algo; }
+
+    /**
      * @brief Update the best mapping solution
      * 
      * @param new_mapping 
      */
-    void UpdateMapping(Solution *new_mapping)
-    {
-        if (!_best_mapping)
-            _best_mapping = new_mapping;
-        else if ((*new_mapping) < (*_best_mapping))
-        {
-            delete _best_mapping;
-            _best_mapping = new_mapping;
-        }
-        else
-            delete new_mapping;
-    }
+    void UpdateMapping(Solution *new_mapping);
 
     /**
      * Get LUT area cost for different input size

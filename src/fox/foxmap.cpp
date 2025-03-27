@@ -109,18 +109,15 @@ FlushCut1:
 void
 Cut::ComputeCost(Cut *lhs, Cut *rhs, float est_ref_l, float est_ref_r, FoxMap *mapper)
 {
-    Algo algo = mapper->GetParam()->curr_algo;
+    Algo algo = mapper->GetAlgo();
     if (algo == Algo::Praetor)
     {
         area = mapper->GetLutAreaCost(size);
         area += (lhs->area - mapper->GetLutAreaCost(lhs->size)) / est_ref_l;
         area += (rhs->area - mapper->GetLutAreaCost(rhs->size)) / est_ref_r;
         edge = static_cast<Edge>(size);
-        for (int i = 0; i != size; ++i)
-        {
-            edge += mapper->GetNode(leaves[i])->GetEdge() / mapper->GetEstRef(leaves[i]);
-        }
-        // TODO: delay
+        edge += (lhs->edge - lhs->size) / est_ref_l;
+        edge += (rhs->edge - rhs->size) / est_ref_r;
     }
     else if (algo == Algo::Flow)
     {
@@ -132,12 +129,12 @@ Cut::ComputeCost(Cut *lhs, Cut *rhs, float est_ref_l, float est_ref_r, FoxMap *m
             area += leaf->GetArea() / mapper->GetEstRef(leaf->GetId());
             edge += leaf->GetEdge() / mapper->GetEstRef(leaf->GetId());
         }
-        // TODO: delay
     }
     else
     {
 
     }
+    
 }
 
 Area
@@ -385,6 +382,17 @@ Prune::Push(Cut *cut)
     return true;
 }
 
+void
+Prune::Reset()
+{
+    std::fill(_temp_cuts, _temp_cuts + _temp_used_num, Cut{});
+    _min_area = 120000000.0f;
+    _temp_used_num = 0;
+    _unified_used_num = 0;
+    _unified_list.resize(_unified_list.size(), nullptr);
+    _indexed_list.resize(kMaxLutSize + 1, std::vector<Cut *>(kUpperValue));
+}
+
 bool
 Solution::operator<(const Solution& rhs)
 {
@@ -455,6 +463,20 @@ FoxMap::Initialize()
     Abc_NtkCleanCopy(_pAig);
 }
 
+void
+FoxMap::UpdateMapping(Solution *new_mapping)
+{
+    if (!_best_mapping)
+        _best_mapping = new_mapping;
+    else if ((*new_mapping) < (*_best_mapping))
+    {
+        delete _best_mapping;
+        _best_mapping = new_mapping;
+    }
+    else
+        delete new_mapping;
+}
+
 Cut *
 FoxMap::SelectBestCut(Solution *curr_map, Cut *cut_set, int num, Algo algo)
 {
@@ -506,7 +528,7 @@ FoxMap::PerformMapping(Algo algo)
     auto mapping_start = clock();
 
     // set the algorithm used for cut cost computation
-    _map_param->curr_algo = algo;
+    _algo = algo;
 
     // recall the best mapping to update reference
     // compute the estimated reference count
@@ -675,17 +697,17 @@ FoxMap::MapToLut()
     _best_mapping = nullptr;
 
     // perform mapping pass with different heuristics
-    // for (int i = 0; i != _map_param->praetor_pass_num; ++i)
-    // {
-    //     Solution *mapping = PerformMapping(Algo::Praetor);
-    //     update_mapping(mapping);
-    // }
-
-    for (int i = 0; i != _map_param->flow_pass_num; ++i)
+    for (int i = 0; i != _map_param->praetor_pass_num; ++i)
     {
-        Solution *mapping = PerformMapping(Algo::Flow);
+        Solution *mapping = PerformMapping(Algo::Praetor);
         UpdateMapping(mapping);
     }
+
+    // for (int i = 0; i != _map_param->flow_pass_num; ++i)
+    // {
+    //     Solution *mapping = PerformMapping(Algo::Flow);
+    //     UpdateMapping(mapping);
+    // }
 
     // mapping solution
     return GenMappedNetwork(_best_mapping);
