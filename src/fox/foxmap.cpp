@@ -143,7 +143,7 @@ Cut::ComputeCost(Cut *lhs, Cut *rhs, float est_ref_l, float est_ref_r, FoxMap *m
 Area
 Cut::RefMFFC(Solution *mapping, bool update)
 {
-    Area area = mapping->Mapper()->GetLutAreaCost(size);
+    Area area = mapping->GetMapper()->GetLutAreaCost(size);
     for (int i = 0; i != size; ++i)
     {
         uint id = leaves[i];
@@ -202,6 +202,13 @@ Cut::ComputeTruth(Cut *lhs, Cut *rhs, int compl0, int compl1)
     if (compl1)
         truth1 = ~truth1;
     truth = truth0 & truth1;
+}
+
+void
+Cut::Print()
+{
+    printf("{Arr %d, Area %.1f, Edge %.1f, cut-set {%4d, %4d, %4d, %4d, %4d, %4d}}\n",
+        arr, area, edge, leaves[0], leaves[1], leaves[2], leaves[3], leaves[4], leaves[5]);
 }
 
 Node::Node(Abc_Obj_t *abc_node) : _num_cuts(0)
@@ -378,12 +385,6 @@ Prune::Push(Cut *cut)
     return true;
 }
 
-Solution::Solution(FoxMap *map) : _mapper(map)
-{
-    _cuts.resize(_mapper->_num_nodes);
-    _ref_counter.resize(_mapper->_num_nodes);
-}
-
 bool
 Solution::operator<(const Solution& rhs)
 {
@@ -396,6 +397,28 @@ Solution::operator<(const Solution& rhs)
     if (GetEdgeNum() > rhs.GetEdgeNum())
         return false;
     return false;
+}
+
+void
+Solution::Remove(uint id)
+{
+    assert(_cuts[id]);
+    Cut *cut = _cuts[id];
+    _cuts[id] = nullptr;
+    --_num_lut[cut->size];
+    --_sum_lut;
+    _sum_edge -= cut->size;
+    delete cut;
+}
+
+void 
+Solution::Add(uint id, Cut *cut)
+{
+    assert(_cuts[id] == nullptr);
+    _cuts[id] = new Cut(*cut);
+    ++_num_lut[cut->size];
+    ++_sum_lut;
+    _sum_edge += cut->size;
 }
 
 void
@@ -486,18 +509,12 @@ FoxMap::PerformMapping(Algo algo)
     _map_param->curr_algo = algo;
 
     // recall the best mapping to update reference
-    // compute the estimizated reference count
+    // compute the estimated reference count
     if (!_first_pass)
     {
         int i = 0;
         for (float &est_ref : _est_refs)
             est_ref = std::max(1u, _best_mapping->GetRefCount(i++));
-        if (_map_param->ref_est_way)
-        {
-            i = 0;
-            for (float &est_ref : _est_refs)
-                est_ref = (_map_param->alpha * est_ref + _num_refs[i++]) / (1.0 + _map_param->alpha);
-        }
     }
 
     Area estimated = 0;
@@ -526,7 +543,7 @@ FoxMap::PerformMapping(Algo algo)
         }
     }
 
-    Solution *mapping = new Solution(this);
+    Solution *mapping = new Solution(this, this->_num_nodes);
     
     // perform cut selection
     for (Node *po : _prim_outputs)

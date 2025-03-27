@@ -58,8 +58,6 @@ public:
     Algo         curr_algo         = Algo::Flow;
     bool         verbose           = true;  // print log
     bool         always_enum_cut   = true ; // always enumerates cuts during each mapping pass
-    int          ref_est_way       = 0;     // 0 (est = last pass), 1 (est = (last + a * init) / (1 + a))
-    float        alpha             = 2.5;   // value for above equation
 
     std::size_t  required          = 0;     // the target delay of mapped LUT netlist
     std::size_t  lut_size          = 6;     // max LUT input size
@@ -96,11 +94,7 @@ struct Cut
      * @brief Print this cut on consol
      * 
      */
-    void Print() const
-    {
-        printf("Area %4.1f Edge %4.1f [%4d, %4d, %4d, %4d, %4d, %4d]\n",
-            area, edge, leaves[0], leaves[1], leaves[2], leaves[3], leaves[4], leaves[5]);
-    }
+    void Print();
 
     /**
      * @brief Compute the cost properties
@@ -121,7 +115,22 @@ struct Cut
      */
     bool MergeCut(Cut *lhs, Cut *rhs, int k);
 
+    /**
+     * @brief Reference the MFFC of this cut
+     * 
+     * @param mapping current mapping solution
+     * @param update update the solution on-the-fly
+     * @return Area 
+     */
     Area RefMFFC(Solution *mapping, bool update = false);
+
+    /**
+     * @brief Rip up the MFFC of this cut
+     * 
+     * @param mapping 
+     * @param update 
+     * @return Edge 
+     */
     Edge RipMFFC(Solution *mapping, bool update = false);
 };
 
@@ -162,8 +171,7 @@ public:
 
     ~Node()
     {
-        if (_cut_set)
-            delete[] _cut_set;
+        delete[] _cut_set;
     }
 
     Node *GetFanin0() const { return _fanin0 == kMaxId ? nullptr : Node::_const_1 + _fanin0; }
@@ -177,28 +185,42 @@ public:
      * 
      * @return uint32_t 
      */
-    uint32_t GetId() const
-    {
-        return this - Node::_const_1;
-    }
+    uint32_t GetId() const { return this - Node::_const_1;}
 
-    bool IsPi()  const { return _type == NodeType::PI;  }
-    bool IsPo()  const { return _type == NodeType::PO;  }
-    bool IsAnd() const { return _type == NodeType::And; }
+    bool IsPi()  const { return _type == NodeType::PI;    }
+    bool IsPo()  const { return _type == NodeType::PO;    }
+    bool IsAnd() const { return _type == NodeType::And;   }
 
-    Area GetArea() const { return _cut_set[0].area; }
-    Edge GetEdge() const { return _cut_set[0].edge; }
-    Time GetArr()  const { return _arr;  }
-    Time GetReq()  const { return _req;  }
+    Area GetArea()       const { return _cut_set[0].area;         }
+    Edge GetEdge()       const { return _cut_set[0].edge;         }
+    Time GetArr()        const { return _arr;                     }
+    Time GetReq()        const { return _req;                     }
 
     uint GetCutNum()     const { return _num_cuts;                }
     Cut *GetCut(int idx) const { return _cut_set + idx;           }
-    Cut *GetBestCut()    const { return _cut_set + _best_cut;     }
     Cut *GetTrivialCut() const { return _cut_set + _num_cuts - 1; }
 
-    void SetBestCut(uint idx) { _best_cut = idx; }
+    Cut *GetBestCut()    const { return _cut_set + _best_cut;     }
+    void SetBestCut(uint idx)  { _best_cut = idx;                 }
 
+    /**
+     * @brief Perform cut enumeration
+     * 
+     * @param mapper 
+     */
     void CutEnum(FoxMap *mapper);
+};
+
+
+class CutRank
+{
+    static int CmpCutAreaEdge(Cut *lhs, Cut *rhs, float epsilon)
+    {
+        return 1;
+    }
+
+public:
+
 };
 
 
@@ -212,7 +234,7 @@ public:
     {
         NONE,
         UL,     // unified list
-        IDLP,   // indexed list with area-size dominace pruning
+        IDLP,   // indexed list with area-size dominance pruning
         IDL,    // indexed list
     };
 
@@ -288,7 +310,7 @@ public:
 class Solution
 {
     std::vector<Cut *>  _cuts;
-    std::vector<uint>    _ref_counter;
+    std::vector<uint>   _ref_counter;
 
     uint    _num_lut[kMaxLutSize + 1] {0};
     uint    _sum_lut  {0};
@@ -297,7 +319,11 @@ class Solution
     FoxMap *_mapper;
 
 public:
-    Solution(FoxMap *map);
+    Solution(FoxMap *map, uint num) : _mapper(map)
+    {
+        _cuts.resize(num);
+        _ref_counter.resize(num);
+    }
 
     ~Solution()
     {
@@ -305,41 +331,54 @@ public:
             delete cut;
     }
 
-    bool operator<(const Solution &rhs);
+    /**
+     * @brief Get the mapper
+     * 
+     * @return FoxMap* 
+     */
+    FoxMap *GetMapper() const { return _mapper; }
 
-    void Add(uint id, Cut *cut)
-    {
-        assert(_cuts[id] == nullptr);
-        _cuts[id] = new Cut(*cut);
-        ++_num_lut[cut->size];
-        ++_sum_lut;
-        _sum_edge += cut->size;
-    }
-
-    void Remove(uint id)
-    {
-        assert(_cuts[id]);
-        Cut *cut = _cuts[id];
-        _cuts[id] = nullptr;
-        --_num_lut[cut->size];
-        --_sum_lut;
-        _sum_edge -= cut->size;
-        delete cut;
-    }
-
-    FoxMap *Mapper() const { return _mapper; }
-
+    /**
+     * @brief Get the cut solution for node
+     * 
+     */
     Cut *GetSol(uint node) const { return _cuts[node]; }
-
-    uint &GetRefCount(uint id) { return _ref_counter[id]; }
 
     uint GetLutNum()  const { return _sum_lut;  }
     uint GetEdgeNum() const { return _sum_edge; }
 
-    void Print(const char *algo)
-    {
-        printf("%s: Area = %6d  Edge = %6d\n", algo, GetLutNum(), GetEdgeNum());
-    }
+    /**
+     * @brief Get the reference count of node 'id'
+     * 
+     * @param id 
+     * @return uint& 
+     */
+    uint &GetRefCount(uint id) { return _ref_counter[id]; }
+
+    /**
+     * @brief Compare this with rhs, return true if this has better qor
+     * 
+     * @param rhs 
+     */
+    bool operator<(const Solution &rhs);
+
+    /**
+     * @brief Add a solution for node 'id'
+     * 
+     */
+    void Add(uint id, Cut *cut);
+
+    /**
+     * @brief Remove solution for node 'id'
+     * 
+     */
+    void Remove(uint id);
+
+    /**
+     * @brief Print mapping solution briefly
+     * 
+     */
+    void Print(const char *algo) { printf("%s: Area = %6d  Edge = %6d\n", algo, GetLutNum(), GetEdgeNum()); }
 };
 
 //==----------------------------------------------------------------==//
@@ -414,21 +453,22 @@ private:
      */
     Param *GetParam() const { return _map_param; }
 
+    /**
+     * @brief Update the best mapping solution
+     * 
+     * @param new_mapping 
+     */
     void UpdateMapping(Solution *new_mapping)
     {
         if (!_best_mapping)
-        {
             _best_mapping = new_mapping;
-        }
         else if ((*new_mapping) < (*_best_mapping))
         {
             delete _best_mapping;
             _best_mapping = new_mapping;
         }
         else
-        {
             delete new_mapping;
-        }
     }
 
     /**
@@ -446,9 +486,18 @@ private:
      */
     Prune &GetPrune() { _prune.Reset(); return _prune; }
 
+    /**
+     * @brief Improve mapping with MFFC rip up and exact remap
+     * 
+     * @param mapping 
+     */
     void ImproveMapping(Solution *mapping);
 
-    Cut *SelectBestCut(Solution *curr_map, Cut *cut_set, int num, Algo algo);
+    /**
+     * @brief Return the best cut according to algo
+     * 
+     */
+    Cut *SelectBestCut(Solution *mapping, Cut *cut_set, int num, Algo algo);
 
     /**
      * @brief Perform a LUT mapping pass
