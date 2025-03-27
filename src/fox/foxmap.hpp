@@ -55,9 +55,9 @@ public:
     /* the parammeters for technology mapping */
     OptTarget    tar               = OptTarget::Timing;
     Algo         curr_algo         = Algo::Flow;
-    bool         verbose           = true; // print log
+    bool         verbose           = true;  // print log
     bool         always_enum_cut   = true ; // always enumerates cuts during each mapping pass
-    int          ref_est_way       = 0;     // 0 (est = last pass) , 1 (est = (last + a * init) / (1 + a))
+    int          ref_est_way       = 0;     // 0 (est = last pass), 1 (est = (last + a * init) / (1 + a))
     float        alpha             = 2.5;   // value for above equation
 
     std::size_t  required          = 0;     // the target delay of mapped LUT netlist
@@ -209,17 +209,19 @@ class Prune
 public:
     enum class PruneMode
     {
-        None,
-        SIL,
-        SILK,
-        SL
+        NONE,
+        UL,     // unified list
+        IDLP,   // indexed list with area-size dominace pruning
+        IDL,    // indexed list
     };
 
 private:
+    static constexpr uint kUpperValue = 6;  // the max number stored in each indexed list
+
     std::vector<std::vector<Cut *>> _indexed_list;
     std::vector<Cut *>              _unified_list;
 
-    PruneMode _mode {PruneMode::None};
+    PruneMode _mode {PruneMode::NONE};
 
     Area _epsilon   {0.001f      };
     Area _min_area  {120000000.0f};
@@ -235,13 +237,12 @@ public:
         // initialize unified list
         _unified_list.resize(param->c_value + 1, nullptr); // the last one is not used
         // initialize indexed list
-        _indexed_list.resize(kMaxLutSize + 1, std::vector<Cut *>(6));
+        _indexed_list.resize(kMaxLutSize + 1, std::vector<Cut *>(kUpperValue));
     }
 
     ~Prune()
     {
-        if (_temp_cuts)
-            delete[] _temp_cuts;
+        delete[] _temp_cuts;
     }
 
     /**
@@ -262,7 +263,7 @@ public:
         _temp_used_num = 0;
         _unified_used_num = 0;
         _unified_list.resize(_unified_list.size(), nullptr);
-        _indexed_list.resize(kMaxLutSize + 1, std::vector<Cut *>(6));
+        _indexed_list.resize(kMaxLutSize + 1, std::vector<Cut *>(kUpperValue));
     }
 
     /**
@@ -336,8 +337,8 @@ class FoxMap
     std::vector<Node *>  _prim_inputs;
     std::vector<Node *>  _prim_outputs;
 
-    std::vector<uint>    _num_refs;
-    std::vector<float>   _est_refs;
+    std::vector<uint>    _num_refs;  // real reference count in AIG
+    std::vector<float>   _est_refs;  // estimated reference count for next pass
     std::vector<float>   _lut_lib;
 
     double     _cpu_time       {0   };
@@ -355,14 +356,15 @@ public:
     FoxMap(Param *param, Abc_Ntk_t *pAig)
     :   _map_param(param),
         _pAig(pAig),
-        _prune(param, Prune::PruneMode::SIL)
+        _prune(param, Prune::PruneMode::UL)
     {
         _lut_lib.resize(10, 1.0000f);
     }
 
     ~FoxMap()
     {
-        delete []GetNode(0);
+        delete[] GetNode(0);
+        delete _best_mapping;
     }
 
     /**
@@ -392,6 +394,23 @@ private:
      * Get the mapping parameters
      */
     Param *GetParam() const { return _map_param; }
+
+    void UpdateMapping(Solution *new_mapping)
+    {
+        if (!_best_mapping)
+        {
+            _best_mapping = new_mapping;
+        }
+        else if ((*new_mapping) < (*_best_mapping))
+        {
+            delete _best_mapping;
+            _best_mapping = new_mapping;
+        }
+        else
+        {
+            delete new_mapping;
+        }
+    }
 
     /**
      * Get LUT area cost for different input size

@@ -390,6 +390,7 @@ FoxMap::Initialize()
                 _prim_outputs.push_back(node);
         
             _num_refs[i] = Abc_ObjFanoutNum(pObj);
+            _est_refs[i] = Abc_ObjFanoutNum(pObj);
         }
     }
 
@@ -406,27 +407,23 @@ Solution *
 FoxMap::PerformMapping(Algo algo)
 {
     auto mapping_start = clock();
+
     // set the algorithm used for cut cost computation
     _map_param->curr_algo = algo;
 
-    // compute the reference count
-    if (_first_pass)
+    // recall the best mapping to update reference
+    // compute the estimizated reference count
+    if (!_first_pass)
     {
         int i = 0;
         for (float &est_ref : _est_refs)
-            est_ref = _num_refs[i++];
-    }
-    else
-    {
-        // if (_map_param->ref_est_way)
-        // {
-        //     int i = 0;
-        //     for (float &est_ref : _est_refs)
-        //     {
-        //         est_ref = (_map_param->alpha * est_ref + _num_refs[i++]) / (1.0 + _map_param->alpha);
-        //         assert(est_ref);
-        //     }
-        // }
+            est_ref = std::max(1u, _best_mapping->GetRefCount(i++));
+        if (_map_param->ref_est_way)
+        {
+            i = 0;
+            for (float &est_ref : _est_refs)
+                est_ref = (_map_param->alpha * est_ref + _num_refs[i++]) / (1.0 + _map_param->alpha);
+        }
     }
 
     Area estimated = 0;
@@ -475,11 +472,6 @@ FoxMap::PerformMapping(Algo algo)
             ++mapping->GetRefCount(best->leaves[m]);
         mapping->Add(i, *best);
     }
-
-    // update reference counter
-    int i = 0;
-    for (float &ref : _est_refs)
-        ref = static_cast<float>(mapping->GetRefCount(i++));
 
     if (_first_pass)
         _first_pass = false;
@@ -590,19 +582,7 @@ FoxMap::MapToLut()
 
     // set up LUT library
 
-    // the mapping, which is always the best one
-    Solution *curr_mapping = nullptr;
-
-    auto update_mapping = [&curr_mapping](Solution *new_mapping) -> void {
-        if (!curr_mapping)
-            curr_mapping = new_mapping;
-        else if ((*new_mapping) < (*curr_mapping)) {
-            delete curr_mapping;
-            curr_mapping = new_mapping;
-        } else {
-            delete new_mapping;
-        }
-    };
+    _best_mapping = nullptr;
 
     // perform mapping pass with different heuristics
     // for (int i = 0; i != _map_param->praetor_pass_num; ++i)
@@ -612,16 +592,10 @@ FoxMap::MapToLut()
     // }
 
     for (int i = 0; i != _map_param->flow_pass_num; ++i)
-    {
-        Solution *mapping = PerformMapping(Algo::Flow);
-        update_mapping(mapping);
-        int k = 0;
-        for (float &est_ref : _est_refs)
-            est_ref = static_cast<float>(curr_mapping->GetRefCount(k++));
-    }
+        UpdateMapping(PerformMapping(Algo::Flow));
 
     // mapping solution
-    return GenMappedNetwork(curr_mapping);
+    return GenMappedNetwork(_best_mapping);
 }
 
 } // namespace foxmap
