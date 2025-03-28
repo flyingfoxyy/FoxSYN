@@ -289,12 +289,6 @@ Node::CutEnum(FoxMap *mapper)
 
     }
 
-    if (_cut_set)
-    {
-        delete[] _cut_set;
-        _num_cuts = 0;
-    }
-
     Prune &prune = mapper->GetPrune();
 
     Node *fanin0 = GetFanin0();
@@ -326,7 +320,7 @@ Node::CutEnum(FoxMap *mapper)
     }
 
     // pop the cuts
-    _num_cuts = prune.Pop(_cut_set, _num_cuts);
+    _num_cuts = 1 + prune.Pop(_cut_set, _num_cuts);
 
     // create trivial cut
     Cut *trival_cut = GetTrivialCut();
@@ -377,19 +371,19 @@ Prune::Pop(Cut *&cut_set, uint capacity)
         std::reverse(cuts.begin(), cuts.end());
     }
 
-    // copy candidats of cuts into cut_set
-    int cut_num = cuts.size() + 1;
-    cut_set = new Cut[cut_num];
-    // if (capacity < cut_num)
-    // {
-    //     delete[] cut_set;
-        
-    // }
+    if (capacity < cuts.size() + 1)
+    {
+        delete cut_set;
+        cut_set = new Cut[cuts.size() + 1];        
+    }
+    else
+        std::fill(cut_set, cut_set + capacity, Cut{});
 
+    // copy candidats of cuts into cut_set
     for (int i = 0; i != cuts.size(); ++i)
         cut_set[i] = *cuts[i];
 
-    return cut_num;
+    return cuts.size();
 }
 
 bool
