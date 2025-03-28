@@ -42,16 +42,24 @@ int Foxmap_Command(Abc_Frame_t *pAbc, int argc, char **argv)
         case 'r':
             param.tar = OptTarget::Routability;
             break;
+        case 'E':
+            param.praetor_pass_num = std::atoi(argv[++i]);
+            if (param.praetor_pass_num < 0)
+            {
+                printf("foxmap: invalid pass number %ld\n", param.praetor_pass_num);
+                return 1;
+            }
+            break;
         case 'F':
-            param.flow_pass_num = *(argv[++i] + 1) - '0';
-            if (param.flow_pass_num <= 0)
+            param.flow_pass_num = std::atoi(argv[++i]);
+            if (param.flow_pass_num < 0)
             {
                 printf("foxmap: invalid pass number %ld\n", param.flow_pass_num);
                 return 1;
             }
             break;
         case 'k':
-            param.lut_size = *(argv[++i] + 1) - '0';
+            param.lut_size = std::atoi(argv[++i]);
             if (param.lut_size > 6 || param.lut_size < 2)
             {
                 printf("foxmap: invalid LUT size %ld\n", param.lut_size);

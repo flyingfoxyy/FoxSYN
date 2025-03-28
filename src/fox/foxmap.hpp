@@ -256,7 +256,6 @@ private:
     Area _epsilon   {0.001f  };
     Area _min_area  {kMaxArea};
 
-    uint _unified_used_num {0};
     uint _temp_used_num    {0};
     Cut *_temp_cuts {nullptr};
 
@@ -458,6 +457,8 @@ public:
     Abc_Ntk_t *MapToLut();
 
 private:
+
+    void Print();
 
     std::size_t NumPi()  const  { return _prim_inputs.size();  }
     std::size_t NumPo()  const  { return _prim_outputs.size(); }
