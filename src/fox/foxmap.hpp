@@ -199,6 +199,8 @@ public:
 
     Cut *GetBestCut()    const { return _cut_set + _best_cut;     }
     void SetBestCut(uint idx)  { _best_cut = idx;                 }
+
+    void Print();
     
     /**
      * @brief Perform cut enumeration

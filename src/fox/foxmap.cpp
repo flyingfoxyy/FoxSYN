@@ -326,8 +326,21 @@ Node::CutEnum(FoxMap *mapper)
     Cut *trival_cut = GetTrivialCut();
     trival_cut->sign = GetSign(GetId());
     trival_cut->leaves[0] = GetId();
-    trival_cut->edge = mapper->GetLutEdgeCost(1);
-    trival_cut->area = mapper->GetLutAreaCost(1);
+    trival_cut->edge = GetCut(0)->area;
+    trival_cut->area = GetCut(0)->edge;
+    if (mapper->GetAlgo() == Algo::Praetor)
+    {
+        trival_cut->area += mapper->GetLutAreaCost(1);
+        trival_cut->edge += mapper->GetLutEdgeCost(1);
+    }
+}
+
+void
+Node::Print()
+{
+    printf("node: %d, cut num: %d\n", GetId(), _num_cuts);
+    for (int i = 0; i != _num_cuts; ++i)
+        GetCut(i)->Print();
 }
 
 int 
@@ -346,7 +359,6 @@ Prune::Pop(Cut *&cut_set, uint capacity)
             else
                 break;
         }
-        std::fill(_unified_list.begin(), _unified_list.end(), nullptr);
     }
     else if (_mode == PruneMode::IDLP)
     {
@@ -360,13 +372,12 @@ Prune::Pop(Cut *&cut_set, uint capacity)
             for (int m = list.size() - 2; m != -1; --m)
             {
                 Cut *cut = list[m];
-                if (cut && cut->area < _min_area + 1.000 && cut->area + _epsilon < prev_one_area)
+                if (cut && cut->area < _min_area + 1.000 && cut->area < prev_one_area)
                 {
                     cuts.push_back(cut);
                     prev_one_area = cut->area;
                 }
             }
-            std::fill(list.begin(), list.end(), nullptr);
         }
         std::reverse(cuts.begin(), cuts.end());
     }
@@ -621,17 +632,17 @@ FoxMap::PerformMapping(Algo algo)
         // update the cut cost
     }
 
-    // if (_map_param->verbose)
-    // {
-    //     Area estimated = 0;
-    //     for (Node *node : _prim_outputs)
-    //     {
-    //         Node *fanin = node->GetFanin0();
-    //         if (fanin && fanin->IsAnd())
-    //             estimated += fanin->GetArea() / GetEstRef(node->GetFanin0Id());
-    //     }
-    //     printf("-- Est = %.1f  ", estimated);
-    // }
+    if (_map_param->verbose)
+    {
+        Area estimated = 0;
+        for (Node *node : _prim_outputs)
+        {
+            Node *fanin = node->GetFanin0();
+            if (fanin && fanin->IsAnd())
+                estimated += fanin->GetArea() / GetEstRef(node->GetFanin0Id());
+        }
+        printf("-- Est = %.1f  \n", estimated);
+    }
 
     Solution *mapping = new Solution(this, this->_num_nodes);
 
@@ -766,12 +777,12 @@ FoxMap::MapToLut()
     _best_mapping = nullptr;
 
     // perform mapping pass with different heuristics
-    // for (int i = 0; i != _map_param->praetor_pass_num; ++i)
-    // {
-    //     _prune.SetMode(Prune::PruneMode::IDLP);
-    //     Solution *mapping = PerformMapping(Algo::Praetor);
-    //     UpdateMapping(mapping);
-    // }
+    for (int i = 0; i != _map_param->praetor_pass_num; ++i)
+    {
+        _prune.SetMode(Prune::PruneMode::IDLP);
+        Solution *mapping = PerformMapping(Algo::Praetor);
+        UpdateMapping(mapping);
+    }
 
     for (int i = 0; i != _map_param->flow_pass_num; ++i)
     {
