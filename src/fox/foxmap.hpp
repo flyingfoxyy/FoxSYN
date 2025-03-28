@@ -13,6 +13,7 @@
 #include <vector>
 #include <functional>
 #include <cstdint>
+#include <cstring>
 
 #include "utility.hpp"
 
@@ -22,9 +23,10 @@ namespace fox
 {
 namespace foxmap
 {
-constexpr uint32_t kMaxLutSize = 6;
-constexpr uint32_t kMaxId      = 123456789;
-constexpr uint32_t kMaxCutNum  = 16;
+constexpr uint kMaxLutSize = 6;
+constexpr uint kMaxId      = 123456789;
+constexpr uint kMaxCutNum  = 16;
+constexpr uint kMaxArea    = 1234500000.0f;
 
 class Param;
 class Node;
@@ -34,8 +36,8 @@ class Solution;
 
 using Area  = float;
 using Edge  = float;
-using Time  = uint32_t;
-using Sign  = uint32_t;
+using Time  = uint;
+using Sign  = uint;
 using word  = uint64_t;
 using rank  = std::function<int(Cut *lhs, Cut *rhs, float epsilon)>;
 
@@ -60,7 +62,7 @@ public:
 
     std::size_t  lut_size          = 6;     // max LUT input size
     std::size_t  required          = 0;     // the target delay of mapped LUT netlist
-    std::size_t  c_value           = 8;     // the cut solution stored for each node
+    std::size_t  c_value           = 8;     // the cut number stored for each node (exclude trivial cut)
     std::size_t  praetor_pass_num  = 4;     // the number of pass performing with effective area heuristic method
     std::size_t  flow_pass_num     = 4;     // the number of pass performing with area-flow      heuristic method
     std::size_t  exact_pass_num    = 4;     // the number of pass performing with exact area     heuristic method
@@ -173,25 +175,21 @@ public:
         delete[] _cut_set;
     }
 
-    Node *GetFanin0() const { return _fanin0 == kMaxId ? nullptr : Node::_const_1 + _fanin0; }
-    Node *GetFanin1() const { return _fanin1 == kMaxId ? nullptr : Node::_const_1 + _fanin1; }
+    Node *GetFanin0()  const { return _fanin0 == kMaxId ? nullptr : Node::_const_1 + _fanin0; }
+    Node *GetFanin1()  const { return _fanin1 == kMaxId ? nullptr : Node::_const_1 + _fanin1; }
 
     uint GetFanin0Id() const { return _fanin0; }
     uint GetFanin1Id() const { return _fanin1; }
-    
-    /**
-     * @brief Get the Node Id
-     * 
-     * @return uint32_t 
-     */
-    uint32_t GetId() const { return this - Node::_const_1;}
+
+    uint GetId() const { return this - Node::_const_1;}
 
     bool IsPi()  const { return _type == NodeType::PI;    }
     bool IsPo()  const { return _type == NodeType::PO;    }
     bool IsAnd() const { return _type == NodeType::And;   }
 
-    Area GetArea()       const { return _cut_set[0].area;         }
-    Edge GetEdge()       const { return _cut_set[0].edge;         }
+    Area GetArea()       const { return IsPi() ? 0 : _cut_set[0].area; }
+    Edge GetEdge()       const { return IsPi() ? 0 : _cut_set[0].edge; }
+
     Time GetArr()        const { return _arr;                     }
     Time GetReq()        const { return _req;                     }
 
@@ -201,7 +199,7 @@ public:
 
     Cut *GetBestCut()    const { return _cut_set + _best_cut;     }
     void SetBestCut(uint idx)  { _best_cut = idx;                 }
-
+    
     /**
      * @brief Perform cut enumeration
      * 
@@ -238,34 +236,46 @@ public:
     };
 
 private:
-    static constexpr uint kUpperValue = 6;  // the max number stored in each indexed list
+    std::vector<std::vector<int>> _size_upper {
+        {0},
+        {0, 0},
+        {0, 0, 0},
+        {0, 0, 0, 0},
+        {0, 0, 0, 0, 0},
+        {0, 0, 0, 0, 0, 0},
+        {0, 0, 1, 1, 1, 2, 3}
+    };
 
     std::vector<std::vector<Cut *>> _indexed_list;
     std::vector<Cut *>              _unified_list;
 
     PruneMode _mode {PruneMode::NONE};
 
-    Area _epsilon   {0.001f      };
-    Area _min_area  {120000000.0f};
+    Area _epsilon   {0.001f  };
+    Area _min_area  {kMaxArea};
 
-    uint _unified_used_num  {0};
-    uint _temp_used_num     {0};
-
+    uint _unified_used_num {0};
+    uint _temp_used_num    {0};
     Cut *_temp_cuts {nullptr};
 
 public:
-    Prune(Param *param, PruneMode mode) : _mode(mode), _temp_cuts(new Cut[(kMaxCutNum + 1) * (kMaxCutNum + 1)])
+    Prune(Param *param) : _temp_cuts(new Cut[(kMaxCutNum + 1) * (kMaxCutNum + 1)])
     {
         // initialize unified list
         _unified_list.resize(param->c_value + 1, nullptr); // the last one is not used
         // initialize indexed list
-        _indexed_list.resize(kMaxLutSize + 1, std::vector<Cut *>(kUpperValue));
+        const int k = param->lut_size;
+        _indexed_list.resize(k + 1);
+        for (int i = 0 ; i != _indexed_list.size(); ++i)
+            _indexed_list[i].resize(_size_upper[k][i] + 1);
     }
 
     ~Prune()
     {
         delete[] _temp_cuts;
     }
+
+    void SetMode(PruneMode mode) { _mode = mode; }
 
     /**
      * @brief Get the a general cut candidate
@@ -285,7 +295,7 @@ public:
      * 
      * @param cut_set 
      */
-    int Pop(Cut *&cut_set);
+    int Pop(Cut *&cut_set, uint capacity);
 
     /**
      * @brief push a cut into storage
@@ -369,7 +379,10 @@ public:
      * @brief Print mapping solution briefly
      * 
      */
-    void Print(const char *algo) { printf("%s: Area = %6d  Edge = %6d\n", algo, GetLutNum(), GetEdgeNum()); }
+    void Print(const char *algo, float time)
+    {
+        printf("%s: Area = %6d  Edge = %6d  Time = %.1f\n", algo, GetLutNum(), GetEdgeNum(), time);
+    }
 };
 
 //==----------------------------------------------------------------==//
@@ -377,6 +390,25 @@ public:
 //==----------------------------------------------------------------==//
 class FoxMap
 {
+    struct LutCostLib
+    {
+        float area_cost[2][kMaxLutSize + 1]
+        {
+            {0, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00},
+            {0, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00},
+        };
+        float edge_cost[2][kMaxLutSize + 1]
+        {
+            {0, 1.00, 2.00, 3.00, 4.00, 5.00, 6.00},
+            {0, 1.00, 2.00, 3.00, 4.00, 5.00, 6.00},
+        };
+
+        /**
+         * Sync LUT area cost according to ABC LUT library
+         */
+        void SyncUserLib();
+    } _lut_lib;
+
     /* technology mapping property and flags */
     Param       *_map_param   {nullptr};        // parammeters of mapping algo
     Algo         _algo        {Algo::Praetor};  // algorithm during each pass
@@ -389,7 +421,6 @@ class FoxMap
 
     std::vector<uint>    _num_refs;  // real reference count in AIG
     std::vector<float>   _est_refs;  // estimated reference count for next pass
-    std::vector<float>   _lut_lib;   // area cost for different LUT size
 
     double     _cpu_time       {0   };
     double     _wall_time      {0   };
@@ -406,9 +437,9 @@ public:
     FoxMap(Param *param, Abc_Ntk_t *pAig)
     :   _map_param(param),
         _pAig(pAig),
-        _prune(param, Prune::PruneMode::UL)
+        _prune(param)
     {
-        _lut_lib.resize(10, 1.0000f);
+        // _lut_lib.SyncUserLib();
     }
 
     ~FoxMap()
@@ -438,7 +469,7 @@ private:
     /**
      * Get the estimated reference count for node idx
      */
-    float GetEstRef(uint id) const { return _est_refs[id]; }
+    float GetEstRef(uint id) const { assert(_est_refs[id]); return _est_refs[id]; }
 
     /**
      * Get the mapping parameters
@@ -446,7 +477,7 @@ private:
     Param *GetParam() const { return _map_param; }
 
     /**
-     * @brief Get the algorithm for current mapping
+     * @brief Get the algorithm for current mapping pass
      * 
      * @return Algo 
      */
@@ -462,7 +493,12 @@ private:
     /**
      * Get LUT area cost for different input size
      */
-    Area GetLutAreaCost(int size) const { return _lut_lib[size]; }
+    Area GetLutAreaCost(int size) const { return _lut_lib.area_cost[0][size]; }
+
+    /**
+     * Get LUT edge cost for different input size
+     */
+    Area GetLutEdgeCost(int size) const { return _lut_lib.edge_cost[0][size]; }
 
     /**
      * Generate mapped network according to final solution

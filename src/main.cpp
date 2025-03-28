@@ -39,6 +39,17 @@ int Foxmap_Command(Abc_Frame_t *pAbc, int argc, char **argv)
         case 'v':
             param.verbose = true;
             break;
+        case 'r':
+            param.tar = OptTarget::Routability;
+            break;
+        case 'F':
+            param.flow_pass_num = *(argv[++i] + 1) - '0';
+            if (param.flow_pass_num <= 0)
+            {
+                printf("foxmap: invalid pass number %ld\n", param.flow_pass_num);
+                return 1;
+            }
+            break;
         case 'k':
             param.lut_size = *(argv[++i] + 1) - '0';
             if (param.lut_size > 6 || param.lut_size < 2)
@@ -88,11 +99,10 @@ usage:
     Abc_Print(-2, "\t-k num   : the number of LUT inputs (2 < num < %d) [default = %d]\n", kMaxLutSize + 1, kMaxLutSize);
     Abc_Print(-2, "\t-E num   : the number of effective area iterations (num >= 0) [default = %d]\n", param.praetor_pass_num);
     Abc_Print(-2, "\t-F num   : the number of area flow iterations (num >= 0) [default = %d]\n", param.flow_pass_num);
-    Abc_Print(-2, "\t-A num   : the number of exact area recovery iterations (num >= 0) [default = %d]\n", param.exact_pass_num);
     Abc_Print(-2, "\t-a       : toggles area-oriented technology mapping\n");
+    Abc_Print(-2, "\t-r       : toggles routability-oriented technology mapping\n");
     Abc_Print(-2, "\t-v       : toggles verbose log print\n");
     Abc_Print(-2, "\n");
-    Abc_Print(-2, "\t         This command is contributed by Longfei Fan. E-mail: changqingfans@gmail.com\n");
 
     return 1;
 }

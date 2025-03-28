@@ -8,10 +8,13 @@
 \============================================================================*/
 
 #include <iostream>
+#include <algorithm>
 
 #include "foxmap.hpp"
 
 #include "misc/util/utilTruth.h"
+#include "base/main/main.h"
+#include "map/if/if.h"
 
 namespace fox
 {
@@ -28,6 +31,23 @@ static int CmpCutAreaEdge(Cut *lhs, Cut *rhs, float epsilon)
     if (lhs->edge + epsilon < rhs->edge)
         return 1;
     if (lhs->edge - epsilon > rhs->edge)
+        return -1;
+    if (lhs->size < rhs->size)
+        return 1;
+    if (lhs->size > rhs->size)
+        return -1;
+    return 0;
+}
+
+static int CmpCutEdgeArea(Cut *lhs, Cut *rhs, float epsilon)
+{
+    if (lhs->edge + epsilon < rhs->edge)
+        return 1;
+    if (lhs->edge - epsilon > rhs->edge)
+        return -1;
+    if (lhs->area + epsilon < rhs->area)
+        return 1;
+    if (lhs->area - epsilon > rhs->area)
         return -1;
     if (lhs->size < rhs->size)
         return 1;
@@ -115,14 +135,14 @@ Cut::ComputeCost(Cut *lhs, Cut *rhs, float est_ref_l, float est_ref_r, FoxMap *m
         area = mapper->GetLutAreaCost(size);
         area += (lhs->area - mapper->GetLutAreaCost(lhs->size)) / est_ref_l;
         area += (rhs->area - mapper->GetLutAreaCost(rhs->size)) / est_ref_r;
-        edge = static_cast<Edge>(size);
-        edge += (lhs->edge - lhs->size) / est_ref_l;
-        edge += (rhs->edge - rhs->size) / est_ref_r;
+        edge = mapper->GetLutEdgeCost(size);
+        edge += (lhs->edge - mapper->GetLutEdgeCost(lhs->size)) / est_ref_l;
+        edge += (rhs->edge - mapper->GetLutEdgeCost(rhs->size)) / est_ref_r;
     }
     else if (algo == Algo::Flow)
     {
         area = mapper->GetLutAreaCost(size);
-        edge = static_cast<Edge>(size);
+        edge = mapper->GetLutEdgeCost(size);
         for (int i = 0; i != size; ++i)
         {
             Node *leaf = mapper->GetNode(leaves[i]);
@@ -134,7 +154,8 @@ Cut::ComputeCost(Cut *lhs, Cut *rhs, float est_ref_l, float est_ref_r, FoxMap *m
     {
 
     }
-    
+    // compuate arrival time
+
 }
 
 Area
@@ -158,7 +179,7 @@ Cut::RefMFFC(Solution *mapping, bool update)
 Edge
 Cut::RipMFFC(Solution *mapping, bool update)
 {
-    Edge edge = static_cast<Edge>(size);
+    Edge edge = mapping->GetMapper()->GetLutEdgeCost(size);
     for (int i = 0; i != size; ++i)
     {
         uint id = leaves[i];
@@ -183,7 +204,7 @@ Cut::ComputeTruth(Cut *lhs, Cut *rhs, int compl0, int compl1)
             if (cut->leaves[i] > sub->leaves[k])
                 continue;
             // assert(cut->leaves[i]->id() == sub->leaves[k]->id());
-            if ( k < i )
+            if (k < i)
                 Abc_TtSwapVars(pTruth0, nVars, k, i);
             k--;
         }
@@ -225,9 +246,12 @@ Node::Node(Abc_Obj_t *abc_node) : _num_cuts(0)
     switch (Abc_ObjType(abc_node))
     {
     case ABC_OBJ_PI:
-        _type   = NodeType::PI;
-        _fanin0 = kMaxId;
-        _fanin1 = kMaxId;
+        _type    = NodeType::PI;
+        _fanin0  = kMaxId;
+        _fanin1  = kMaxId;
+        _cut_set = new Cut[_num_cuts = 1];
+        _cut_set->leaves[0] = Abc_ObjId(abc_node);
+        _cut_set->sign = GetSign(Abc_ObjId(abc_node));
         break;
     case ABC_OBJ_PO:
         _type   = NodeType::PO;
@@ -253,26 +277,22 @@ Node::Node(Abc_Obj_t *abc_node) : _num_cuts(0)
 void
 Node::CutEnum(FoxMap *mapper)
 {
-    if (!IsPi() && !IsAnd())
+    if (IsPi())
+    {
+        GetTrivialCut()->area = mapper->GetAlgo() == Algo::Praetor ? mapper->GetLutAreaCost(1) : 0;
+        GetTrivialCut()->edge = mapper->GetAlgo() == Algo::Praetor ? mapper->GetLutEdgeCost(1) : 0;
         return;
+    }
+
+    if (IsPo())
+    {
+
+    }
 
     if (_cut_set)
     {
-        assert(mapper->GetParam()->always_enum_cut);
         delete[] _cut_set;
-        _cut_set = nullptr;
-    }
-
-    if (IsPi())
-    {
-        _num_cuts = 1;
-        _cut_set = new Cut[1];
-        Cut *trivial_cut = GetTrivialCut();
-        trivial_cut->leaves[0] = GetId();
-        trivial_cut->sign = GetSign(GetId());
-        if (mapper->GetParam()->curr_algo == Algo::Praetor)
-            trivial_cut->area = mapper->GetLutAreaCost(1);
-        return;
+        _num_cuts = 0;
     }
 
     Prune &prune = mapper->GetPrune();
@@ -282,7 +302,6 @@ Node::CutEnum(FoxMap *mapper)
 
     float est_ref0 = mapper->GetEstRef(_fanin0);
     float est_ref1 = mapper->GetEstRef(_fanin1);
-
     const int k = mapper->GetParam()->lut_size;
 
     // merge the cuts from fanins
@@ -300,77 +319,109 @@ Node::CutEnum(FoxMap *mapper)
                 continue;
             cut->sign = lhs->sign | rhs->sign;
             cut->ComputeCost(lhs, rhs, est_ref0, est_ref1, mapper);
+
             if (prune.Push(cut))
                 cut->ComputeTruth(lhs, rhs, _compl0, _compl1);
         }
     }
 
     // pop the cuts
-    _num_cuts = prune.Pop(_cut_set);
+    _num_cuts = prune.Pop(_cut_set, _num_cuts);
 
     // create trivial cut
     Cut *trival_cut = GetTrivialCut();
-    trival_cut->leaves[0] = GetId();
     trival_cut->sign = GetSign(GetId());
-    if (mapper->GetParam()->curr_algo == Algo::Praetor)
-        trival_cut->area = GetCut(0)->area + mapper->GetLutAreaCost(1);
-    else
-        trival_cut->area = GetCut(0)->area;
-    trival_cut->edge = GetCut(0)->edge;
+    trival_cut->leaves[0] = GetId();
+    trival_cut->edge = mapper->GetLutEdgeCost(1);
+    trival_cut->area = mapper->GetLutAreaCost(1);
 }
 
 int 
-Prune::Pop(Cut *&cut_set)
+Prune::Pop(Cut *&cut_set, uint capacity)
 {
+    // a cut-set to store cuts in temp
     std::vector<Cut *> cuts;
-    for (auto it = _unified_list.begin(); it != _unified_list.end(); ++it)
+    cuts.reserve(kMaxCutNum);
+
+    if (_mode == PruneMode::UL)
     {
-        if (*it)
-            cuts.push_back(*it);
-        else
-            break;
+        for (auto it = _unified_list.begin(); it != _unified_list.end(); ++it)
+        {
+            if (*it)
+                cuts.push_back(*it);
+            else
+                break;
+        }
+        std::fill(_unified_list.begin(), _unified_list.end(), nullptr);
     }
-    cut_set = new Cut[cuts.size() + 1];  // extra one for trivial cut
+    else if (_mode == PruneMode::IDLP)
+    {
+        Area prev_one_area = kMaxArea;
+        for (int i = 2; i != _indexed_list.size(); ++i)
+        {
+            std::vector<Cut *> &list = _indexed_list[i];
+            if (!list.front())
+                continue;
+            assert(!list.back());
+            for (int m = list.size() - 2; m != -1; --m)
+            {
+                Cut *cut = list[m];
+                if (cut && cut->area < _min_area + 1.000 && cut->area + _epsilon < prev_one_area)
+                {
+                    cuts.push_back(cut);
+                    prev_one_area = cut->area;
+                }
+            }
+            std::fill(list.begin(), list.end(), nullptr);
+        }
+        std::reverse(cuts.begin(), cuts.end());
+    }
 
-    int cut_num = 0;
-    for (Cut *cut : cuts)
-        cut_set[cut_num++] = *cut;
+    // copy candidats of cuts into cut_set
+    int cut_num = cuts.size() + 1;
+    cut_set = new Cut[cut_num];
+    // if (capacity < cut_num)
+    // {
+    //     delete[] cut_set;
+        
+    // }
 
-    std::fill(_unified_list.begin(), _unified_list.end(), nullptr);
+    for (int i = 0; i != cuts.size(); ++i)
+        cut_set[i] = *cuts[i];
 
-    return cuts.size() + 1;
+    return cut_num;
 }
 
 bool
 Prune::Push(Cut *cut)
 {
-    for (int i = 0; i != _unified_list.size(); ++i)
+    if (_mode == PruneMode::IDLP && cut->area > _min_area + 1.000)
+        return false;
+
+    _min_area = std::min(_min_area, cut->area);
+
+    std::vector<Cut *> &cut_list = _mode == PruneMode::UL ? _unified_list : _indexed_list[cut->size];
+
+    for (int i = 0; i != cut_list.size(); ++i)
     {
         // rank to the last one
-        if (!_unified_list[i])
+        if (!cut_list[i])
         {
-            if (i == _unified_list.size() - 1)
-            {
-                assert(_unified_used_num == _unified_list.size() - 1);
+            if (i == cut_list.size() - 1)
                 return false;
-            }
-            _unified_list[i] = cut;
-            _unified_used_num++;
-            assert(_unified_list[i - 1]);
+            cut_list[i] = cut;
             return true;
         }
         // compare with current cut
-        const int cmp_res = CmpCutAreaEdge(cut, _unified_list[i], _epsilon);
+        const int cmp_res = CmpCutAreaEdge(cut, cut_list[i], _epsilon);
         // win
         if (cmp_res == 1)
         {
-            for (int m = std::min(_unified_list.size() - 1, (std::size_t)_unified_used_num); m != i; --m)
-                _unified_list[m] = _unified_list[m - 1];
-            _unified_list[i] = cut;
-            if (_unified_list.back())
-                _unified_list.back() = nullptr;
-            else
-                _unified_used_num++;
+            for (int m = cut_list.size() - 1; m != i; --m)
+                cut_list[m] = cut_list[m - 1];
+            cut_list[i] = cut;
+            if (cut_list.back())
+                cut_list.back() = nullptr;
             return true;
         }
         // same quality, only keep one
@@ -386,11 +437,12 @@ void
 Prune::Reset()
 {
     std::fill(_temp_cuts, _temp_cuts + _temp_used_num, Cut{});
-    _min_area = 120000000.0f;
+    _min_area = kMaxArea;
     _temp_used_num = 0;
     _unified_used_num = 0;
     _unified_list.resize(_unified_list.size(), nullptr);
-    _indexed_list.resize(kMaxLutSize + 1, std::vector<Cut *>(kUpperValue));
+    for (auto &&vector: _indexed_list)
+        vector.resize(vector.size(), nullptr);
 }
 
 bool
@@ -478,23 +530,45 @@ FoxMap::UpdateMapping(Solution *new_mapping)
 }
 
 Cut *
-FoxMap::SelectBestCut(Solution *curr_map, Cut *cut_set, int num, Algo algo)
+FoxMap::SelectBestCut(Solution *curr_map, Cut *cut_set, int cut_num, Algo algo)
 {
     if (algo == Algo::Flow)
         return cut_set;
-    return cut_set;
+    // for praetor, we compute cut cost arrocrding to realtime mapping
+    auto compute_cost = [curr_map, this](Cut *cut)
+    {
+        cut->area = this->GetLutAreaCost(cut->size);
+        cut->edge = this->GetLutAreaCost(cut->edge);
+        for (int i = 0; i != cut->size; ++i)
+        {
+            uint leaf = cut->leaves[i];
+            cut->area += curr_map->GetRefCount(leaf) ? 0 : GetNode(leaf)->GetArea() / GetEstRef(leaf);
+            cut->edge += curr_map->GetRefCount(leaf) ? 0 : GetNode(leaf)->GetEdge() / GetEstRef(leaf);
+        }
+    };
+    Cut *winner = cut_set;
+    compute_cost(winner);
+    for (int i = 1; i != cut_num - 1; ++i)
+    {
+        compute_cost(cut_set + i);
+        if (CmpCutAreaEdge(cut_set + i, winner, 0.001) == 1)
+            winner = cut_set + i;
+    }
+    return winner;
 }
 
 void
 FoxMap::ImproveMapping(Solution *mapping)
 {
+    auto start = clock();
+
     for (int i = 0; i != _num_nodes; ++i)
     {
         Node *node = GetNode(i);
         if (!node->IsAnd())
             continue;
-        const bool refed = mapping->GetRefCount(i);
-        if (refed)
+        const bool referenced = mapping->GetRefCount(i);
+        if (referenced)
         {
             mapping->GetSol(i)->RipMFFC(mapping, true);
             mapping->Remove(i);
@@ -511,7 +585,7 @@ FoxMap::ImproveMapping(Solution *mapping)
         }
         // update
         node->SetBestCut(best_idx);
-        if (refed)
+        if (referenced)
         {
             mapping->Add(i, node->GetBestCut());
             node->GetBestCut()->RefMFFC(mapping, true);
@@ -519,7 +593,7 @@ FoxMap::ImproveMapping(Solution *mapping)
     }
 
     if (_map_param->verbose)
-        mapping->Print("EX");
+        mapping->Print("EX", (clock() - start) / (float)CLOCKS_PER_SEC);
 }
 
 Solution *
@@ -539,8 +613,6 @@ FoxMap::PerformMapping(Algo algo)
             est_ref = std::max(1u, _best_mapping->GetRefCount(i++));
     }
 
-    Area estimated = 0;
-
     // enumerate cuts
     if (_map_param->always_enum_cut || _first_pass)
     {
@@ -555,18 +627,20 @@ FoxMap::PerformMapping(Algo algo)
         // update the cut cost
     }
 
-    if (_map_param->verbose)
-    {
-        for (Node *node : _prim_outputs)
-        {
-            Node *fanin = node->GetFanin0();
-            if (fanin && fanin->IsAnd())
-                estimated += fanin->GetArea() / GetEstRef(node->GetFanin0Id());
-        }
-    }
+    // if (_map_param->verbose)
+    // {
+    //     Area estimated = 0;
+    //     for (Node *node : _prim_outputs)
+    //     {
+    //         Node *fanin = node->GetFanin0();
+    //         if (fanin && fanin->IsAnd())
+    //             estimated += fanin->GetArea() / GetEstRef(node->GetFanin0Id());
+    //     }
+    //     printf("-- Est = %.1f  ", estimated);
+    // }
 
     Solution *mapping = new Solution(this, this->_num_nodes);
-    
+
     // perform cut selection
     for (Node *po : _prim_outputs)
     {
@@ -590,9 +664,10 @@ FoxMap::PerformMapping(Algo algo)
         _first_pass = false;
 
     auto mapping_end = clock();
+    auto cpu_time = (mapping_end - mapping_start) / (float)CLOCKS_PER_SEC;
 
     if (_map_param->verbose)
-        mapping->Print(algo == Algo::Praetor ? "EF" : (algo == Algo::Flow ? "FL" : "EX"));
+        mapping->Print(algo == Algo::Praetor ? "EF" : (algo == Algo::Flow ? "FL" : "EX"), cpu_time);
     
     ImproveMapping(mapping);
 
@@ -697,20 +772,33 @@ FoxMap::MapToLut()
     _best_mapping = nullptr;
 
     // perform mapping pass with different heuristics
-    for (int i = 0; i != _map_param->praetor_pass_num; ++i)
-    {
-        Solution *mapping = PerformMapping(Algo::Praetor);
-        UpdateMapping(mapping);
-    }
-
-    // for (int i = 0; i != _map_param->flow_pass_num; ++i)
+    // for (int i = 0; i != _map_param->praetor_pass_num; ++i)
     // {
-    //     Solution *mapping = PerformMapping(Algo::Flow);
+    //     _prune.SetMode(Prune::PruneMode::IDLP);
+    //     Solution *mapping = PerformMapping(Algo::Praetor);
     //     UpdateMapping(mapping);
     // }
 
+    for (int i = 0; i != _map_param->flow_pass_num; ++i)
+    {
+        _prune.SetMode(Prune::PruneMode::UL);
+        Solution *mapping = PerformMapping(Algo::Flow);
+        UpdateMapping(mapping);
+    }
+
     // mapping solution
     return GenMappedNetwork(_best_mapping);
+}
+
+void
+FoxMap::LutCostLib::SyncUserLib()
+{
+    If_LibLut_t *lib = (If_LibLut_t *)Abc_FrameReadLibLut();
+    if (!lib)
+        return;
+    printf("LUT area cost updated from lib ...\n");
+    for (int i = 2; i != kMaxLutSize + 1; ++i)
+        area_cost[0][i] = lib->pLutAreas[i];
 }
 
 } // namespace foxmap
