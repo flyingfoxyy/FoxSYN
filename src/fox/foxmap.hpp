@@ -141,7 +141,7 @@ struct Cut
 class Node 
 {
 public:
-    enum class NodeType { Const, PI, PO, And, None };
+    enum NodeType { Const, PI, PO, And, None };
 
     static thread_local Node *_const_1;
 

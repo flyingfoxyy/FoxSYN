@@ -568,7 +568,7 @@ FoxMap::SelectBestCut(Solution *curr_map, Cut *cut_set, int cut_num, Algo algo)
 void
 FoxMap::Print()
 {
-    printf("# Pi %d, Po %d, And %d --> All %d\n", NumPi(), NumPo(), NumAnd(), (int)_num_nodes);
+    printf("# Pi %ld, Po %ld, And %ld --> All %d\n", NumPi(), NumPo(), NumAnd(), _num_nodes);
     for (int i = 0; i != _num_nodes; ++i)
     {
         printf("## node %d\n", i);
