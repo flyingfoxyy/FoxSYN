@@ -545,7 +545,7 @@ FoxMap::SelectBestCut(Solution *curr_map, Cut *cut_set, int cut_num, Algo algo)
     auto compute_cost = [curr_map, this](Cut *cut)
     {
         cut->area = this->GetLutAreaCost(cut->size);
-        cut->edge = this->GetLutAreaCost(cut->edge);
+        cut->edge = this->GetLutEdgeCost(cut->size);
         for (int i = 0; i != cut->size; ++i)
         {
             uint leaf = cut->leaves[i];
