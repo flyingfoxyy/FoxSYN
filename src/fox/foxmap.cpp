@@ -646,17 +646,17 @@ FoxMap::PerformMapping(Algo algo)
         // update the cut cost
     }
 
-    if (_map_param->verbose)
-    {
-        Area estimated = 0;
-        for (Node *node : _prim_outputs)
-        {
-            Node *fanin = node->GetFanin0();
-            if (fanin && fanin->IsAnd())
-                estimated += fanin->GetArea() / GetEstRef(node->GetFanin0Id());
-        }
-        printf("-- Est = %.1f  \n", estimated);
-    }
+    // if (_map_param->verbose)
+    // {
+    //     Area estimated = 0;
+    //     for (Node *node : _prim_outputs)
+    //     {
+    //         Node *fanin = node->GetFanin0();
+    //         if (fanin && fanin->IsAnd())
+    //             estimated += fanin->GetArea() / GetEstRef(node->GetFanin0Id());
+    //     }
+    //     printf("-- Est = %.1f  \n", estimated);
+    // }
 
     Solution *mapping = new Solution(this, this->_num_nodes);
 
