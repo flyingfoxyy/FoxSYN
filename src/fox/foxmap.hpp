@@ -27,6 +27,7 @@ constexpr uint kMaxLutSize = 6;
 constexpr uint kMaxId      = 123456789;
 constexpr uint kMaxCutNum  = 16;
 constexpr uint kMaxArea    = 1234500000.0f;
+constexpr uint kMaxArr     = 100000;
 
 class Param;
 class Node;
@@ -34,12 +35,12 @@ class Cut;
 class FoxMap;
 class Solution;
 
-using Area  = float;
-using Edge  = float;
-using Time  = uint;
-using Sign  = uint;
-using word  = uint64_t;
-using rank  = std::function<int(Cut *lhs, Cut *rhs, float epsilon)>;
+using Area   = float;
+using Edge   = float;
+using Time   = uint;
+using Sign   = uint;
+using word   = uint64_t;
+using RankFn = std::function<int(Cut *lhs, Cut *rhs, float epsilon)>;
 
 /**
  * Optimization objects supported for foxmap
@@ -67,7 +68,7 @@ public:
     std::size_t  flow_pass_num     = 4;     // the number of pass performing with area-flow      heuristic method
     std::size_t  exact_pass_num    = 4;     // the number of pass performing with exact area     heuristic method
 
-    bool AreaDriven()  const { return tar == OptTarget::Area;        }  // area/routability/timing
+    bool AreaDriven () const { return tar == OptTarget::Area;        }  // area/routability/timing
     bool RouteDriven() const { return tar == OptTarget::Routability; }  // routability/area/timing
 };
 
@@ -198,7 +199,9 @@ public:
     Cut *GetTrivialCut() const { return _cut_set + _num_cuts - 1; }
 
     Cut *GetBestCut()    const { return _cut_set + _best_cut;     }
+
     void SetBestCut(uint idx)  { _best_cut = idx;                 }
+    void SetReq(Time req)      { _req = req;                      }
 
     void Print();
     
@@ -211,15 +214,15 @@ public:
 };
 
 
-class CutRank
+struct RankFnSet
 {
-    static int CmpCutAreaEdge(Cut *lhs, Cut *rhs, float epsilon)
-    {
-        return 1;
-    }
+    static constexpr float kEpsilon = 0.001;
 
-public:
-
+    static int CmpCutArrSizeAreaEdge (Cut *lhs, Cut *rhs, float epsilon = kEpsilon);
+    static int CmpCutArrAreaEdge     (Cut *lhs, Cut *rhs, float epsilon = kEpsilon);
+    static int CmpCutArrEdgeArea     (Cut *lhs, Cut *rhs, float epsilon = kEpsilon);
+    static int CmpCutAreaEdge        (Cut *lhs, Cut *rhs, float epsilon = kEpsilon);
+    static int CmpCutEdgeArea        (Cut *lhs, Cut *rhs, float epsilon = kEpsilon);
 };
 
 
@@ -253,11 +256,14 @@ private:
 
     PruneMode _mode {PruneMode::NONE};
 
+    RankFn _rank_fn {};
+
     Area _epsilon   {0.001f  };
     Area _min_area  {kMaxArea};
 
     uint _temp_used_num    {0};
-    Cut *_temp_cuts {nullptr};
+
+    Cut *_temp_cuts        {nullptr};
 
 public:
     Prune(Param *param) : _temp_cuts(new Cut[(kMaxCutNum + 1) * (kMaxCutNum + 1)])
@@ -276,7 +282,19 @@ public:
         delete[] _temp_cuts;
     }
 
+    /**
+     * @brief Set the mode for pruning
+     * 
+     * @param mode 
+     */
     void SetMode(PruneMode mode) { _mode = mode; }
+
+    /**
+     * @brief Set the rank function for cuts
+     * 
+     * @param fn 
+     */
+    void SetRankFn(const RankFn &fn) { _rank_fn = fn; }
 
     /**
      * @brief Get the a general cut candidate
@@ -311,14 +329,16 @@ public:
 //==----------------------------------------------------------------==//
 class Solution
 {
+    FoxMap *_mapper;
+
     std::vector<Cut *>  _cuts;
     std::vector<uint>   _ref_counter;
 
     uint    _num_lut[kMaxLutSize + 1] {0};
     uint    _sum_lut  {0};
     uint    _sum_edge {0};
-    uint    _max_arr  {0};
-    FoxMap *_mapper;
+
+    mutable uint _max_arr  {0};
 
 public:
     Solution(FoxMap *map, uint num) : _mapper(map)
@@ -346,8 +366,9 @@ public:
      */
     Cut *GetSol(uint node) const { return _cuts[node]; }
 
-    uint GetLutNum()  const { return _sum_lut;  }
-    uint GetEdgeNum() const { return _sum_edge; }
+    uint GetLutNum()   const { return _sum_lut;  }
+    uint GetEdgeNum()  const { return _sum_edge; }
+    Time GetDelayNum() const;
 
     /**
      * @brief Get the reference count of node 'id'
@@ -382,7 +403,8 @@ public:
      */
     void Print(const char *algo, float time)
     {
-        printf("%s: Area = %6d  Edge = %6d  Time = %.1f\n", algo, GetLutNum(), GetEdgeNum(), time);
+        printf("%s: Delay = %3d  Area = %6d  Edge = %6d  Time = %.1f\n", algo, GetDelayNum(),
+            GetLutNum(), GetEdgeNum(), time);
     }
 };
 
@@ -426,9 +448,13 @@ class FoxMap
     double     _cpu_time       {0   };
     double     _wall_time      {0   };
     bool       _first_pass     {true};
+    Time       _max_po_arr_time{0   };
 
     Prune      _prune;
-    Solution  *_best_mapping{nullptr};
+    Solution  *_best_mapping   {nullptr};
+
+    RankFn     _cut_rank_enu_fn{RankFnSet::CmpCutArrSizeAreaEdge};
+    RankFn     _cut_rank_sel_fn{RankFnSet::CmpCutArrAreaEdge    };
 
     friend class Node;
     friend class Cut;
@@ -440,6 +466,16 @@ public:
         _pAig(pAig),
         _prune(param)
     {
+        if (param->AreaDriven())
+        {
+            _cut_rank_enu_fn = RankFnSet::CmpCutAreaEdge;
+            _cut_rank_sel_fn = RankFnSet::CmpCutAreaEdge;
+        }
+        else if (param->RouteDriven())
+        {
+            _cut_rank_enu_fn = RankFnSet::CmpCutEdgeArea;
+            _cut_rank_sel_fn = RankFnSet::CmpCutEdgeArea;
+        }
         // _lut_lib.SyncUserLib();
     }
 
@@ -479,12 +515,17 @@ private:
      */
     Param *GetParam() const { return _map_param; }
 
+    uint GetNodeNum() const { return _num_nodes; }
+
     /**
      * @brief Get the algorithm for current mapping pass
      * 
      * @return Algo 
      */
     Algo GetAlgo() const { return _algo; }
+
+    RankFn GetEnuRankFn() const { return _cut_rank_enu_fn; }
+    RankFn GetSelRankFn() const { return _cut_rank_sel_fn; }
 
     /**
      * @brief Update the best mapping solution
@@ -501,7 +542,15 @@ private:
     /**
      * Get LUT edge cost for different input size
      */
-    Area GetLutEdgeCost(int size) const { return _lut_lib.edge_cost[0][size]; }
+    Edge GetLutEdgeCost(int size) const { return _lut_lib.edge_cost[0][size]; }
+
+    /**
+     * @brief Get LUT delay cost for different input size
+     * 
+     * @param size 
+     * @return Time 
+     */
+    Time GetLutDelayCost(int size) const { return 1; }
 
     /**
      * Generate mapped network according to final solution
@@ -511,7 +560,7 @@ private:
     /**
      * Return the Prune for cut enumeration
      */
-    Prune &GetPrune() { _prune.Reset(); return _prune; }
+    Prune &GetPrune() { _prune.Reset(); _prune.SetRankFn(_cut_rank_enu_fn); return _prune; }
 
     /**
      * @brief Improve mapping with MFFC rip up and exact remap
@@ -524,7 +573,7 @@ private:
      * @brief Return the best cut according to algo
      * 
      */
-    Cut *SelectBestCut(Solution *mapping, Cut *cut_set, int num, Algo algo);
+    Cut *SelectBestCut(Solution *mapping, Cut *cut_set, int num, Algo algo, Time req);
 
     /**
      * @brief Perform a LUT mapping pass

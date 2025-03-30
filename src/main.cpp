@@ -36,11 +36,19 @@ int Foxmap_Command(Abc_Frame_t *pAbc, int argc, char **argv)
         case 'a':
             param.tar = OptTarget::Area;
             break;
+        case 'r':
+            param.tar = OptTarget::Routability;
+            break;
         case 'v':
             param.verbose = true;
             break;
-        case 'r':
-            param.tar = OptTarget::Routability;
+        case 'D':
+            param.required = std::atoi(argv[++i]);
+            if (param.required < 0)
+            {
+                printf("foxmap: invalid required time %ld\n", param.required);
+                return 1;
+            }
             break;
         case 'E':
             param.praetor_pass_num = std::atoi(argv[++i]);

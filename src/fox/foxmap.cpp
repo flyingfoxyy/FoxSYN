@@ -22,40 +22,6 @@ namespace foxmap
 {
 thread_local Node *foxmap::Node::_const_1 = nullptr;
 
-static int CmpCutAreaEdge(Cut *lhs, Cut *rhs, float epsilon)
-{
-    if (lhs->area + epsilon < rhs->area)
-        return 1;
-    if (lhs->area - epsilon > rhs->area)
-        return -1;
-    if (lhs->edge + epsilon < rhs->edge)
-        return 1;
-    if (lhs->edge - epsilon > rhs->edge)
-        return -1;
-    if (lhs->size < rhs->size)
-        return 1;
-    if (lhs->size > rhs->size)
-        return -1;
-    return 0;
-}
-
-static int CmpCutEdgeArea(Cut *lhs, Cut *rhs, float epsilon)
-{
-    if (lhs->edge + epsilon < rhs->edge)
-        return 1;
-    if (lhs->edge - epsilon > rhs->edge)
-        return -1;
-    if (lhs->area + epsilon < rhs->area)
-        return 1;
-    if (lhs->area - epsilon > rhs->area)
-        return -1;
-    if (lhs->size < rhs->size)
-        return 1;
-    if (lhs->size > rhs->size)
-        return -1;
-    return 0;
-}
-
 bool
 Cut::MergeCut(Cut *lhs, Cut *rhs, int lut_size)
 {
@@ -154,8 +120,11 @@ Cut::ComputeCost(Cut *lhs, Cut *rhs, float est_ref_l, float est_ref_r, FoxMap *m
     {
 
     }
-    // compute arrival time
 
+    // compute arrival time
+    for (int i = 0; i != size; ++i)
+        arr = std::max(mapper->GetNode(leaves[i])->GetArr(), arr);
+    arr += mapper->GetLutDelayCost(size);
 }
 
 Area
@@ -228,6 +197,101 @@ Cut::Print()
     printf("{Arr %d, Area %.1f, Edge %.1f, cut-set {%4d, %4d, %4d, %4d, %4d, %4d}}\n",
         arr, area, edge, leaves[0], leaves[1], leaves[2], leaves[3], leaves[4], leaves[5]);
 }
+
+int
+RankFnSet::CmpCutArrSizeAreaEdge(Cut *lhs, Cut *rhs, float epsilon)
+{
+    if (lhs->arr + epsilon < rhs->arr)
+        return 1;
+    if (lhs->arr - epsilon > rhs->arr)
+        return -1;
+    if (lhs->size < rhs->size)
+        return 1;
+    if (lhs->size > rhs->size)
+        return -1;
+    if (lhs->area + epsilon < rhs->area)
+        return 1;
+    if (lhs->area - epsilon > rhs->area)
+        return -1;
+    if (lhs->edge + epsilon < rhs->edge)
+        return 1;
+    if (lhs->edge - epsilon > rhs->edge)
+        return -1;
+    return 0;
+}
+
+int
+RankFnSet::CmpCutArrAreaEdge(Cut *lhs, Cut *rhs, float epsilon)
+{
+    if (lhs->arr + epsilon < rhs->arr)
+        return 1;
+    if (lhs->arr - epsilon > rhs->arr)
+        return -1;
+    if (lhs->area + epsilon < rhs->area)
+        return 1;
+    if (lhs->area - epsilon > rhs->area)
+        return -1;
+    if (lhs->edge + epsilon < rhs->edge)
+        return 1;
+    if (lhs->edge - epsilon > rhs->edge)
+        return -1;
+    return 0;
+}
+
+int
+RankFnSet::CmpCutArrEdgeArea(Cut *lhs, Cut *rhs, float epsilon)
+{
+    if (lhs->arr + epsilon < rhs->arr)
+        return 1;
+    if (lhs->arr - epsilon > rhs->arr)
+        return -1;
+    if (lhs->edge + epsilon < rhs->edge)
+        return 1;
+    if (lhs->edge - epsilon > rhs->edge)
+        return -1;
+    if (lhs->area + epsilon < rhs->area)
+        return 1;
+    if (lhs->area - epsilon > rhs->area)
+        return -1;
+    return 0;
+}
+
+int
+RankFnSet::CmpCutAreaEdge(Cut *lhs, Cut *rhs, float epsilon)
+{
+    if (lhs->area + epsilon < rhs->area)
+        return 1;
+    if (lhs->area - epsilon > rhs->area)
+        return -1;
+    if (lhs->edge + epsilon < rhs->edge)
+        return 1;
+    if (lhs->edge - epsilon > rhs->edge)
+        return -1;
+    if (lhs->size < rhs->size)
+        return 1;
+    if (lhs->size > rhs->size)
+        return -1;
+    return 0;
+}
+
+int
+RankFnSet::CmpCutEdgeArea(Cut *lhs, Cut *rhs, float epsilon)
+{
+    if (lhs->edge + epsilon < rhs->edge)
+        return 1;
+    if (lhs->edge - epsilon > rhs->edge)
+        return -1;
+    if (lhs->area + epsilon < rhs->area)
+        return 1;
+    if (lhs->area - epsilon > rhs->area)
+        return -1;
+    if (lhs->size < rhs->size)
+        return 1;
+    if (lhs->size > rhs->size)
+        return -1;
+    return 0;
+}
+
 
 Node::Node(Abc_Obj_t *abc_node) : _num_cuts(0)
 {
@@ -421,7 +485,7 @@ Prune::Push(Cut *cut)
             return true;
         }
         // compare with current cut
-        const int cmp_res = CmpCutAreaEdge(cut, cut_list[i], _epsilon);
+        const int cmp_res = _rank_fn(cut, cut_list[i], _epsilon);
         // win
         if (cmp_res == 1)
         {
@@ -455,6 +519,13 @@ Prune::Reset()
 bool
 Solution::operator<(const Solution& rhs)
 {
+    if (_mapper->GetParam()->tar == OptTarget::Timing)
+    {
+        if (GetDelayNum() < rhs.GetDelayNum())
+            return true;
+        if (GetDelayNum() > rhs.GetDelayNum())
+            return false;
+    }
     if (GetLutNum() < rhs.GetLutNum())
         return true;
     if (GetLutNum() > rhs.GetLutNum())
@@ -486,6 +557,32 @@ Solution::Add(uint id, Cut *cut)
     ++_num_lut[cut->size];
     ++_sum_lut;
     _sum_edge += cut->size;
+}
+
+Time
+Solution::GetDelayNum() const
+{
+    if (_max_arr)
+        return _max_arr;
+
+    std::vector<int> arr_time(_mapper->GetNodeNum(), 0);
+    for (int i = 1; i != _mapper->GetNodeNum(); ++i)
+    {
+        if (Cut *cut = GetSol(i); cut)
+        {
+            for (int m = 0; m != cut->size; ++m)
+                arr_time[i] = std::max(arr_time[cut->leaves[m]], arr_time[i]);
+            arr_time[i] += _mapper->GetLutDelayCost(cut->size);
+        }
+    }
+
+    for (Node *po : _mapper->_prim_outputs)
+    {
+        if (po->GetFanin0())
+            _max_arr = std::max(_max_arr, (uint)arr_time[po->GetFanin0Id()]);
+    }
+
+    return _max_arr;
 }
 
 void
@@ -537,10 +634,17 @@ FoxMap::UpdateMapping(Solution *new_mapping)
 }
 
 Cut *
-FoxMap::SelectBestCut(Solution *curr_map, Cut *cut_set, int cut_num, Algo algo)
+FoxMap::SelectBestCut(Solution *curr_map, Cut *cut_set, int cut_num, Algo algo, Time req)
 {
     if (algo == Algo::Flow)
-        return cut_set;
+    {
+        for (int i = 0; i != cut_num - 1; ++i)
+        {
+            if (cut_set[i].arr <= req)
+                return cut_set + i;
+        }
+    }
+
     // for praetor, we compute cut cost according to realtime mapping
     auto compute_cost = [curr_map, this](Cut *cut)
     {
@@ -554,14 +658,19 @@ FoxMap::SelectBestCut(Solution *curr_map, Cut *cut_set, int cut_num, Algo algo)
         }
         cut->area /= cut->size;
     };
-    Cut *winner = cut_set;
-    compute_cost(winner);
+
+    Cut *winner = nullptr;
     for (int i = 1; i != cut_num - 1; ++i)
     {
-        compute_cost(cut_set + i);
-        if (CmpCutAreaEdge(cut_set + i, winner, 0.001) == 1)
-            winner = cut_set + i;
+        Cut *cut = cut_set + i;
+        if (cut->arr < req)
+            continue;
+        compute_cost(cut);
+        if (!winner || _cut_rank_sel_fn(cut, winner, 0.001) == 1)
+            winner = cut;
     }
+
+    assert(winner);
     return winner;
 }
 
@@ -599,7 +708,7 @@ FoxMap::ImproveMapping(Solution *mapping)
             Cut *cut = node->GetCut(m);
             cut->area = cut->RefMFFC(mapping);
             cut->edge = cut->RipMFFC(mapping);
-            if (best_idx == -1 || CmpCutAreaEdge(cut, node->GetCut(best_idx), 0.1) == 1)
+            if (best_idx == -1 || _cut_rank_sel_fn(cut, node->GetCut(best_idx), 0.1) == 1)
                 best_idx = m;
         }
         // update
@@ -646,6 +755,15 @@ FoxMap::PerformMapping(Algo algo)
         // update the cut cost
     }
 
+    _max_po_arr_time = 0;
+    for (Node *po : _prim_outputs)
+    {
+        if (po->GetFanin0())
+            _max_po_arr_time = std::max(_max_po_arr_time, po->GetFanin0()->GetArr());
+    }
+
+    const Time required = _map_param->required == 0 ? kMaxArr : _map_param->required;
+
     // if (_map_param->verbose)
     // {
     //     Area estimated = 0;
@@ -673,9 +791,14 @@ FoxMap::PerformMapping(Algo algo)
         if (mapping->GetRefCount(i) == 0 || !node->IsAnd())
             continue;
         // find the best cut for current mapping
-        Cut *best = SelectBestCut(mapping, node->GetCut(0), node->GetCutNum(), algo);
+        Cut *best = SelectBestCut(mapping, node->GetCut(0), node->GetCutNum(), algo, node->GetReq());
+        // update required time for leaves
+        Time leaf_req_time = node->GetReq() - GetLutDelayCost(best->size);
         for (int m = 0; m != best->size; ++m)
+        {
             ++mapping->GetRefCount(best->leaves[m]);
+            GetNode(best->leaves[m])->SetReq(leaf_req_time);
+        }
         mapping->Add(i, best);
     }
 
@@ -791,11 +914,14 @@ FoxMap::MapToLut()
     _best_mapping = nullptr;
 
     // perform mapping pass with different heuristics
-    for (int i = 0; i != _map_param->praetor_pass_num; ++i)
+    if (_map_param->tar != OptTarget::Timing)
     {
-        _prune.SetMode(Prune::PruneMode::IDLP);
-        Solution *mapping = PerformMapping(Algo::Praetor);
-        UpdateMapping(mapping);
+        for (int i = 0; i != _map_param->praetor_pass_num; ++i)
+        {
+            _prune.SetMode(Prune::PruneMode::IDLP);
+            Solution *mapping = PerformMapping(Algo::Praetor);
+            UpdateMapping(mapping);
+        }
     }
 
     for (int i = 0; i != _map_param->flow_pass_num; ++i)
