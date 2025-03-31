@@ -292,7 +292,6 @@ RankFnSet::CmpCutEdgeArea(Cut *lhs, Cut *rhs, float epsilon)
     return 0;
 }
 
-
 Node::Node(Abc_Obj_t *abc_node) : _num_cuts(0)
 {
     if (!abc_node)
@@ -400,6 +399,50 @@ Node::CutEnum(FoxMap *mapper)
         trival_cut->area += mapper->GetLutAreaCost(1);
         trival_cut->edge += mapper->GetLutEdgeCost(1);
     }
+}
+
+Cut *
+Node::SelectBestCut(Solution *mapping, Time required, Algo algo)
+{
+    if (algo == Algo::Flow)
+    {
+        for (int i = 0; i != _num_cuts - 1; ++i)
+        {
+            if (_cut_set[i].arr <= required)
+                return _cut_set + i;
+        }
+    }
+
+    FoxMap *mapper = mapping->GetMapper();
+
+    // for praetor, we compute cut cost according to realtime mapping
+    auto compute_cost = [mapping, mapper](Cut *cut)
+    {
+        cut->area = mapper->GetLutAreaCost(cut->size);
+        cut->edge = mapper->GetLutEdgeCost(cut->size);
+        for (int i = 0; i != cut->size; ++i)
+        {
+            uint leaf = cut->leaves[i];
+            cut->area += mapping->GetRefCount(leaf) ? 0 : FoxMap::GetNode(leaf)->GetArea() / mapper->GetEstRef(leaf);
+            cut->edge += mapping->GetRefCount(leaf) ? 0 : FoxMap::GetNode(leaf)->GetEdge() / mapper->GetEstRef(leaf);
+        }
+        cut->area /= cut->size;
+    };
+
+    RankFn fn = mapper->GetSelRankFn();
+    Cut *winner = nullptr;
+    for (int i = 0; i != _num_cuts - 1; ++i)
+    {
+        Cut *cut = _cut_set + i;
+        if (cut->arr > required)
+            continue;
+        compute_cost(cut);
+        if (!winner || fn(cut, winner, 0.001) == 1)
+            winner = cut;
+    }
+
+    assert(winner);
+    return winner;
 }
 
 void
@@ -633,47 +676,6 @@ FoxMap::UpdateMapping(Solution *new_mapping)
         delete new_mapping;
 }
 
-Cut *
-FoxMap::SelectBestCut(Solution *curr_map, Cut *cut_set, int cut_num, Algo algo, Time req)
-{
-    if (algo == Algo::Flow)
-    {
-        for (int i = 0; i != cut_num - 1; ++i)
-        {
-            if (cut_set[i].arr <= req)
-                return cut_set + i;
-        }
-    }
-
-    // for praetor, we compute cut cost according to realtime mapping
-    auto compute_cost = [curr_map, this](Cut *cut)
-    {
-        cut->area = this->GetLutAreaCost(cut->size);
-        cut->edge = this->GetLutEdgeCost(cut->size);
-        for (int i = 0; i != cut->size; ++i)
-        {
-            uint leaf = cut->leaves[i];
-            cut->area += curr_map->GetRefCount(leaf) ? 0 : GetNode(leaf)->GetArea() / GetEstRef(leaf);
-            cut->edge += curr_map->GetRefCount(leaf) ? 0 : GetNode(leaf)->GetEdge() / GetEstRef(leaf);
-        }
-        cut->area /= cut->size;
-    };
-
-    Cut *winner = nullptr;
-    for (int i = 1; i != cut_num - 1; ++i)
-    {
-        Cut *cut = cut_set + i;
-        if (cut->arr < req)
-            continue;
-        compute_cost(cut);
-        if (!winner || _cut_rank_sel_fn(cut, winner, 0.001) == 1)
-            winner = cut;
-    }
-
-    assert(winner);
-    return winner;
-}
-
 void
 FoxMap::Print()
 {
@@ -755,15 +757,6 @@ FoxMap::PerformMapping(Algo algo)
         // update the cut cost
     }
 
-    _max_po_arr_time = 0;
-    for (Node *po : _prim_outputs)
-    {
-        if (po->GetFanin0())
-            _max_po_arr_time = std::max(_max_po_arr_time, po->GetFanin0()->GetArr());
-    }
-
-    const Time required = _map_param->required == 0 ? kMaxArr : _map_param->required;
-
     // if (_map_param->verbose)
     // {
     //     Area estimated = 0;
@@ -776,28 +769,47 @@ FoxMap::PerformMapping(Algo algo)
     //     printf("-- Est = %.1f  \n", estimated);
     // }
 
+    Time global_required = kMaxArr;
+    if (_map_param->TimingDriven())
+    {
+        _max_po_arr_time = 0;
+        for (Node *po : _prim_outputs)
+        {
+            if (po->GetFanin0())
+                _max_po_arr_time = std::max(_max_po_arr_time, po->GetFanin0()->GetArr());
+        }
+        global_required = std::max((Time)_map_param->required, _max_po_arr_time);
+    }
+
+    std::vector<uint> node_required_time(_num_nodes, kMaxArr);
+
     Solution *mapping = new Solution(this, this->_num_nodes);
 
-    // perform cut selection
+    // setup po settings
     for (Node *po : _prim_outputs)
     {
         if (Node *fanin = po->GetFanin0(); fanin && fanin->IsAnd())
+        {
             ++mapping->GetRefCount(fanin->GetId());
+            node_required_time[fanin->GetId()] = global_required;
+        }
     }
-
+    
+    // perform cut selection
     for (int i = _num_nodes - 1; i != -1; --i)
     {
         Node *node = GetNode(i);
         if (mapping->GetRefCount(i) == 0 || !node->IsAnd())
             continue;
         // find the best cut for current mapping
-        Cut *best = SelectBestCut(mapping, node->GetCut(0), node->GetCutNum(), algo, node->GetReq());
+        Cut *best = node->SelectBestCut(mapping, node_required_time[i], algo);
         // update required time for leaves
-        Time leaf_req_time = node->GetReq() - GetLutDelayCost(best->size);
+        Time leaf_req_time = node_required_time[i] - GetLutDelayCost(best->size);
         for (int m = 0; m != best->size; ++m)
         {
-            ++mapping->GetRefCount(best->leaves[m]);
-            GetNode(best->leaves[m])->SetReq(leaf_req_time);
+            int leaf = best->leaves[m];
+            ++mapping->GetRefCount(leaf);
+            node_required_time[leaf] = std::min(node_required_time[leaf], leaf_req_time);
         }
         mapping->Add(i, best);
     }

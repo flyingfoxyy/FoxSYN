@@ -23,12 +23,6 @@ namespace fox
 {
 namespace foxmap
 {
-constexpr uint kMaxLutSize = 6;
-constexpr uint kMaxId      = 123456789;
-constexpr uint kMaxCutNum  = 16;
-constexpr uint kMaxArea    = 1234500000.0f;
-constexpr uint kMaxArr     = 100000;
-
 class Param;
 class Node;
 class Cut;
@@ -41,6 +35,12 @@ using Time   = uint;
 using Sign   = uint;
 using word   = uint64_t;
 using RankFn = std::function<int(Cut *lhs, Cut *rhs, float epsilon)>;
+
+constexpr uint kMaxLutSize = 6;
+constexpr uint kMaxId      = 0x0FFFFFFF;
+constexpr uint kMaxArr     = 0xFFFFFFFF;
+constexpr uint kMaxCutNum  = 16;
+constexpr Area kMaxArea    = 1234500000.0f;
 
 /**
  * Optimization objects supported for foxmap
@@ -68,8 +68,9 @@ public:
     std::size_t  flow_pass_num     = 4;     // the number of pass performing with area-flow      heuristic method
     std::size_t  exact_pass_num    = 4;     // the number of pass performing with exact area     heuristic method
 
-    bool AreaDriven () const { return tar == OptTarget::Area;        }  // area/routability/timing
-    bool RouteDriven() const { return tar == OptTarget::Routability; }  // routability/area/timing
+    bool TimingDriven() const { return tar == OptTarget::Timing;      }  // timing
+    bool AreaDriven ()  const { return tar == OptTarget::Area;        }  // area/routability/timing
+    bool RouteDriven()  const { return tar == OptTarget::Routability; }  // routability/area/timing
 };
 
 //==----------------------------------------------------------------==//
@@ -156,10 +157,9 @@ private:
     /* mapping properties */
     uint      _num_cuts :  20;  // node type
     uint      _best_cut :   6;
-    Time      _arr    {0};      // the arrival  time
-    Time      _req    {0};      // the required time
 
-    Cut      *_cut_set{nullptr};
+    Cut      *_cut_set{nullptr};// cut-set
+    Cut       _last_best{};     // the best cut generated during last pass
 
 public:
     /**
@@ -190,18 +190,15 @@ public:
 
     Area GetArea()       const { return IsPi() ? 0 : _cut_set[0].area; }
     Edge GetEdge()       const { return IsPi() ? 0 : _cut_set[0].edge; }
-
-    Time GetArr()        const { return _arr;                     }
-    Time GetReq()        const { return _req;                     }
+    Time GetArr()        const { return _cut_set[0].arr ;         }
 
     uint GetCutNum()     const { return _num_cuts;                }
     Cut *GetCut(int idx) const { return _cut_set + idx;           }
     Cut *GetTrivialCut() const { return _cut_set + _num_cuts - 1; }
-
     Cut *GetBestCut()    const { return _cut_set + _best_cut;     }
+    Cut *GetLastBestCut()      { return &_last_best;              }
 
     void SetBestCut(uint idx)  { _best_cut = idx;                 }
-    void SetReq(Time req)      { _req = req;                      }
 
     void Print();
     
@@ -211,6 +208,15 @@ public:
      * @param mapper 
      */
     void CutEnum(FoxMap *mapper);
+
+    /**
+     * @brief Perform realtime best cut selection
+     * 
+     * @param mapping current mapping solution
+     * @param required
+     * @param algo
+     */
+    Cut *SelectBestCut(Solution *mapping, Time required, Algo algo);
 };
 
 
@@ -568,12 +574,6 @@ private:
      * @param mapping 
      */
     void ImproveMapping(Solution *mapping);
-
-    /**
-     * @brief Return the best cut according to algo
-     * 
-     */
-    Cut *SelectBestCut(Solution *mapping, Cut *cut_set, int num, Algo algo, Time req);
 
     /**
      * @brief Perform a LUT mapping pass
