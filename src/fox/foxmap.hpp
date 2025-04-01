@@ -185,7 +185,7 @@ public:
     uint GetFanin0Id() const { return _fanin0; }
     uint GetFanin1Id() const { return _fanin1; }
 
-    uint GetId() const { return this - Node::_const_1;}
+    uint GetId() const { return this - Node::_const_1;    }
 
     bool IsPi()  const { return _type == NodeType::PI;    }
     bool IsPo()  const { return _type == NodeType::PO;    }
