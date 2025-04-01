@@ -38,7 +38,7 @@ using RankFn = std::function<int(Cut *lhs, Cut *rhs, float epsilon)>;
 
 constexpr uint kMaxLutSize = 6;
 constexpr uint kMaxId      = 0x0FFFFFFF;
-constexpr uint kMaxArr     = 0xFFFFFFFF;
+constexpr uint kMaxTime     = 0xFFFFFFFF;
 constexpr uint kMaxCutNum  = 16;
 constexpr Area kMaxArea    = 1234500000.0f;
 
@@ -118,6 +118,8 @@ struct Cut
      */
     bool MergeCut(Cut *lhs, Cut *rhs, int k);
 
+    bool IsValid() const { return leaves[0]; }
+
     /**
      * @brief Reference the MFFC of this cut
      * 
@@ -154,12 +156,14 @@ private:
     uint      _fanin1   :  31;  // fanin1
     uint      _compl1   :   1;  // the complemented attribute for fanin1
     NodeType  _type     :   6;  // node type
+
     /* mapping properties */
     uint      _num_cuts :  20;  // node type
     uint      _best_cut :   6;
+    uint      _required      ;  // required time
 
     Cut      *_cut_set{nullptr};// cut-set
-    Cut       _last_best{};     // the best cut generated during last pass
+    Cut       _prev_best{};       // the best cut generated during last pass
 
 public:
     /**
@@ -169,7 +173,8 @@ public:
      */
     Node(Abc_Obj_t *abc_node);
 
-    Node() : _fanin0(kMaxId), _compl0(0), _fanin1(kMaxId), _compl1(0), _type(NodeType::None), _num_cuts(0), _best_cut(0) {}
+    Node() : _fanin0(kMaxId), _compl0(0), _fanin1(kMaxId), _compl1(0), _type(NodeType::None), _num_cuts(0),
+        _best_cut(0), _required(kMaxTime) {}
 
     ~Node()
     {
@@ -193,12 +198,14 @@ public:
     Time GetArr()        const { return _cut_set[0].arr ;         }
 
     uint GetCutNum()     const { return _num_cuts;                }
+    Time GetRequired()   const { return _required;                }
     Cut *GetCut(int idx) const { return _cut_set + idx;           }
     Cut *GetTrivialCut() const { return _cut_set + _num_cuts - 1; }
     Cut *GetBestCut()    const { return _cut_set + _best_cut;     }
-    Cut *GetLastBestCut()      { return &_last_best;              }
+    Cut *GetLastBestCut()      { return &_prev_best;              }
 
     void SetBestCut(uint idx)  { _best_cut = idx;                 }
+    void SetRequired(Time req) { _required = req;                 }
 
     void Print();
     
@@ -213,10 +220,10 @@ public:
      * @brief Perform realtime best cut selection
      * 
      * @param mapping current mapping solution
-     * @param required
-     * @param algo
      */
-    Cut *SelectBestCut(Solution *mapping, Time required, Algo algo);
+    Cut *SelectBestCut(Solution *mapping);
+
+    void PerformNodeMapping();
 };
 
 
@@ -341,13 +348,14 @@ class Solution
     std::vector<uint>   _ref_counter;
 
     uint    _num_lut[kMaxLutSize + 1] {0};
-    uint    _sum_lut  {0};
-    uint    _sum_edge {0};
+    uint    _sum_lut    {0};
+    uint    _sum_edge   {0};
+    bool    _with_cover {false};
 
     mutable uint _max_arr  {0};
 
 public:
-    Solution(FoxMap *map, uint num) : _mapper(map)
+    Solution(FoxMap *map, uint num, bool with_cover = true) : _mapper(map), _with_cover(with_cover)
     {
         _cuts.resize(num);
         _ref_counter.resize(num);
@@ -380,9 +388,11 @@ public:
      * @brief Get the reference count of node 'id'
      * 
      * @param id 
-     * @return uint& 
+     * @return uint&
      */
     uint &GetRefCount(uint id) { return _ref_counter[id]; }
+
+    bool HasCover() const { return _with_cover; }
 
     /**
      * @brief Compare this with rhs, return true if this has better qor
@@ -459,8 +469,11 @@ class FoxMap
     Prune      _prune;
     Solution  *_best_mapping   {nullptr};
 
+    /* mapping runtime options */
     RankFn     _cut_rank_enu_fn{RankFnSet::CmpCutArrSizeAreaEdge};
     RankFn     _cut_rank_sel_fn{RankFnSet::CmpCutArrAreaEdge    };
+
+    uint       _premap{0};
 
     friend class Node;
     friend class Cut;
@@ -568,12 +581,24 @@ private:
      */
     Prune &GetPrune() { _prune.Reset(); _prune.SetRankFn(_cut_rank_enu_fn); return _prune; }
 
+    void SetupLib() {}
+
     /**
      * @brief Improve mapping with MFFC rip up and exact remap
      * 
      * @param mapping 
      */
     void ImproveMapping(Solution *mapping);
+
+    Time GetGlobalRequired();
+
+    Solution *CreateTrivialMapping(bool with_cover = true);
+
+    void ComputeRequiredTime(Solution *mapping);
+
+    void PerformTimingDrivenPremapping();
+
+    Solution *PerformGeneralMapping(Algo algo, OptTarget tar);
 
     /**
      * @brief Perform a LUT mapping pass

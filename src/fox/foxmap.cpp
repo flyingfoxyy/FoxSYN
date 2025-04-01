@@ -96,16 +96,18 @@ void
 Cut::ComputeCost(Cut *lhs, Cut *rhs, float est_ref_l, float est_ref_r, FoxMap *mapper)
 {
     Algo algo = mapper->GetAlgo();
-    if (algo == Algo::Praetor)
+    if (algo == Algo::Flow || !lhs)
     {
         area = mapper->GetLutAreaCost(size);
-        area += (lhs->area - mapper->GetLutAreaCost(lhs->size)) / est_ref_l;
-        area += (rhs->area - mapper->GetLutAreaCost(rhs->size)) / est_ref_r;
         edge = mapper->GetLutEdgeCost(size);
-        edge += (lhs->edge - mapper->GetLutEdgeCost(lhs->size)) / est_ref_l;
-        edge += (rhs->edge - mapper->GetLutEdgeCost(rhs->size)) / est_ref_r;
+        for (int i = 0; i != size; ++i)
+        {
+            Node *leaf = mapper->GetNode(leaves[i]);
+            area += leaf->GetArea() / mapper->GetEstRef(leaf->GetId());
+            edge += leaf->GetEdge() / mapper->GetEstRef(leaf->GetId());
+        }
     }
-    else if (algo == Algo::Flow)
+    else if (algo == Algo::Exact)
     {
         area = mapper->GetLutAreaCost(size);
         edge = mapper->GetLutEdgeCost(size);
@@ -118,10 +120,17 @@ Cut::ComputeCost(Cut *lhs, Cut *rhs, float est_ref_l, float est_ref_r, FoxMap *m
     }
     else
     {
-
+        assert(algo == Algo::Praetor);
+        area = mapper->GetLutAreaCost(size);
+        area += (lhs->area - mapper->GetLutAreaCost(lhs->size)) / est_ref_l;
+        area += (rhs->area - mapper->GetLutAreaCost(rhs->size)) / est_ref_r;
+        edge = mapper->GetLutEdgeCost(size);
+        edge += (lhs->edge - mapper->GetLutEdgeCost(lhs->size)) / est_ref_l;
+        edge += (rhs->edge - mapper->GetLutEdgeCost(rhs->size)) / est_ref_r;
     }
 
     // compute arrival time
+    arr = 0;
     for (int i = 0; i != size; ++i)
         arr = std::max(mapper->GetNode(leaves[i])->GetArr(), arr);
     arr += mapper->GetLutDelayCost(size);
@@ -375,6 +384,8 @@ Node::CutEnum(FoxMap *mapper)
             if (!cut->MergeCut(lhs, rhs, k))
                 continue;
             cut->ComputeCost(lhs, rhs, est_ref0, est_ref1, mapper);
+            if (cut->arr > _required)
+                continue;
             assert(cut->area > 0 && cut->area < kMaxArea);
             assert(cut->edge > 0 && cut->edge < kMaxArea);
             if (prune.Push(cut))
@@ -385,15 +396,26 @@ Node::CutEnum(FoxMap *mapper)
         }
     }
 
+    // recall the bestcut
+    if (_prev_best.IsValid())
+    {
+        assert(mapper->GetAlgo() != Algo::Praetor);
+        _prev_best.ComputeCost(nullptr, nullptr, 0, 0, mapper);
+        prune.Push(&_prev_best);
+    }
+
     // pop the cuts
     _num_cuts = 1 + prune.Pop(_cut_set, _num_cuts);
+
+    // backup the best cut
+    _prev_best = _cut_set[0];
 
     // create trivial cut
     Cut *trival_cut = GetTrivialCut();
     trival_cut->sign = GetSign(GetId());
-    trival_cut->leaves[0] = GetId();
     trival_cut->edge = GetCut(0)->edge;
     trival_cut->area = GetCut(0)->area;
+    trival_cut->leaves[0] = GetId();
     if (mapper->GetAlgo() == Algo::Praetor)
     {
         trival_cut->area += mapper->GetLutAreaCost(1);
@@ -402,16 +424,13 @@ Node::CutEnum(FoxMap *mapper)
 }
 
 Cut *
-Node::SelectBestCut(Solution *mapping, Time required, Algo algo)
+Node::SelectBestCut(Solution *mapping)
 {
-    if (algo == Algo::Flow)
-    {
-        for (int i = 0; i != _num_cuts - 1; ++i)
-        {
-            if (_cut_set[i].arr <= required)
-                return _cut_set + i;
-        }
-    }
+    // if (algo == Algo::Flow)
+    // {
+    //     assert(_cut_set[0].arr <= _required);
+    //     return _cut_set;
+    // }
 
     FoxMap *mapper = mapping->GetMapper();
 
@@ -434,7 +453,7 @@ Node::SelectBestCut(Solution *mapping, Time required, Algo algo)
     for (int i = 0; i != _num_cuts - 1; ++i)
     {
         Cut *cut = _cut_set + i;
-        if (cut->arr > required)
+        if (cut->arr > _required)
             continue;
         compute_cost(cut);
         if (!winner || fn(cut, winner, 0.001) == 1)
@@ -583,7 +602,7 @@ Solution::operator<(const Solution& rhs)
 void
 Solution::Remove(uint id)
 {
-    assert(_cuts[id]);
+    assert(_with_cover && _cuts[id]);
     Cut *cut = _cuts[id];
     _cuts[id] = nullptr;
     --_num_lut[cut->size];
@@ -595,8 +614,11 @@ Solution::Remove(uint id)
 void 
 Solution::Add(uint id, Cut *cut)
 {
-    assert(_cuts[id] == nullptr);
-    _cuts[id] = new Cut(*cut);
+    if (_with_cover)
+    {
+        assert(_cuts[id] == nullptr);
+        _cuts[id] = new Cut(*cut);
+    }
     ++_num_lut[cut->size];
     ++_sum_lut;
     _sum_edge += cut->size;
@@ -660,6 +682,9 @@ FoxMap::Initialize()
     }
 
     Abc_NtkCleanCopy(_pAig);
+
+    // initialize default mapping settings
+    _prune.SetMode(Prune::PruneMode::UL);
 }
 
 void
@@ -667,7 +692,7 @@ FoxMap::UpdateMapping(Solution *new_mapping)
 {
     if (!_best_mapping)
         _best_mapping = new_mapping;
-    else if ((*new_mapping) < (*_best_mapping))
+    else if (!_best_mapping->HasCover() || (*new_mapping) < (*_best_mapping))
     {
         delete _best_mapping;
         _best_mapping = new_mapping;
@@ -726,13 +751,128 @@ FoxMap::ImproveMapping(Solution *mapping)
         mapping->Print("EX", (clock() - start) / (float)CLOCKS_PER_SEC);
 }
 
+Time
+FoxMap::GetGlobalRequired()
+{
+    if (!_max_po_arr_time)
+    {
+        for (Node *po : _prim_outputs)
+        {
+            if (po->GetFanin0())
+                _max_po_arr_time = std::max(po->GetFanin0()->GetArr(), _max_po_arr_time);
+        }
+    }
+    assert(_max_po_arr_time);
+    return std::max(_max_po_arr_time, (Time)_map_param->required); 
+}
+
+void
+FoxMap::ComputeRequiredTime(Solution *mapping)
+{
+    for (int i = 1; i != _num_nodes; ++i)
+        GetNode(i)->SetRequired(kMaxTime);
+
+    Time global_req = GetGlobalRequired();
+    for (Node *po : _prim_outputs)
+    {
+        if (po->GetFanin0())
+            po->GetFanin0()->SetRequired(global_req);
+    }
+
+    for (int i = _num_nodes - 1; i != 0; --i)
+    {
+        Node *node = GetNode(i);
+        if (mapping->GetRefCount(i) == 0 || !node->IsAnd())
+            continue;
+        Cut *cut = node->GetBestCut();
+        Time req = node->GetRequired() - GetLutDelayCost(cut->size);
+        for (int m = 0; m != cut->size; ++m)
+        {
+            Node *leaf = GetNode(cut->leaves[m]);
+            if (req < leaf->GetRequired())
+                leaf->SetRequired(req);
+        }
+    }
+}
+
 Solution *
-FoxMap::PerformMapping(Algo algo)
+FoxMap::CreateTrivialMapping(bool with_cover)
+{
+    Solution *map = new Solution(this, _num_nodes, with_cover);
+
+    // refernce the po driver
+    for (Node *po : _prim_outputs)
+    {
+        if (po->GetFanin0())
+            ++map->GetRefCount(po->GetFanin0Id());
+    }
+
+    for (int i = _num_nodes - 1; i != 0; --i)
+    {
+        Node *node = GetNode(i);
+        if (node->IsAnd() && map->GetRefCount(i))
+        {
+            Cut *cut = node->GetBestCut();
+            for (int m = 0; m != cut->size; ++m)
+                ++map->GetRefCount(cut->leaves[m]);
+            map->Add(i, cut);
+        }
+    }
+    return map;
+}
+
+void
+FoxMap::PerformTimingDrivenPremapping()
+{
+    std::vector<RankFn> rank_fn_set = {
+        RankFnSet::CmpCutArrSizeAreaEdge,
+        RankFnSet::CmpCutArrAreaEdge,
+        RankFnSet::CmpCutAreaEdge
+    };
+
+    for (int i = 0; i != 3; ++i)
+    {
+        auto mapping_start = clock();
+        _cut_rank_enu_fn = rank_fn_set[i];
+        // in timing-driven pre-mapping, we use the original refernce count
+        int m = 0;
+        for (float &est_ref : _est_refs)
+            est_ref = _num_refs[m++];
+
+        for (int i = 1; i != _num_nodes; ++i)
+        {
+            Node *node = GetNode(i);
+            if (node->IsPi() || node->IsAnd())
+                node->CutEnum(this);
+        }
+
+        // mapping each node
+        Solution *mapping = CreateTrivialMapping(false);
+
+        // compute and propagate required times
+        ComputeRequiredTime(mapping);
+
+        auto mapping_end = clock();
+        if (_map_param->verbose)
+            mapping->Print("PM", (mapping_end - mapping_start) / (float)CLOCKS_PER_SEC);
+
+        if (i == 2)
+            _best_mapping = mapping;
+        else
+            delete mapping;
+    }
+
+    _first_pass = false;
+}
+
+Solution *
+FoxMap::PerformGeneralMapping(Algo algo, OptTarget tar)
 {
     auto mapping_start = clock();
 
-    // set the algorithm used for cut cost computation
+    // set the algorithm and funcs used for cut cost computation
     _algo = algo;
+    _cut_rank_enu_fn = RankFnSet::CmpCutAreaEdge;
 
     // recall the best mapping to update reference
     // compute the estimated reference count
@@ -744,75 +884,48 @@ FoxMap::PerformMapping(Algo algo)
     }
 
     // enumerate cuts
-    if (_map_param->always_enum_cut || _first_pass)
-    {
-        for (int i = 0; i != _num_nodes; ++i) {
-            Node *node = GetNode(i);
-            if (node->IsPi() || node->IsAnd())
-                node->CutEnum(this);
-        }
-    }
-    else
-    {
-        // update the cut cost
-    }
-
-    // if (_map_param->verbose)
-    // {
-    //     Area estimated = 0;
-    //     for (Node *node : _prim_outputs)
-    //     {
-    //         Node *fanin = node->GetFanin0();
-    //         if (fanin && fanin->IsAnd())
-    //             estimated += fanin->GetArea() / GetEstRef(node->GetFanin0Id());
-    //     }
-    //     printf("-- Est = %.1f  \n", estimated);
-    // }
-
-    Time global_required = kMaxArr;
-    if (_map_param->TimingDriven())
-    {
-        _max_po_arr_time = 0;
-        for (Node *po : _prim_outputs)
-        {
-            if (po->GetFanin0())
-                _max_po_arr_time = std::max(_max_po_arr_time, po->GetFanin0()->GetArr());
-        }
-        global_required = std::max((Time)_map_param->required, _max_po_arr_time);
-    }
-
-    std::vector<uint> node_required_time(_num_nodes, kMaxArr);
-
-    Solution *mapping = new Solution(this, this->_num_nodes);
-
-    // setup po settings
-    for (Node *po : _prim_outputs)
-    {
-        if (Node *fanin = po->GetFanin0(); fanin && fanin->IsAnd())
-        {
-            ++mapping->GetRefCount(fanin->GetId());
-            node_required_time[fanin->GetId()] = global_required;
-        }
-    }
-    
-    // perform cut selection
-    for (int i = _num_nodes - 1; i != -1; --i)
-    {
+    for (int i = 0; i != _num_nodes; ++i) {
         Node *node = GetNode(i);
-        if (mapping->GetRefCount(i) == 0 || !node->IsAnd())
-            continue;
-        // find the best cut for current mapping
-        Cut *best = node->SelectBestCut(mapping, node_required_time[i], algo);
-        // update required time for leaves
-        Time leaf_req_time = node_required_time[i] - GetLutDelayCost(best->size);
-        for (int m = 0; m != best->size; ++m)
-        {
-            int leaf = best->leaves[m];
-            ++mapping->GetRefCount(leaf);
-            node_required_time[leaf] = std::min(node_required_time[leaf], leaf_req_time);
-        }
-        mapping->Add(i, best);
+        if (node->IsPi() || node->IsAnd())
+            node->CutEnum(this);
     }
+
+    Solution *mapping = CreateTrivialMapping();
+
+    assert(!_map_param->TimingDriven() || mapping->GetDelayNum() <= GetGlobalRequired());
+
+    // // std::vector<uint> node_required_time(_num_nodes, kMaxTime);
+
+    // Solution *mapping = new Solution(this, this->_num_nodes);
+
+    // // setup po settings
+    // for (Node *po : _prim_outputs)
+    // {
+    //     if (Node *fanin = po->GetFanin0(); fanin && fanin->IsAnd())
+    //     {
+    //         ++mapping->GetRefCount(fanin->GetId());
+    //         node_required_time[fanin->GetId()] = global_required;
+    //     }
+    // }
+    
+    // // perform cut selection
+    // for (int i = _num_nodes - 1; i != -1; --i)
+    // {
+    //     Node *node = GetNode(i);
+    //     if (mapping->GetRefCount(i) == 0 || !node->IsAnd())
+    //         continue;
+    //     // find the best cut for current mapping
+    //     Cut *best = node->SelectBestCut(mapping, algo);
+    //     // update required time for leaves
+    //     Time leaf_req_time = node_required_time[i] - GetLutDelayCost(best->size);
+    //     for (int m = 0; m != best->size; ++m)
+    //     {
+    //         int leaf = best->leaves[m];
+    //         ++mapping->GetRefCount(leaf);
+    //         node_required_time[leaf] = std::min(node_required_time[leaf], leaf_req_time);
+    //     }
+    //     mapping->Add(i, best);
+    // }
 
     if (_first_pass)
         _first_pass = false;
@@ -822,8 +935,8 @@ FoxMap::PerformMapping(Algo algo)
 
     if (_map_param->verbose)
         mapping->Print(algo == Algo::Praetor ? "EF" : (algo == Algo::Flow ? "FL" : "EX"), cpu_time);
-    
-    ImproveMapping(mapping);
+
+    // ImproveMapping(mapping);
 
     return mapping;
 }
@@ -922,24 +1035,33 @@ FoxMap::MapToLut()
         printf("mapping graph -- Pi %ld, Po %ld, And %ld\n", NumPi(), NumPo(), NumAnd());
 
     // set up LUT library
+    SetupLib();
 
-    _best_mapping = nullptr;
+    if (_map_param->TimingDriven())
+    {
+        PerformTimingDrivenPremapping();
+    }
 
     // perform mapping pass with different heuristics
-    if (_map_param->tar != OptTarget::Timing)
-    {
-        for (int i = 0; i != _map_param->praetor_pass_num; ++i)
-        {
-            _prune.SetMode(Prune::PruneMode::IDLP);
-            Solution *mapping = PerformMapping(Algo::Praetor);
-            UpdateMapping(mapping);
-        }
-    }
+    // if (_map_param->tar != OptTarget::Timing)
+    // {
+    //     for (int i = 0; i != _map_param->praetor_pass_num; ++i)
+    //     {
+    //         _prune.SetMode(Prune::PruneMode::IDLP);
+    //         Solution *mapping = PerformMapping(Algo::Praetor);
+    //         UpdateMapping(mapping);
+    //     }
+    // }
 
     for (int i = 0; i != _map_param->flow_pass_num; ++i)
     {
-        _prune.SetMode(Prune::PruneMode::UL);
-        Solution *mapping = PerformMapping(Algo::Flow);
+        Solution *mapping = PerformGeneralMapping(Algo::Flow, OptTarget::Area);
+        UpdateMapping(mapping);
+    }
+
+    for (int i = 0; i != _map_param->exact_pass_num; ++i)
+    {
+        Solution *mapping = PerformGeneralMapping(Algo::Exact, OptTarget::Area);
         UpdateMapping(mapping);
     }
 
