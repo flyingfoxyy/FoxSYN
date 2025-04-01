@@ -38,7 +38,7 @@ using RankFn = std::function<int(Cut *lhs, Cut *rhs, float epsilon)>;
 
 constexpr uint kMaxLutSize = 6;
 constexpr uint kMaxId      = 0x0FFFFFFF;
-constexpr uint kMaxTime     = 0xFFFFFFFF;
+constexpr uint kMaxTime    = 0xFFFFFFFF;
 constexpr uint kMaxCutNum  = 16;
 constexpr Area kMaxArea    = 1234500000.0f;
 
@@ -208,6 +208,8 @@ public:
     void SetRequired(Time req) { _required = req;                 }
 
     void Print();
+
+    int debug_arr = 0;
     
     /**
      * @brief Perform cut enumeration
@@ -222,8 +224,6 @@ public:
      * @param mapping current mapping solution
      */
     Cut *SelectBestCut(Solution *mapping);
-
-    void PerformNodeMapping();
 };
 
 
@@ -449,11 +449,11 @@ class FoxMap
     } _lut_lib;
 
     /* technology mapping property and flags */
-    Param       *_map_param   {nullptr};        // parammeters of mapping algo
-    Algo         _algo        {Algo::Praetor};  // algorithm during each pass
-    Node        *_nodes       {nullptr};        // all nodes
-    uint32_t     _num_nodes   {0};              // total node number
-    Abc_Ntk_t   *_pAig        {nullptr};        // AIG for mapping
+    Param       *_map_param   {nullptr   };  // parammeters of mapping algo
+    Algo         _algo        {Algo::Flow};  // algorithm during each pass
+    Node        *_nodes       {nullptr   };  // all nodes
+    uint32_t     _num_nodes   {0         };  // total node number
+    Abc_Ntk_t   *_pAig        {nullptr   };  // AIG for mapping
 
     std::vector<Node *>  _prim_inputs;
     std::vector<Node *>  _prim_outputs;
@@ -470,8 +470,8 @@ class FoxMap
     Solution  *_best_mapping   {nullptr};
 
     /* mapping runtime options */
-    RankFn     _cut_rank_enu_fn{RankFnSet::CmpCutArrSizeAreaEdge};
-    RankFn     _cut_rank_sel_fn{RankFnSet::CmpCutArrAreaEdge    };
+    RankFn     _cut_rank_enu_fn{};
+    RankFn     _cut_rank_sel_fn{};
 
     uint       _premap{0};
 
@@ -484,19 +484,7 @@ public:
     :   _map_param(param),
         _pAig(pAig),
         _prune(param)
-    {
-        if (param->AreaDriven())
-        {
-            _cut_rank_enu_fn = RankFnSet::CmpCutAreaEdge;
-            _cut_rank_sel_fn = RankFnSet::CmpCutAreaEdge;
-        }
-        else if (param->RouteDriven())
-        {
-            _cut_rank_enu_fn = RankFnSet::CmpCutEdgeArea;
-            _cut_rank_sel_fn = RankFnSet::CmpCutEdgeArea;
-        }
-        // _lut_lib.SyncUserLib();
-    }
+    {}
 
     ~FoxMap()
     {

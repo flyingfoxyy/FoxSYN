@@ -369,7 +369,7 @@ Node::CutEnum(FoxMap *mapper)
     float est_ref0 = mapper->GetEstRef(_fanin0);
     float est_ref1 = mapper->GetEstRef(_fanin1);
     const int k = mapper->GetParam()->lut_size;
-
+    int pushed_num = 0;
     // merge the cuts from fanins
     for (int i = 0; i != fanin0->GetCutNum(); ++i)
     {
@@ -377,14 +377,14 @@ Node::CutEnum(FoxMap *mapper)
         for (int m = 0; m != fanin1->GetCutNum(); ++m)
         {
             Cut *rhs = fanin1->GetCut(m);
-            if (lhs->size + rhs->sign > k && fox::popcount(lhs->sign | rhs->sign) > k)
+            if (lhs->size + rhs->size > k && fox::popcount(lhs->sign | rhs->sign) > k)
                 continue;
             Cut *cut = prune.GetCandidate();
             // check cut is k-feasible or not
             if (!cut->MergeCut(lhs, rhs, k))
                 continue;
             cut->ComputeCost(lhs, rhs, est_ref0, est_ref1, mapper);
-            if (cut->arr > _required)
+            if (!mapper->_premap && cut->arr > _required && pushed_num)
                 continue;
             assert(cut->area > 0 && cut->area < kMaxArea);
             assert(cut->edge > 0 && cut->edge < kMaxArea);
@@ -392,12 +392,13 @@ Node::CutEnum(FoxMap *mapper)
             {
                 cut->ComputeTruth(lhs, rhs, _compl0, _compl1);
                 cut->sign = lhs->sign | rhs->sign;
+                ++pushed_num;
             }
         }
     }
 
     // recall the bestcut
-    if (_prev_best.IsValid())
+    if (_prev_best.IsValid() && !mapper->_premap)
     {
         assert(mapper->GetAlgo() != Algo::Praetor);
         _prev_best.ComputeCost(nullptr, nullptr, 0, 0, mapper);
@@ -407,8 +408,11 @@ Node::CutEnum(FoxMap *mapper)
     // pop the cuts
     _num_cuts = 1 + prune.Pop(_cut_set, _num_cuts);
 
+    assert(_num_cuts > 1);
+
     // backup the best cut
-    _prev_best = _cut_set[0];
+    if (_cut_set[0].arr <= _required && !mapper->_premap)
+        _prev_best = _cut_set[0];
 
     // create trivial cut
     Cut *trival_cut = GetTrivialCut();
@@ -614,11 +618,11 @@ Solution::Remove(uint id)
 void 
 Solution::Add(uint id, Cut *cut)
 {
-    if (_with_cover)
-    {
+    // if (_with_cover)
+//     {
         assert(_cuts[id] == nullptr);
         _cuts[id] = new Cut(*cut);
-    }
+    // }
     ++_num_lut[cut->size];
     ++_sum_lut;
     _sum_edge += cut->size;
@@ -830,6 +834,8 @@ FoxMap::PerformTimingDrivenPremapping()
         RankFnSet::CmpCutAreaEdge
     };
 
+    _premap = 1;
+
     for (int i = 0; i != 3; ++i)
     {
         auto mapping_start = clock();
@@ -839,9 +845,9 @@ FoxMap::PerformTimingDrivenPremapping()
         for (float &est_ref : _est_refs)
             est_ref = _num_refs[m++];
 
-        for (int i = 1; i != _num_nodes; ++i)
+        for (int m = 1; m != _num_nodes; ++m)
         {
-            Node *node = GetNode(i);
+            Node *node = GetNode(m);
             if (node->IsPi() || node->IsAnd())
                 node->CutEnum(this);
         }
@@ -863,6 +869,7 @@ FoxMap::PerformTimingDrivenPremapping()
     }
 
     _first_pass = false;
+    _premap = 0;
 }
 
 Solution *
@@ -872,7 +879,11 @@ FoxMap::PerformGeneralMapping(Algo algo, OptTarget tar)
 
     // set the algorithm and funcs used for cut cost computation
     _algo = algo;
-    _cut_rank_enu_fn = RankFnSet::CmpCutAreaEdge;
+
+    if (tar == OptTarget::Area)
+        _cut_rank_enu_fn = RankFnSet::CmpCutAreaEdge;
+    else
+        _cut_rank_enu_fn = RankFnSet::CmpCutEdgeArea;
 
     // recall the best mapping to update reference
     // compute the estimated reference count
@@ -892,40 +903,8 @@ FoxMap::PerformGeneralMapping(Algo algo, OptTarget tar)
 
     Solution *mapping = CreateTrivialMapping();
 
-    assert(!_map_param->TimingDriven() || mapping->GetDelayNum() <= GetGlobalRequired());
-
-    // // std::vector<uint> node_required_time(_num_nodes, kMaxTime);
-
-    // Solution *mapping = new Solution(this, this->_num_nodes);
-
-    // // setup po settings
-    // for (Node *po : _prim_outputs)
-    // {
-    //     if (Node *fanin = po->GetFanin0(); fanin && fanin->IsAnd())
-    //     {
-    //         ++mapping->GetRefCount(fanin->GetId());
-    //         node_required_time[fanin->GetId()] = global_required;
-    //     }
-    // }
-    
-    // // perform cut selection
-    // for (int i = _num_nodes - 1; i != -1; --i)
-    // {
-    //     Node *node = GetNode(i);
-    //     if (mapping->GetRefCount(i) == 0 || !node->IsAnd())
-    //         continue;
-    //     // find the best cut for current mapping
-    //     Cut *best = node->SelectBestCut(mapping, algo);
-    //     // update required time for leaves
-    //     Time leaf_req_time = node_required_time[i] - GetLutDelayCost(best->size);
-    //     for (int m = 0; m != best->size; ++m)
-    //     {
-    //         int leaf = best->leaves[m];
-    //         ++mapping->GetRefCount(leaf);
-    //         node_required_time[leaf] = std::min(node_required_time[leaf], leaf_req_time);
-    //     }
-    //     mapping->Add(i, best);
-    // }
+    if (_map_param->TimingDriven() && mapping->GetDelayNum() > GetGlobalRequired())
+        printf("foxmap: warning: required time %d is not met\n", GetGlobalRequired());
 
     if (_first_pass)
         _first_pass = false;
@@ -935,8 +914,6 @@ FoxMap::PerformGeneralMapping(Algo algo, OptTarget tar)
 
     if (_map_param->verbose)
         mapping->Print(algo == Algo::Praetor ? "EF" : (algo == Algo::Flow ? "FL" : "EX"), cpu_time);
-
-    // ImproveMapping(mapping);
 
     return mapping;
 }
@@ -1042,28 +1019,17 @@ FoxMap::MapToLut()
         PerformTimingDrivenPremapping();
     }
 
-    // perform mapping pass with different heuristics
-    // if (_map_param->tar != OptTarget::Timing)
-    // {
-    //     for (int i = 0; i != _map_param->praetor_pass_num; ++i)
-    //     {
-    //         _prune.SetMode(Prune::PruneMode::IDLP);
-    //         Solution *mapping = PerformMapping(Algo::Praetor);
-    //         UpdateMapping(mapping);
-    //     }
-    // }
-
     for (int i = 0; i != _map_param->flow_pass_num; ++i)
     {
         Solution *mapping = PerformGeneralMapping(Algo::Flow, OptTarget::Area);
         UpdateMapping(mapping);
     }
 
-    for (int i = 0; i != _map_param->exact_pass_num; ++i)
-    {
-        Solution *mapping = PerformGeneralMapping(Algo::Exact, OptTarget::Area);
-        UpdateMapping(mapping);
-    }
+    // for (int i = 0; i != _map_param->exact_pass_num; ++i)
+    // {
+    //     Solution *mapping = PerformGeneralMapping(Algo::Exact, OptTarget::Area);
+    //     UpdateMapping(mapping);
+    // }
 
     // mapping solution
     return GenMappedNetwork(_best_mapping);

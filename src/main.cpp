@@ -42,6 +42,14 @@ int Foxmap_Command(Abc_Frame_t *pAbc, int argc, char **argv)
         case 'v':
             param.verbose = true;
             break;
+        case 'C':
+            param.c_value = std::atoi(argv[++i]);
+            if (param.c_value < 0)
+            {
+                printf("foxmap: invalid cut number %ld\n", param.c_value);
+                return 1;
+            }
+            break;
         case 'D':
             param.required = std::atoi(argv[++i]);
             if (param.required < 0)
