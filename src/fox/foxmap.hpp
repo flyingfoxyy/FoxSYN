@@ -158,12 +158,11 @@ private:
     NodeType  _type     :   6;  // node type
 
     /* mapping properties */
-    uint      _num_cuts :  20;  // node type
-    uint      _best_cut :   6;
+    uint      _num_cuts :  26;  // node type
     uint      _required      ;  // required time
 
     Cut      *_cut_set{nullptr};// cut-set
-    Cut       _prev_best{};       // the best cut generated during last pass
+    Cut       _best_cut{};       // the best cut generated during last pass
 
 public:
     /**
@@ -173,8 +172,7 @@ public:
      */
     Node(Abc_Obj_t *abc_node);
 
-    Node() : _fanin0(kMaxId), _compl0(0), _fanin1(kMaxId), _compl1(0), _type(NodeType::None), _num_cuts(0),
-        _best_cut(0), _required(kMaxTime) {}
+    Node() : _fanin0(kMaxId), _compl0(0), _fanin1(kMaxId), _compl1(0), _type(NodeType::None), _num_cuts(0), _required(kMaxTime) {}
 
     ~Node()
     {
@@ -195,16 +193,14 @@ public:
 
     Area GetArea()       const { return IsPi() ? 0 : _cut_set[0].area; }
     Edge GetEdge()       const { return IsPi() ? 0 : _cut_set[0].edge; }
-    Time GetArr()        const { return _cut_set[0].arr ;         }
+    Time GetArr()        const { return _best_cut.arr;                 }
 
     uint GetCutNum()     const { return _num_cuts;                }
     Time GetRequired()   const { return _required;                }
     Cut *GetCut(int idx) const { return _cut_set + idx;           }
     Cut *GetTrivialCut() const { return _cut_set + _num_cuts - 1; }
-    Cut *GetBestCut()    const { return _cut_set + _best_cut;     }
-    Cut *GetLastBestCut()      { return &_prev_best;              }
+    Cut *GetBestCut()          { return &_best_cut;               }
 
-    void SetBestCut(uint idx)  { _best_cut = idx;                 }
     void SetRequired(Time req) { _required = req;                 }
 
     void Print();

@@ -356,11 +356,6 @@ Node::CutEnum(FoxMap *mapper)
         return;
     }
 
-    if (IsPo())
-    {
-
-    }
-
     Prune &prune = mapper->GetPrune();
 
     Node *fanin0 = GetFanin0();
@@ -384,7 +379,7 @@ Node::CutEnum(FoxMap *mapper)
             if (!cut->MergeCut(lhs, rhs, k))
                 continue;
             cut->ComputeCost(lhs, rhs, est_ref0, est_ref1, mapper);
-            if (!mapper->_premap && cut->arr > _required && pushed_num)
+            if (!mapper->_premap && cut->arr > _required)
                 continue;
             assert(cut->area > 0 && cut->area < kMaxArea);
             assert(cut->edge > 0 && cut->edge < kMaxArea);
@@ -397,12 +392,12 @@ Node::CutEnum(FoxMap *mapper)
         }
     }
 
-    // recall the bestcut
-    if (_prev_best.IsValid() && !mapper->_premap)
+    // recall the best cut
+    if (!mapper->_first_pass)
     {
-        assert(mapper->GetAlgo() != Algo::Praetor);
-        _prev_best.ComputeCost(nullptr, nullptr, 0, 0, mapper);
-        prune.Push(&_prev_best);
+        _best_cut.ComputeCost(nullptr, nullptr, 0, 0, mapper);
+        if (!mapper->_premap)
+            prune.Push(&_best_cut);
     }
 
     // pop the cuts
@@ -410,9 +405,9 @@ Node::CutEnum(FoxMap *mapper)
 
     assert(_num_cuts > 1);
 
-    // backup the best cut
-    if (_cut_set[0].arr <= _required && !mapper->_premap)
-        _prev_best = _cut_set[0];
+    // update the best cut
+    if (!mapper->_premap || _cut_set[0].arr <= _required)
+        _best_cut = _cut_set[0];
 
     // create trivial cut
     Cut *trival_cut = GetTrivialCut();
@@ -716,44 +711,44 @@ FoxMap::Print()
     }
 }
 
-void
-FoxMap::ImproveMapping(Solution *mapping)
-{
-    auto start = clock();
+// void
+// FoxMap::ImproveMapping(Solution *mapping)
+// {
+//     auto start = clock();
 
-    for (int i = 0; i != _num_nodes; ++i)
-    {
-        Node *node = GetNode(i);
-        if (!node->IsAnd())
-            continue;
-        const bool referenced = mapping->GetRefCount(i);
-        if (referenced)
-        {
-            mapping->GetSol(i)->RipMFFC(mapping, true);
-            mapping->Remove(i);
-        }
-        // reorder the cuts for minimal MFFC size
-        int best_idx = -1;
-        for (int m = 0; m != node->GetCutNum() - 1; ++m)
-        {
-            Cut *cut = node->GetCut(m);
-            cut->area = cut->RefMFFC(mapping);
-            cut->edge = cut->RipMFFC(mapping);
-            if (best_idx == -1 || _cut_rank_sel_fn(cut, node->GetCut(best_idx), 0.1) == 1)
-                best_idx = m;
-        }
-        // update
-        node->SetBestCut(best_idx);
-        if (referenced)
-        {
-            mapping->Add(i, node->GetBestCut());
-            node->GetBestCut()->RefMFFC(mapping, true);
-        }
-    }
+//     for (int i = 0; i != _num_nodes; ++i)
+//     {
+//         Node *node = GetNode(i);
+//         if (!node->IsAnd())
+//             continue;
+//         const bool referenced = mapping->GetRefCount(i);
+//         if (referenced)
+//         {
+//             mapping->GetSol(i)->RipMFFC(mapping, true);
+//             mapping->Remove(i);
+//         }
+//         // reorder the cuts for minimal MFFC size
+//         int best_idx = -1;
+//         for (int m = 0; m != node->GetCutNum() - 1; ++m)
+//         {
+//             Cut *cut = node->GetCut(m);
+//             cut->area = cut->RefMFFC(mapping);
+//             cut->edge = cut->RipMFFC(mapping);
+//             if (best_idx == -1 || _cut_rank_sel_fn(cut, node->GetCut(best_idx), 0.1) == 1)
+//                 best_idx = m;
+//         }
+//         // update
+//         node->SetBestCut(best_idx);
+//         if (referenced)
+//         {
+//             mapping->Add(i, node->GetBestCut());
+//             node->GetBestCut()->RefMFFC(mapping, true);
+//         }
+//     }
 
-    if (_map_param->verbose)
-        mapping->Print("EX", (clock() - start) / (float)CLOCKS_PER_SEC);
-}
+//     if (_map_param->verbose)
+//         mapping->Print("EX", (clock() - start) / (float)CLOCKS_PER_SEC);
+// }
 
 Time
 FoxMap::GetGlobalRequired()
@@ -804,7 +799,7 @@ FoxMap::CreateTrivialMapping(bool with_cover)
 {
     Solution *map = new Solution(this, _num_nodes, with_cover);
 
-    // refernce the po driver
+    // reference the po drivers
     for (Node *po : _prim_outputs)
     {
         if (po->GetFanin0())
@@ -817,6 +812,7 @@ FoxMap::CreateTrivialMapping(bool with_cover)
         if (node->IsAnd() && map->GetRefCount(i))
         {
             Cut *cut = node->GetBestCut();
+            assert(cut->arr <= node->GetRequired());
             for (int m = 0; m != cut->size; ++m)
                 ++map->GetRefCount(cut->leaves[m]);
             map->Add(i, cut);
@@ -858,6 +854,8 @@ FoxMap::PerformTimingDrivenPremapping()
         // compute and propagate required times
         ComputeRequiredTime(mapping);
 
+        _first_pass = false;
+
         auto mapping_end = clock();
         if (_map_param->verbose)
             mapping->Print("PM", (mapping_end - mapping_start) / (float)CLOCKS_PER_SEC);
@@ -867,8 +865,6 @@ FoxMap::PerformTimingDrivenPremapping()
         else
             delete mapping;
     }
-
-    _first_pass = false;
     _premap = 0;
 }
 
@@ -901,7 +897,11 @@ FoxMap::PerformGeneralMapping(Algo algo, OptTarget tar)
             node->CutEnum(this);
     }
 
+    // reference the best cuts
     Solution *mapping = CreateTrivialMapping();
+
+    // compute and propagate required times
+    ComputeRequiredTime(mapping);
 
     if (_map_param->TimingDriven() && mapping->GetDelayNum() > GetGlobalRequired())
         printf("foxmap: warning: required time %d is not met\n", GetGlobalRequired());
