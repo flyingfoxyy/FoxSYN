@@ -34,7 +34,7 @@ using Edge   = float;
 using Time   = uint;
 using Sign   = uint;
 using word   = uint64_t;
-using RankFn = std::function<int(Cut *lhs, Cut *rhs, float epsilon)>;
+using RankFn = int(*)(Cut *, Cut *, float);
 
 constexpr uint kMaxLutSize = 6;
 constexpr uint kMaxId      = 0x0FFFFFFF;
@@ -475,9 +475,9 @@ class FoxMap
     uint       _premap{0};
 
     /* current mapping solution info */
-    uint       _lut_num  {0};
-    uint       _delay_num{0};
-    uint       _edge_num {0};
+    uint       _map_num_lut  {0};
+    uint       _map_num_level{0};
+    uint       _map_num_edge {0};
 
     friend class Node;
     friend class Cut;
@@ -576,21 +576,39 @@ private:
     void SetupLib() {}
 
     /**
-     * @brief Improve mapping with MFFC rip up and exact remap
+     * @brief Get the global required time
      * 
-     * @param mapping 
+     * @return Time 
      */
-    void ImproveMapping(Solution *mapping);
-
     Time GetGlobalRequired();
 
-    Solution *CreateTrivialMapping(bool with_cover = true);
+    /**
+     * @brief Compute the required time and propagate them
+     * 
+     */
+    void ComputeRequiredTime();
 
-    void ComputeRequiredTime(Solution *mapping);
+    /**
+     * @brief Perform a general mapping pass according to given settings
+     * 
+     * @param algo 
+     * @param fn 
+     */
+    void PerformGeneralMapping(Algo algo, RankFn fn);
 
-    void PerformTimingDrivenPremapping();
+    /**
+     * @brief Reference the best cuts
+     * 
+     */
+    void ReferenceBestCuts();
 
-    void PerformGeneralMapping(Algo algo, OptTarget tar);
+    Solution *CreateSolFromCurrMap();
+
+    void PrintMapping(const char *stage, float time)
+    {
+        printf("%s: Delay = %3d  Area = %6d  Edge = %6d  Time = %.1f\n", stage, _map_num_level,
+            _map_num_lut, _map_num_edge, time);
+    }
 
     /**
      * @brief Initialize the mapping graph from input AIG
