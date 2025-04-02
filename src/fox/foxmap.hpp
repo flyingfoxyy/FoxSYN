@@ -103,7 +103,7 @@ struct Cut
      * @brief Compute the cost properties
      * 
      */
-    void ComputeCost(Cut *lhs, Cut *rhs, float lhs_est_ref, float rhs_est_ref, FoxMap *mapper);
+    void ComputeCost(Cut *lhs, Cut *rhs, FoxMap *mapper);
 
     /**
      * @brief Compute cut truth table
@@ -118,7 +118,7 @@ struct Cut
      */
     bool MergeCut(Cut *lhs, Cut *rhs, int k);
 
-    bool IsValid() const { return leaves[0]; }
+    bool IsValid() const { return size > 1 && leaves[0]; }
 
     /**
      * @brief Reference the MFFC of this cut
@@ -161,6 +161,7 @@ private:
     uint      _num_cuts :  26;  // node type
     uint      _required      ;  // required time
     uint      _num_ref{0}    ;  // reference count
+    float     _est_ref{0}    ;  // estimated reference count
 
     Cut      *_cut_set{nullptr};// cut-set
     Cut       _best_cut{};       // the best cut generated during last pass
@@ -202,6 +203,8 @@ public:
     Cut *GetCut(int idx) const { return _cut_set + idx;           }
     Cut *GetTrivialCut() const { return _cut_set + _num_cuts - 1; }
     Cut *GetBestCut()          { return &_best_cut;               }
+
+    float &GetEstRefNum()       { return _est_ref;                }
 
     void SetRequired(Time req) { _required = req;                 }
 
@@ -471,6 +474,11 @@ class FoxMap
 
     uint       _premap{0};
 
+    /* current mapping solution info */
+    uint       _lut_num  {0};
+    uint       _delay_num{0};
+    uint       _edge_num {0};
+
     friend class Node;
     friend class Cut;
     friend class Solution;
@@ -511,7 +519,7 @@ private:
     /**
      * Get the estimated reference count for node idx
      */
-    float GetEstRef(uint id) const { assert(_est_refs[id]); return _est_refs[id]; }
+    // float GetEstRef(uint id) const { assert(_est_refs[id]); return _est_refs[id]; }
 
     /**
      * Get the mapping parameters
@@ -582,15 +590,7 @@ private:
 
     void PerformTimingDrivenPremapping();
 
-    Solution *PerformGeneralMapping(Algo algo, OptTarget tar);
-
-    /**
-     * @brief Perform a LUT mapping pass
-     * 
-     * @param algo 
-     * @return Solution 
-     */
-    Solution *PerformMapping(Algo algo);
+    void PerformGeneralMapping(Algo algo, OptTarget tar);
 
     /**
      * @brief Initialize the mapping graph from input AIG

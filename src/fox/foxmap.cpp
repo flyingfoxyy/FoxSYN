@@ -22,6 +22,9 @@ namespace foxmap
 {
 thread_local Node *foxmap::Node::_const_1 = nullptr;
 
+int curr_area = 0;
+int curr_edge = 0;
+
 bool
 Cut::MergeCut(Cut *lhs, Cut *rhs, int lut_size)
 {
@@ -93,34 +96,24 @@ FlushCut1:
 }
 
 void
-Cut::ComputeCost(Cut *lhs, Cut *rhs, float est_ref_l, float est_ref_r, FoxMap *mapper)
+Cut::ComputeCost(Cut *lhs, Cut *rhs, FoxMap *mapper)
 {
     Algo algo = mapper->GetAlgo();
-    if (algo == Algo::Flow || !lhs)
+    if (algo == Algo::Flow)
     {
         area = mapper->GetLutAreaCost(size);
         edge = mapper->GetLutEdgeCost(size);
         for (int i = 0; i != size; ++i)
         {
             Node *leaf = mapper->GetNode(leaves[i]);
-            area += leaf->GetArea() / mapper->GetEstRef(leaf->GetId());
-            edge += leaf->GetEdge() / mapper->GetEstRef(leaf->GetId());
+            area += leaf->GetArea() / leaf->GetEstRefNum();
+            edge += leaf->GetEdge() / leaf->GetEstRefNum();
         }
     }
     else if (algo == Algo::Exact)
     {
         area = RefMFFC(mapper);
         edge = RipMFFC(mapper);
-    }
-    else
-    {
-        assert(algo == Algo::Praetor);
-        area = mapper->GetLutAreaCost(size);
-        area += (lhs->area - mapper->GetLutAreaCost(lhs->size)) / est_ref_l;
-        area += (rhs->area - mapper->GetLutAreaCost(rhs->size)) / est_ref_r;
-        edge = mapper->GetLutEdgeCost(size);
-        edge += (lhs->edge - mapper->GetLutEdgeCost(lhs->size)) / est_ref_l;
-        edge += (rhs->edge - mapper->GetLutEdgeCost(rhs->size)) / est_ref_r;
     }
 
     // compute arrival time
@@ -147,10 +140,12 @@ Cut::RefMFFC(FoxMap *mapper)
 Edge
 Cut::RipMFFC(FoxMap *mapper)
 {
+    assert(IsValid());
     Edge edge = mapper->GetLutEdgeCost(size);
     for (int i = 0; i != size; ++i)
     {
         Node *node = FoxMap::GetNode(leaves[i]);
+        assert(node->GetRefNum() > 0);
         if (--node->GetRefNum() > 0 || !node->IsAnd())
             continue;
         edge += node->GetBestCut()->RipMFFC(mapper);
@@ -311,21 +306,25 @@ Node::Node(Abc_Obj_t *abc_node) : _num_cuts(0)
         _cut_set = new Cut[_num_cuts = 1];
         _cut_set->leaves[0] = Abc_ObjId(abc_node);
         _cut_set->sign = GetSign(Abc_ObjId(abc_node));
+        _est_ref = _num_ref = Abc_ObjFanoutNum(abc_node);
         break;
     case ABC_OBJ_PO:
         _type   = NodeType::PO;
         _fanin0 = Abc_ObjFaninId0(abc_node);
         _fanin1 = kMaxId;
+        _est_ref = _num_ref = Abc_ObjFanoutNum(abc_node);
         break;
     case ABC_OBJ_NODE:
         _type   = NodeType::And;
         _fanin0 = Abc_ObjFaninId0(abc_node);
         _fanin1 = Abc_ObjFaninId1(abc_node);
+        _est_ref = _num_ref = Abc_ObjFanoutNum(abc_node);
         break;
     case ABC_OBJ_CONST1:
         _type   = NodeType::Const;
         _fanin0 = kMaxId;
         _fanin1 = kMaxId;
+        _est_ref = _num_ref = Abc_ObjFanoutNum(abc_node);
         break;
     default:
         assert(0);
@@ -343,25 +342,31 @@ Node::CutEnum(FoxMap *mapper)
         return;
     }
 
-    Prune &prune = mapper->GetPrune();
+    // update node estimated reference count
+    _est_ref = static_cast<float>(std::max(1u, _num_ref));
 
+    Prune &prune = mapper->GetPrune();
     Node *fanin0 = GetFanin0();
     Node *fanin1 = GetFanin1();
 
-    float est_ref0 = mapper->GetEstRef(_fanin0);
-    float est_ref1 = mapper->GetEstRef(_fanin1);
     const int k = mapper->GetParam()->lut_size;
 
+    // ripup current mapping
     if (_num_ref && !mapper->_premap && mapper->GetAlgo() == Algo::Exact)
-    {
-        assert(_best_cut.IsValid());
         _best_cut.RipMFFC(mapper);
+
+    // check in last best cut
+    if (_best_cut.IsValid())
+    {
+        _best_cut.ComputeCost(nullptr, nullptr, mapper);
+        if (!mapper->_premap)
+            prune.Push(&_best_cut);
     }
 
     // merge the cuts from fanins
     for (int i = 0; i != fanin0->GetCutNum(); ++i)
     {
-        Cut *lhs = fanin0->GetCut(i);
+        Cut *lhs = fanin1->GetCut(i);
         for (int m = 0; m != fanin1->GetCutNum(); ++m)
         {
             Cut *rhs = fanin1->GetCut(m);
@@ -371,50 +376,39 @@ Node::CutEnum(FoxMap *mapper)
             // check cut is k-feasible or not
             if (!cut->MergeCut(lhs, rhs, k))
                 continue;
-            cut->ComputeCost(lhs, rhs, est_ref0, est_ref1, mapper);
+            cut->ComputeCost(lhs, rhs, mapper);
             if (!mapper->_premap && cut->arr > _required)
                 continue;
             assert(cut->area > 0 && cut->area < kMaxArea);
             assert(cut->edge > 0 && cut->edge < kMaxArea);
             if (prune.Push(cut))
             {
-                cut->ComputeTruth(lhs, rhs, _compl0, _compl1);
                 cut->sign = lhs->sign | rhs->sign;
+                cut->ComputeTruth(lhs, rhs, _compl0, _compl1);
             }
         }
     }
 
-    // recall the best cut
-    if (!mapper->_first_pass)
-    {
-        assert(_best_cut.IsValid());
-        _best_cut.ComputeCost(nullptr, nullptr, 0, 0, mapper);
-        if (!mapper->_premap)
-            prune.Push(&_best_cut);
-    }
-
     // pop the cuts
     _num_cuts = 1 + prune.Pop(_cut_set, _num_cuts);
-
     assert(_num_cuts > 1);
 
-    // update the best cut
+    // update the best cut if on non-timing pass or (in timing pass but arrival time is ok)
     if (!mapper->_premap || _cut_set[0].arr <= _required)
         _best_cut = _cut_set[0];
 
+    // refernce the best cut into mapping
     if (_num_ref && !mapper->_premap && mapper->GetAlgo() == Algo::Exact)
         _best_cut.RefMFFC(mapper);
 
     // create trivial cut
     Cut *trival_cut = GetTrivialCut();
-    trival_cut->sign = GetSign(GetId());
-    trival_cut->edge = GetBestCut()->edge;
-    trival_cut->area = GetBestCut()->area;
     trival_cut->leaves[0] = GetId();
+    trival_cut->sign = GetSign(GetId());
     if (mapper->GetAlgo() == Algo::Praetor)
     {
-        trival_cut->area += mapper->GetLutAreaCost(1);
-        trival_cut->edge += mapper->GetLutEdgeCost(1);
+        trival_cut->area = mapper->GetLutAreaCost(1);
+        trival_cut->edge = mapper->GetLutEdgeCost(1);
     }
 }
 
@@ -777,6 +771,7 @@ FoxMap::CreateTrivialMapping(bool with_cover)
             map->Add(i, cut);
         }
     }
+
     return map;
 }
 
@@ -827,7 +822,7 @@ FoxMap::PerformTimingDrivenPremapping()
     _premap = 0;
 }
 
-Solution *
+void
 FoxMap::PerformGeneralMapping(Algo algo, OptTarget tar)
 {
     auto mapping_start = clock();
@@ -840,23 +835,9 @@ FoxMap::PerformGeneralMapping(Algo algo, OptTarget tar)
     else
         _cut_rank_enu_fn = RankFnSet::CmpCutEdgeArea;
 
-    if (algo == Algo::Exact)
-    {
-        for (int i = 1; i != _num_nodes; ++i)
-            GetNode(i)->GetRefNum() = _best_mapping->GetRefCount(i);
-    }
-
-    // recall the best mapping to update reference
-    // compute the estimated reference count
-    if (!_first_pass)
-    {
-        int i = 0;
-        for (float &est_ref : _est_refs)
-            est_ref = std::max(1u, _best_mapping->GetRefCount(i++));
-    }
-
     // enumerate cuts
-    for (int i = 0; i != _num_nodes; ++i) {
+    for (int i = 0; i != _num_nodes; ++i)
+    {
         Node *node = GetNode(i);
         if (node->IsPi() || node->IsAnd())
             node->CutEnum(this);
@@ -880,7 +861,6 @@ FoxMap::PerformGeneralMapping(Algo algo, OptTarget tar)
     if (_map_param->verbose)
         mapping->Print(algo == Algo::Praetor ? "EF" : (algo == Algo::Flow ? "FL" : "EX"), cpu_time);
 
-    return mapping;
 }
 
 Abc_Ntk_t *
@@ -986,14 +966,12 @@ FoxMap::MapToLut()
 
     for (int i = 0; i != _map_param->flow_pass_num; ++i)
     {
-        Solution *mapping = PerformGeneralMapping(Algo::Flow, OptTarget::Area);
-        UpdateMapping(mapping);
+        PerformGeneralMapping(Algo::Flow, OptTarget::Area);
     }
 
     for (int i = 0; i != _map_param->exact_pass_num; ++i)
     {
-        Solution *mapping = PerformGeneralMapping(Algo::Exact, OptTarget::Area);
-        UpdateMapping(mapping);
+        PerformGeneralMapping(Algo::Exact, OptTarget::Area);
     }
 
     // mapping solution
