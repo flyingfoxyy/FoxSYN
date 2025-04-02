@@ -353,7 +353,7 @@ Node::CutEnum(FoxMap *mapper)
         _best_cut.RipMFFC(mapper);
 
     // check in last best cut
-    if (_best_cut.IsValid())
+    if (!mapper->_first_pass)
     {
         _best_cut.ComputeCost(nullptr, nullptr, mapper);
         if (!mapper->_premap)
@@ -394,7 +394,7 @@ Node::CutEnum(FoxMap *mapper)
     if (!mapper->_premap || _cut_set[0].arr <= _required)
         _best_cut = _cut_set[0];
 
-    // refernce the best cut into mapping
+    // reference the best cut into mapping
     if (_num_ref && !mapper->_premap && mapper->GetAlgo() == Algo::Exact)
         _best_cut.RefMFFC(mapper);
 
