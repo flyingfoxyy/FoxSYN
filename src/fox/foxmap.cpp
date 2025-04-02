@@ -22,9 +22,6 @@ namespace foxmap
 {
 thread_local Node *foxmap::Node::_const_1 = nullptr;
 
-int curr_area = 0;
-int curr_edge = 0;
-
 bool
 Cut::MergeCut(Cut *lhs, Cut *rhs, int lut_size)
 {
@@ -343,7 +340,7 @@ Node::CutEnum(FoxMap *mapper)
     }
 
     // update node estimated reference count
-    _est_ref = static_cast<float>(std::max(1u, _num_ref));
+    _est_ref = std::max(1u, _num_ref);
 
     Prune &prune = mapper->GetPrune();
     Node *fanin0 = GetFanin0();
@@ -690,7 +687,7 @@ FoxMap::ReferenceBestCuts()
     _map_num_lut   = 0;
     _map_num_edge  = 0;
     _map_num_level = 0;
-    
+
     for (int i = 1; i != _num_nodes; ++i)
     {
         Node *node = GetNode(i);
@@ -725,7 +722,7 @@ FoxMap::ReferenceBestCuts()
     std::vector<uint> node_level(_num_nodes, 0);
     for (int i = 1; i != _num_nodes; ++i)
     {
-        uint level = 0;
+        uint &level = node_level[i];
         if (Node *node = GetNode(i); node->IsAnd() && node->GetRefNum())
         {
             Cut *cut = node->GetBestCut();
@@ -928,6 +925,11 @@ FoxMap::MapToLut()
         };
         for (int i = 0; i != 3; ++i)
         {
+            if (i)
+            {
+                for (int i = 1; i != _num_nodes; ++i)
+                    GetNode(i)->GetRefNum() = _num_refs[i];
+            }
             PerformGeneralMapping(Algo::Flow, rank_fn_set[i]);
         }
 
