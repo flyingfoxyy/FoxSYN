@@ -109,14 +109,8 @@ Cut::ComputeCost(Cut *lhs, Cut *rhs, float est_ref_l, float est_ref_r, FoxMap *m
     }
     else if (algo == Algo::Exact)
     {
-        area = mapper->GetLutAreaCost(size);
-        edge = mapper->GetLutEdgeCost(size);
-        for (int i = 0; i != size; ++i)
-        {
-            Node *leaf = mapper->GetNode(leaves[i]);
-            area += leaf->GetArea() / mapper->GetEstRef(leaf->GetId());
-            edge += leaf->GetEdge() / mapper->GetEstRef(leaf->GetId());
-        }
+        area = RefMFFC(mapper);
+        edge = RipMFFC(mapper);
     }
     else
     {
@@ -137,36 +131,29 @@ Cut::ComputeCost(Cut *lhs, Cut *rhs, float est_ref_l, float est_ref_r, FoxMap *m
 }
 
 Area
-Cut::RefMFFC(Solution *mapping, bool update)
+Cut::RefMFFC(FoxMap *mapper)
 {
-    Area area = mapping->GetMapper()->GetLutAreaCost(size);
+    Area area = mapper->GetLutAreaCost(size);
     for (int i = 0; i != size; ++i)
     {
-        uint id = leaves[i];
-        if (mapping->GetRefCount(id)++ > 0 || !FoxMap::GetNode(id)->IsAnd())
+        Node *node = FoxMap::GetNode(leaves[i]);
+        if (node->GetRefNum()++ > 0 || !node->IsAnd())
             continue;
-        // with/without update, the best cut is always located on the first place
-        Cut *best = FoxMap::GetNode(id)->GetBestCut();
-        if (update)
-            mapping->Add(id, best);
-        area += best->RefMFFC(mapping, update);
+        area += node->GetBestCut()->RefMFFC(mapper);
     }
     return area;
 }
 
 Edge
-Cut::RipMFFC(Solution *mapping, bool update)
+Cut::RipMFFC(FoxMap *mapper)
 {
-    Edge edge = mapping->GetMapper()->GetLutEdgeCost(size);
+    Edge edge = mapper->GetLutEdgeCost(size);
     for (int i = 0; i != size; ++i)
     {
-        uint id = leaves[i];
-        if (--mapping->GetRefCount(id) > 0 || !FoxMap::GetNode(id)->IsAnd())
+        Node *node = FoxMap::GetNode(leaves[i]);
+        if (--node->GetRefNum() > 0 || !node->IsAnd())
             continue;
-        Cut *curr = update ? mapping->GetSol(id) : FoxMap::GetNode(id)->GetBestCut();
-        edge += curr->RipMFFC(mapping, update);
-        if (update)
-            mapping->Remove(id);
+        edge += node->GetBestCut()->RipMFFC(mapper);
     }
     return edge;
 }
@@ -364,7 +351,13 @@ Node::CutEnum(FoxMap *mapper)
     float est_ref0 = mapper->GetEstRef(_fanin0);
     float est_ref1 = mapper->GetEstRef(_fanin1);
     const int k = mapper->GetParam()->lut_size;
-    int pushed_num = 0;
+
+    if (_num_ref && !mapper->_premap && mapper->GetAlgo() == Algo::Exact)
+    {
+        assert(_best_cut.IsValid());
+        _best_cut.RipMFFC(mapper);
+    }
+
     // merge the cuts from fanins
     for (int i = 0; i != fanin0->GetCutNum(); ++i)
     {
@@ -387,7 +380,6 @@ Node::CutEnum(FoxMap *mapper)
             {
                 cut->ComputeTruth(lhs, rhs, _compl0, _compl1);
                 cut->sign = lhs->sign | rhs->sign;
-                ++pushed_num;
             }
         }
     }
@@ -395,6 +387,7 @@ Node::CutEnum(FoxMap *mapper)
     // recall the best cut
     if (!mapper->_first_pass)
     {
+        assert(_best_cut.IsValid());
         _best_cut.ComputeCost(nullptr, nullptr, 0, 0, mapper);
         if (!mapper->_premap)
             prune.Push(&_best_cut);
@@ -409,11 +402,14 @@ Node::CutEnum(FoxMap *mapper)
     if (!mapper->_premap || _cut_set[0].arr <= _required)
         _best_cut = _cut_set[0];
 
+    if (_num_ref && !mapper->_premap && mapper->GetAlgo() == Algo::Exact)
+        _best_cut.RefMFFC(mapper);
+
     // create trivial cut
     Cut *trival_cut = GetTrivialCut();
     trival_cut->sign = GetSign(GetId());
-    trival_cut->edge = GetCut(0)->edge;
-    trival_cut->area = GetCut(0)->area;
+    trival_cut->edge = GetBestCut()->edge;
+    trival_cut->area = GetBestCut()->area;
     trival_cut->leaves[0] = GetId();
     if (mapper->GetAlgo() == Algo::Praetor)
     {
@@ -711,48 +707,11 @@ FoxMap::Print()
     }
 }
 
-// void
-// FoxMap::ImproveMapping(Solution *mapping)
-// {
-//     auto start = clock();
-
-//     for (int i = 0; i != _num_nodes; ++i)
-//     {
-//         Node *node = GetNode(i);
-//         if (!node->IsAnd())
-//             continue;
-//         const bool referenced = mapping->GetRefCount(i);
-//         if (referenced)
-//         {
-//             mapping->GetSol(i)->RipMFFC(mapping, true);
-//             mapping->Remove(i);
-//         }
-//         // reorder the cuts for minimal MFFC size
-//         int best_idx = -1;
-//         for (int m = 0; m != node->GetCutNum() - 1; ++m)
-//         {
-//             Cut *cut = node->GetCut(m);
-//             cut->area = cut->RefMFFC(mapping);
-//             cut->edge = cut->RipMFFC(mapping);
-//             if (best_idx == -1 || _cut_rank_sel_fn(cut, node->GetCut(best_idx), 0.1) == 1)
-//                 best_idx = m;
-//         }
-//         // update
-//         node->SetBestCut(best_idx);
-//         if (referenced)
-//         {
-//             mapping->Add(i, node->GetBestCut());
-//             node->GetBestCut()->RefMFFC(mapping, true);
-//         }
-//     }
-
-//     if (_map_param->verbose)
-//         mapping->Print("EX", (clock() - start) / (float)CLOCKS_PER_SEC);
-// }
-
 Time
 FoxMap::GetGlobalRequired()
 {
+    if (!_map_param->TimingDriven())
+        return kMaxTime;
     if (!_max_po_arr_time)
     {
         for (Node *po : _prim_outputs)
@@ -880,6 +839,12 @@ FoxMap::PerformGeneralMapping(Algo algo, OptTarget tar)
         _cut_rank_enu_fn = RankFnSet::CmpCutAreaEdge;
     else
         _cut_rank_enu_fn = RankFnSet::CmpCutEdgeArea;
+
+    if (algo == Algo::Exact)
+    {
+        for (int i = 1; i != _num_nodes; ++i)
+            GetNode(i)->GetRefNum() = _best_mapping->GetRefCount(i);
+    }
 
     // recall the best mapping to update reference
     // compute the estimated reference count
@@ -1025,11 +990,11 @@ FoxMap::MapToLut()
         UpdateMapping(mapping);
     }
 
-    // for (int i = 0; i != _map_param->exact_pass_num; ++i)
-    // {
-    //     Solution *mapping = PerformGeneralMapping(Algo::Exact, OptTarget::Area);
-    //     UpdateMapping(mapping);
-    // }
+    for (int i = 0; i != _map_param->exact_pass_num; ++i)
+    {
+        Solution *mapping = PerformGeneralMapping(Algo::Exact, OptTarget::Area);
+        UpdateMapping(mapping);
+    }
 
     // mapping solution
     return GenMappedNetwork(_best_mapping);

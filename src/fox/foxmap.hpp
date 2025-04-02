@@ -127,7 +127,7 @@ struct Cut
      * @param update update the solution on-the-fly
      * @return Area 
      */
-    Area RefMFFC(Solution *mapping, bool update = false);
+    Area RefMFFC(FoxMap *mapper);
 
     /**
      * @brief Rip up the MFFC of this cut
@@ -136,7 +136,7 @@ struct Cut
      * @param update 
      * @return Edge 
      */
-    Edge RipMFFC(Solution *mapping, bool update = false);
+    Edge RipMFFC(FoxMap *mapper);
 };
 
 //==----------------------------------------------------------------==//
@@ -160,6 +160,7 @@ private:
     /* mapping properties */
     uint      _num_cuts :  26;  // node type
     uint      _required      ;  // required time
+    uint      _num_ref{0}    ;  // reference count
 
     Cut      *_cut_set{nullptr};// cut-set
     Cut       _best_cut{};       // the best cut generated during last pass
@@ -186,14 +187,15 @@ public:
     uint GetFanin1Id() const { return _fanin1; }
 
     uint GetId() const { return this - Node::_const_1;    }
+    uint &GetRefNum()  { return _num_ref;                 }
 
     bool IsPi()  const { return _type == NodeType::PI;    }
     bool IsPo()  const { return _type == NodeType::PO;    }
     bool IsAnd() const { return _type == NodeType::And;   }
 
-    Area GetArea()       const { return IsPi() ? 0 : _cut_set[0].area; }
-    Edge GetEdge()       const { return IsPi() ? 0 : _cut_set[0].edge; }
-    Time GetArr()        const { return _best_cut.arr;                 }
+    Area GetArea()       const { return _best_cut.area;   }
+    Edge GetEdge()       const { return _best_cut.edge;   }
+    Time GetArr()        const { return _best_cut.arr;    }
 
     uint GetCutNum()     const { return _num_cuts;                }
     Time GetRequired()   const { return _required;                }
@@ -204,8 +206,6 @@ public:
     void SetRequired(Time req) { _required = req;                 }
 
     void Print();
-
-    int debug_arr = 0;
     
     /**
      * @brief Perform cut enumeration
