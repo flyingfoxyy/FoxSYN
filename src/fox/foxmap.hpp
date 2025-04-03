@@ -58,15 +58,14 @@ class Param
 public:
     /* the parammeters for technology mapping */
     OptTarget    tar               = OptTarget::Timing;
-    bool         verbose           = true;  // print log
-    bool         always_enum_cut   = true ; // always enumerates cuts during each mapping pass
+    int          verbose           = 1;  // print log
+    int          praetor_premap    = 0;  // always enumerates cuts during each mapping pass
 
     std::size_t  lut_size          = 6;     // max LUT input size
     std::size_t  required          = 0;     // the target delay of mapped LUT netlist
     std::size_t  c_value           = 8;     // the cut number stored for each node (exclude trivial cut)
-    std::size_t  praetor_pass_num  = 4;     // the number of pass performing with effective area heuristic method
-    std::size_t  flow_pass_num     = 4;     // the number of pass performing with area-flow      heuristic method
-    std::size_t  exact_pass_num    = 4;     // the number of pass performing with exact area     heuristic method
+    std::size_t  flow_pass_num     = 3;     // the number of pass performing with area-flow      heuristic method
+    std::size_t  exact_pass_num    = 2;     // the number of pass performing with exact area     heuristic method
 
     bool TimingDriven() const { return tar == OptTarget::Timing;      }  // timing
     bool AreaDriven ()  const { return tar == OptTarget::Area;        }  // area/routability/timing
@@ -103,7 +102,7 @@ struct Cut
      * @brief Compute the cost properties
      * 
      */
-    void ComputeCost(Cut *lhs, Cut *rhs, FoxMap *mapper);
+    void ComputeCost(Node *node, Cut *lhs, Cut *rhs, FoxMap *mapper);
 
     /**
      * @brief Compute cut truth table
@@ -216,13 +215,6 @@ public:
      * @param mapper 
      */
     void CutEnum(FoxMap *mapper);
-
-    /**
-     * @brief Perform realtime best cut selection
-     * 
-     * @param mapping current mapping solution
-     */
-    Cut *SelectBestCut(Solution *mapping);
 };
 
 
@@ -266,16 +258,12 @@ private:
     std::vector<std::vector<Cut *>> _indexed_list;
     std::vector<Cut *>              _unified_list;
 
-    PruneMode _mode {PruneMode::NONE};
-
-    RankFn _rank_fn {};
-
-    Area _epsilon   {0.001f  };
-    Area _min_area  {kMaxArea};
-
-    uint _temp_used_num    {0};
-
-    Cut *_temp_cuts        {nullptr};
+    PruneMode _mode          {PruneMode::NONE};
+    RankFn    _rank_fn       {nullptr };
+    Cut      *_temp_cuts     {nullptr };
+    Area      _epsilon       {0.001f  };
+    Area      _min_area      {kMaxArea};
+    uint      _temp_used_num {0};
 
 public:
     Prune(Param *param) : _temp_cuts(new Cut[(kMaxCutNum + 1) * (kMaxCutNum + 1)])
@@ -306,7 +294,7 @@ public:
      * 
      * @param fn 
      */
-    void SetRankFn(const RankFn &fn) { _rank_fn = fn; }
+    void SetRankFn(RankFn fn) { _rank_fn = fn; }
 
     /**
      * @brief Get the a general cut candidate
@@ -449,16 +437,14 @@ class FoxMap
 
     /* technology mapping property and flags */
     Param       *_map_param   {nullptr   };  // parammeters of mapping algo
-    Algo         _algo        {Algo::Flow};  // algorithm during each pass
     Node        *_nodes       {nullptr   };  // all nodes
-    uint32_t     _num_nodes   {0         };  // total node number
+    uint         _num_nodes   {0         };  // total node number
     Abc_Ntk_t   *_pAig        {nullptr   };  // AIG for mapping
 
     std::vector<Node *>  _prim_inputs;
     std::vector<Node *>  _prim_outputs;
 
     std::vector<uint>    _num_refs;  // real reference count in AIG
-    std::vector<float>   _est_refs;  // estimated reference count for next pass
 
     double     _cpu_time       {0   };
     double     _wall_time      {0   };
@@ -469,15 +455,15 @@ class FoxMap
     Solution  *_best_mapping   {nullptr};
 
     /* mapping runtime options */
-    RankFn     _cut_rank_enu_fn{};
-    RankFn     _cut_rank_sel_fn{};
-
-    uint       _premap{0};
+    RankFn     _cut_rank_enu_fn{nullptr};
+    RankFn     _cut_rank_sel_fn{nullptr};
+    uint       _premap         {0};
+    Algo       _algo           {Algo::Flow};
 
     /* current mapping solution info */
-    uint       _map_num_lut  {0};
-    uint       _map_num_level{0};
-    uint       _map_num_edge {0};
+    uint       _map_num_lut    {0};
+    uint       _map_num_level  {0};
+    uint       _map_num_edge   {0};
 
     friend class Node;
     friend class Cut;

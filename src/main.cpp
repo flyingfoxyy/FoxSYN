@@ -39,8 +39,11 @@ int Foxmap_Command(Abc_Frame_t *pAbc, int argc, char **argv)
         case 'r':
             param.tar = OptTarget::Routability;
             break;
+        case 'p':
+            param.praetor_premap ^= 1;
+            break;
         case 'v':
-            param.verbose = true;
+            param.verbose ^= 1;
             break;
         case 'C':
             param.c_value = std::atoi(argv[++i]);
@@ -59,10 +62,10 @@ int Foxmap_Command(Abc_Frame_t *pAbc, int argc, char **argv)
             }
             break;
         case 'E':
-            param.praetor_pass_num = std::atoi(argv[++i]);
-            if (param.praetor_pass_num < 0)
+            param.exact_pass_num = std::atoi(argv[++i]);
+            if (param.exact_pass_num < 0)
             {
-                printf("foxmap: invalid pass number %ld\n", param.praetor_pass_num);
+                printf("foxmap: invalid pass number %ld\n", param.exact_pass_num);
                 return 1;
             }
             break;
@@ -121,10 +124,11 @@ usage:
     Abc_Print(-2, "usage: foxmap [-kEFA num] [-av]\n");
     Abc_Print(-2, "\t           performs FPGA technology mapping of the network\n");
     Abc_Print(-2, "\t-k num   : the number of LUT inputs (2 < num < %d) [default = %d]\n", kMaxLutSize + 1, kMaxLutSize);
-    Abc_Print(-2, "\t-E num   : the number of effective area iterations (num >= 0) [default = %d]\n", param.praetor_pass_num);
     Abc_Print(-2, "\t-F num   : the number of area flow iterations (num >= 0) [default = %d]\n", param.flow_pass_num);
+    Abc_Print(-2, "\t-E num   : the number of exact area iterations (num >= 0) [default = %d]\n", param.exact_pass_num);
     Abc_Print(-2, "\t-a       : toggles area-oriented technology mapping\n");
     Abc_Print(-2, "\t-r       : toggles routability-oriented technology mapping\n");
+    Abc_Print(-2, "\t-r       : toggles pre-mapping with praetor algorithm\n");
     Abc_Print(-2, "\t-v       : toggles verbose log print\n");
     Abc_Print(-2, "\n");
 
