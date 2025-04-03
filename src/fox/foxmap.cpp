@@ -349,7 +349,10 @@ Node::CutEnum(FoxMap *mapper)
     }
 
     // update node estimated reference count
-    _est_ref = std::max(1u, _num_ref);
+    // if (mapper->_premap)
+        _est_ref = std::max(1u, _num_ref);
+    // else if (mapper->GetAlgo() == Algo::Flow)
+    //     _est_ref = (_est_ref + 4 * _num_ref) / 5.00;
 
     Prune &prune = mapper->GetPrune();
     Node *fanin0 = GetFanin0();
