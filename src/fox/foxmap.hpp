@@ -136,6 +136,8 @@ struct Cut
      * @return Edge 
      */
     Edge RipMFFC(FoxMap *mapper);
+
+    void MarkCone(Node *node, std::vector<int> &cone);
 };
 
 //==----------------------------------------------------------------==//
@@ -157,7 +159,8 @@ private:
     NodeType  _type     :   6;  // node type
 
     /* mapping properties */
-    uint      _num_cuts :  26;  // node type
+    uint      _mark     :  1 ;  // mark
+    uint      _num_cuts :  25;  // number cuts
     uint      _required      ;  // required time
     uint      _num_ref{0}    ;  // reference count
     float     _est_ref{0}    ;  // estimated reference count
@@ -173,7 +176,7 @@ public:
      */
     Node(Abc_Obj_t *abc_node);
 
-    Node() : _fanin0(kMaxId), _compl0(0), _fanin1(kMaxId), _compl1(0), _type(NodeType::None), _num_cuts(0), _required(kMaxTime) {}
+    Node() : _fanin0(kMaxId), _compl0(0), _fanin1(kMaxId), _compl1(0), _type(NodeType::None), _mark(0), _num_cuts(0), _required(kMaxTime) {}
 
     ~Node()
     {
@@ -198,17 +201,17 @@ public:
     Time GetArr()        const { return _best_cut.arr;    }
 
     uint GetCutNum()     const { return _num_cuts;                }
+    uint GetMark()       const { return _mark;                    }
     Time GetRequired()   const { return _required;                }
     Cut *GetCut(int idx) const { return _cut_set + idx;           }
     Cut *GetTrivialCut() const { return _cut_set + _num_cuts - 1; }
     Cut *GetBestCut()          { return &_best_cut;               }
-
-    float &GetEstRefNum()       { return _est_ref;                }
-
+    float &GetEstRefNum()      { return _est_ref;                 }
     void SetRequired(Time req) { _required = req;                 }
+    void SetMark(int mark)     { _mark = mark;                    }
 
     void Print();
-    
+
     /**
      * @brief Perform cut enumeration
      * 
@@ -589,6 +592,8 @@ private:
     void ReferenceBestCuts();
 
     Solution *CreateSolFromCurrMap();
+
+    void PerformCutExpandsion(int lut_size);
 
     void PrintMapping(const char *stage, float time)
     {

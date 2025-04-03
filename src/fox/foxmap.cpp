@@ -160,6 +160,18 @@ Cut::RipMFFC(FoxMap *mapper)
 }
 
 void
+Cut::MarkCone(Node *node, std::vector<int> &cone)
+{
+    if (node->GetMark())
+        return;
+    assert(node->IsAnd());
+    MarkCone(node->GetFanin0(), cone);
+    MarkCone(node->GetFanin1(), cone);
+    cone.push_back(node->GetId());
+    node->SetMark(1);
+}
+
+void
 Cut::ComputeTruth(Cut *lhs, Cut *rhs, int compl0, int compl1)
 {
     auto TtExpand = [](word * pTruth0, int nVars, Cut *sub, Cut *cut) -> void
@@ -289,7 +301,7 @@ RankFnSet::CmpCutEdgeArea(Cut *lhs, Cut *rhs, float epsilon)
     return 0;
 }
 
-Node::Node(Abc_Obj_t *abc_node) : _num_cuts(0)
+Node::Node(Abc_Obj_t *abc_node) : _mark(0), _num_cuts(0)
 {
     if (!abc_node)
     {
@@ -888,6 +900,46 @@ FoxMap::PerformGeneralMapping(Algo algo, RankFn fn)
         else
             stage = "Ef";
         PrintMapping(stage, (mapping_end - mapping_start) / (float)CLOCKS_PER_SEC);
+    }
+}
+
+void
+FoxMap::PerformCutExpandsion(int lut_size)
+{   
+    auto compute_cut_cost = [](std::vector<int> &nodes) -> int
+    {
+        int cost = 0;
+        for (int idx : nodes)
+            if (GetNode(idx)->GetRefNum() == 0)
+                ++cost;
+        return cost;
+    };
+
+    for (int i = 1; i != _num_nodes; ++i)
+    {
+        Node *node = GetNode(i);
+        if (!node->IsAnd() || !node->GetRefNum())
+            continue;
+        std::vector<int> front, front_old, visited;
+        Cut *cut = node->GetBestCut();
+        Time old_arr = cut->arr;
+        cut->RipMFFC(this);
+        Area old_area = cut->RefMFFC(this);
+        // mark the cone nodes
+        for (int m = 0; m != cut->size; ++m)
+        {
+            int leaf = cut->leaves[m];
+            front.push_back(leaf);
+            front_old.push_back(leaf);
+            visited.push_back(leaf);
+            GetNode(leaf)->SetMark(1);
+        }
+        cut->MarkCone(node, visited);
+
+        cut->RipMFFC(this);
+
+        int cost_before = compute_cut_cost(front);
+
     }
 }
 
