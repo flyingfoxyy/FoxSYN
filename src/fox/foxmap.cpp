@@ -871,17 +871,21 @@ FoxMap::PerformGeneralMapping(Algo algo, RankFn fn)
 
     auto mapping_end = clock();
 
-    const char *stage = nullptr;
-    if (_premap)
-        stage = "Pm";
-    else if (algo == Algo::Flow)
-        stage = "Fl";
-    else if (algo == Algo::Exact)
-        stage = "Ex";
-    else
-        stage = "Ef";
     if (_map_param->verbose)
+    {
+        const char *stage = nullptr;
+        if (algo == Algo::Praetor)
+            stage = "Pt";
+        else if (_premap)
+            stage = "Pm";
+        else if (algo == Algo::Flow)
+            stage = "Fl";
+        else if (algo == Algo::Exact)
+            stage = "Ex";
+        else
+            stage = "Ef";
         PrintMapping(stage, (mapping_end - mapping_start) / (float)CLOCKS_PER_SEC);
+    }
 }
 
 Abc_Ntk_t *
@@ -983,6 +987,8 @@ FoxMap::MapToLut()
     if (_map_param->praetor_premap)
     {
         _premap = 1;
+        _prune.SetMode(Prune::PruneMode::IDL);
+
         RankFn fn;
         if (_map_param->TimingDriven())
             fn = RankFnSet::CmpCutArrSizeAreaEdge;
@@ -991,7 +997,9 @@ FoxMap::MapToLut()
         else
             fn = RankFnSet::CmpCutEdgeArea;
         PerformGeneralMapping(Algo::Praetor, fn);
+
         _premap = 0;
+        _prune.SetMode(Prune::PruneMode::UL);
     }
 
     if (_map_param->TimingDriven())
