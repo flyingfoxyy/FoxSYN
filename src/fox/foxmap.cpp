@@ -981,7 +981,7 @@ FoxMap::NodeFaninCompact1(Node *node, std::vector<int> &front, std::vector<int> 
 
     auto FaninUpdate = [&](Node *n) -> int
     {
-        front.erase(std::find(front.begin(), front.end(), n));
+        // front.erase(std::find(front.begin(), front.end(), n));
         Node *fanin = n->GetFanin0();
         if (fanin->GetMark() == 0)
         {
