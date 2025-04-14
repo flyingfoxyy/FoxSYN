@@ -137,6 +137,8 @@ struct Cut
      */
     Edge RipMFFC(FoxMap *mapper);
 
+    Time ComputeArr(FoxMap *map) const;
+
     void MarkCone(Node *node, std::vector<int> &cone);
 };
 
@@ -594,6 +596,10 @@ private:
     Solution *CreateSolFromCurrMap();
 
     void PerformCutExpandsion(int lut_size);
+
+    bool NodeFaninCompact0(Node *node, std::vector<int> &front, std::vector<int> &visited);
+
+    bool NodeFaninCompact1(Node *node, std::vector<int> &front, std::vector<int> &visited);
 
     void PrintMapping(const char *stage, float time)
     {

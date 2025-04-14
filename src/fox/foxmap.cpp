@@ -159,6 +159,15 @@ Cut::RipMFFC(FoxMap *mapper)
     return edge;
 }
 
+Time
+Cut::ComputeArr(FoxMap *map) const
+{
+    Time max_arr = 0;
+    for (int i = 0; i != size; ++i)
+        max_arr = std::max(max_arr, FoxMap::GetNode(leaves[i])->GetArr());
+    return max_arr + map->GetLutDelayCost(size);
+}
+
 void
 Cut::MarkCone(Node *node, std::vector<int> &cone)
 {
@@ -903,9 +912,110 @@ FoxMap::PerformGeneralMapping(Algo algo, RankFn fn)
     }
 }
 
+bool
+FoxMap::NodeFaninCompact0(Node *node, std::vector<int> &front, std::vector<int> &visited)
+{
+    auto GetFaninCost = [&](Node *n) -> int
+    {
+        int counter = 0;
+        if (n->GetRefNum() == 0)
+            --counter;
+        if (!n->GetFanin0()->GetMark() && n->GetFanin0()->GetRefNum() == 0)
+            ++counter;
+        if (!n->GetFanin1()->GetMark() && n->GetFanin1()->GetRefNum() == 0)
+            ++counter;
+        return counter;
+    };
+
+    auto FaninUpdate = [&](Node *n) -> int
+    {
+        auto itr = std::remove(front.begin(), front.end(), (int)(n->GetId()));
+        front.erase(itr);
+        Node *fanin = n->GetFanin0();
+        if (fanin->GetMark() == 0)
+        {
+            front.push_back(fanin->GetId());
+            visited.push_back(fanin->GetId());
+            fanin->SetMark(1);
+        }
+        
+        fanin = n->GetFanin1();
+        if (fanin->GetMark() == 0)
+        {
+            front.push_back(fanin->GetId());
+            visited.push_back(fanin->GetId());
+            fanin->SetMark(1);
+        }
+    };
+
+    for (int id : front)
+    {
+        Node *node = GetNode(id);
+        if (node->IsPi())
+            continue;
+        if (!node->GetFanin0()->GetMark() && !node->GetFanin1()->GetMark())
+            continue;
+        if (GetFaninCost(node) <= 0)
+        {
+            FaninUpdate(node);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+bool
+FoxMap::NodeFaninCompact1(Node *node, std::vector<int> &front, std::vector<int> &visited)
+{
+    auto GetFaninCost = [&](Node *n) -> int
+    {
+        int counter = 0;
+        if (n->GetRefNum() == 0)
+            --counter;
+        if (!n->GetFanin0()->GetMark() && n->GetFanin0()->GetRefNum() == 0)
+            ++counter;
+        if (!n->GetFanin1()->GetMark() && n->GetFanin1()->GetRefNum() == 0)
+            ++counter;
+        return counter;
+    };
+
+    auto FaninUpdate = [&](Node *n) -> int
+    {
+        front.erase(std::find(front.begin(), front.end(), n));
+        Node *fanin = n->GetFanin0();
+        if (fanin->GetMark() == 0)
+        {
+            front.push_back(fanin->GetId());
+            visited.push_back(fanin->GetId());
+            fanin->SetMark(1);
+        }
+        
+        fanin = n->GetFanin1();
+        if (fanin->GetMark() == 0)
+        {
+            front.push_back(fanin->GetId());
+            visited.push_back(fanin->GetId());
+            fanin->SetMark(1);
+        }
+    };
+
+    for (int id : front)
+    {
+        Node *node = GetNode(id);
+        if (node->IsPi())
+            continue;
+        if (GetFaninCost(node) < 0)
+        {
+            FaninUpdate(node);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 void
 FoxMap::PerformCutExpandsion(int lut_size)
-{   
+{
     auto compute_cut_cost = [](std::vector<int> &nodes) -> int
     {
         int cost = 0;
@@ -913,6 +1023,21 @@ FoxMap::PerformCutExpandsion(int lut_size)
             if (GetNode(idx)->GetRefNum() == 0)
                 ++cost;
         return cost;
+    };
+
+    auto node_update = [this](Node *node, std::vector<int> &front)
+    {
+        Cut *cut = node->GetBestCut();
+        cut->RipMFFC(this);
+        cut->size = front.size();
+        cut->sign = 0;
+        for (int i = 0; i != front.size(); ++i)
+        {
+            cut->sign |= GetSign(cut->leaves[i]);
+            cut->leaves[i] = front[i];
+        }
+        std::sort(cut->leaves, cut->leaves + cut->size);
+        cut->RefMFFC(this);
     };
 
     for (int i = 1; i != _num_nodes; ++i)
@@ -926,6 +1051,7 @@ FoxMap::PerformCutExpandsion(int lut_size)
         cut->RipMFFC(this);
         Area old_area = cut->RefMFFC(this);
         // mark the cone nodes
+        // improve prepare
         for (int m = 0; m != cut->size; ++m)
         {
             int leaf = cut->leaves[m];
@@ -934,13 +1060,55 @@ FoxMap::PerformCutExpandsion(int lut_size)
             visited.push_back(leaf);
             GetNode(leaf)->SetMark(1);
         }
+        // mark the nodes in the cone
         cut->MarkCone(node, visited);
+        // end prepare
 
+        // rip-up the cone
         cut->RipMFFC(this);
 
+        // compute initial cost
         int cost_before = compute_cut_cost(front);
 
+        // If_ManImproveNodeFaninCompact
+        while (true)
+        {
+            bool result = false;
+            if (NodeFaninCompact0(node, front, visited) )
+                result = true;
+            else if (front.size() <= 6 && NodeFaninCompact1(node, front, visited))
+                result = true;
+            else
+                result = false;
+
+            assert(front.size() <= 6);
+
+            if (!result)
+                break;
+        }
+
+        int cost_after = compute_cut_cost(front);
+        cut->RefMFFC(this);
+        assert(cost_before >= cost_after);
+        
+        for (int id : visited)
+            GetNode(id)->SetMark(0);
+
+        node_update(node, front);
+        cut->arr = cut->ComputeArr(this);
+        cut->RipMFFC(this);
+        Area new_area = cut->RefMFFC(this);
+        if (new_area > old_area || cut->arr > node->GetRequired())
+        {
+            node_update(node, front_old);
+            cut->RipMFFC(this);
+            new_area = cut->RefMFFC(this);
+            assert(new_area == old_area);
+            cut->arr = old_arr;
+        }
     }
+
+    ComputeRequiredTime();
 }
 
 Abc_Ntk_t *
