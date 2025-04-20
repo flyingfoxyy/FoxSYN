@@ -60,12 +60,13 @@ public:
     OptTarget    tar               = OptTarget::Timing;
     int          verbose           = 1;  // print log
     int          praetor_premap    = 0;  // always enumerates cuts during each mapping pass
+    int          expand_cut        = 0;  // expand cuts
 
-    std::size_t  lut_size          = 6;     // max LUT input size
-    std::size_t  required          = 0;     // the target delay of mapped LUT netlist
-    std::size_t  c_value           = 8;     // the cut number stored for each node (exclude trivial cut)
-    std::size_t  flow_pass_num     = 3;     // the number of pass performing with area-flow      heuristic method
-    std::size_t  exact_pass_num    = 2;     // the number of pass performing with exact area     heuristic method
+    std::size_t  lut_size          = 6;  // max LUT input size
+    std::size_t  required          = 0;  // the target delay of mapped LUT netlist
+    std::size_t  c_value           = 8;  // the cut number stored for each node (exclude trivial cut)
+    std::size_t  flow_pass_num     = 3;  // the number of pass performing with area-flow      heuristic method
+    std::size_t  exact_pass_num    = 2;  // the number of pass performing with exact area     heuristic method
 
     bool TimingDriven() const { return tar == OptTarget::Timing;      }  // timing
     bool AreaDriven ()  const { return tar == OptTarget::Area;        }  // area/routability/timing
@@ -109,6 +110,8 @@ struct Cut
      * 
      */
     void ComputeTruth(Cut *lhs, Cut *rhs, int compl0, int compl1);
+
+    void ComputeTruth(Node *root);
 
     /**
      * @brief Merge two sub-cuts to form cut-set
@@ -166,6 +169,7 @@ private:
     uint      _required      ;  // required time
     uint      _num_ref{0}    ;  // reference count
     float     _est_ref{0}    ;  // estimated reference count
+    word      _truth{0}      ;  // truth table
 
     Cut      *_cut_set{nullptr};// cut-set
     Cut       _best_cut{};       // the best cut generated during last pass
@@ -198,6 +202,9 @@ public:
     bool IsPo()  const { return _type == NodeType::PO;    }
     bool IsAnd() const { return _type == NodeType::And;   }
 
+    bool GetCompl0() const { return _compl0; }
+    bool GetCompl1() const { return _compl1; }
+
     Area GetArea()       const { return _best_cut.area;   }
     Edge GetEdge()       const { return _best_cut.edge;   }
     Time GetArr()        const { return _best_cut.arr;    }
@@ -208,6 +215,7 @@ public:
     Cut *GetCut(int idx) const { return _cut_set + idx;           }
     Cut *GetTrivialCut() const { return _cut_set + _num_cuts - 1; }
     Cut *GetBestCut()          { return &_best_cut;               }
+    word &GetTruth()           { return _truth;                   }
     float &GetEstRefNum()      { return _est_ref;                 }
     void SetRequired(Time req) { _required = req;                 }
     void SetMark(int mark)     { _mark = mark;                    }

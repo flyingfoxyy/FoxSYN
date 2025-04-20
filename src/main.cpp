@@ -36,6 +36,9 @@ int Foxmap_Command(Abc_Frame_t *pAbc, int argc, char **argv)
         case 'a':
             param.tar = OptTarget::Area;
             break;
+        case 'e':
+            param.expand_cut ^= 1;
+            break;
         case 'r':
             param.tar = OptTarget::Routability;
             break;
@@ -127,8 +130,9 @@ usage:
     Abc_Print(-2, "\t-F num   : the number of area flow iterations (num >= 0) [default = %d]\n", param.flow_pass_num);
     Abc_Print(-2, "\t-E num   : the number of exact area iterations (num >= 0) [default = %d]\n", param.exact_pass_num);
     Abc_Print(-2, "\t-a       : toggles area-oriented technology mapping\n");
+    Abc_Print(-2, "\t-e       : toggles cut expandsion, default is %s\n", param.expand_cut);
     Abc_Print(-2, "\t-r       : toggles routability-oriented technology mapping\n");
-    Abc_Print(-2, "\t-r       : toggles pre-mapping with praetor algorithm\n");
+    Abc_Print(-2, "\t-p       : toggles pre-mapping with praetor algorithm\n");
     Abc_Print(-2, "\t-v       : toggles verbose log print\n");
     Abc_Print(-2, "\n");
 
