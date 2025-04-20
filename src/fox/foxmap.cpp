@@ -160,7 +160,7 @@ Cut::RipMFFC(FoxMap *mapper)
 }
 
 Time
-Cut::ComputeArr(FoxMap *map) const
+Cut::ComputeArrTime(FoxMap *map) const
 {
     Time max_arr = 0;
     for (int i = 0; i != size; ++i)
@@ -712,7 +712,7 @@ FoxMap::UpdateMapping(Solution *new_mapping)
 {
     if (!_best_mapping)
         _best_mapping = new_mapping;
-    else if (!_best_mapping->HasCover() || (*new_mapping) < (*_best_mapping))
+    else if ((*new_mapping) < (*_best_mapping))
     {
         delete _best_mapping;
         _best_mapping = new_mapping;
@@ -959,7 +959,7 @@ FoxMap::PerformGeneralMapping(Algo algo, RankFn fn)
 
     // performa cut expandsion to reduce LUT number
     if (_map_param->expand_cut)
-        PerformCutExpandsion(6);
+        PerformCutExpansion(6);
 }
 
 bool
@@ -1074,7 +1074,7 @@ FoxMap::NodeFaninCompact1(Node *node, std::vector<int> &front, std::vector<int> 
 }
 
 void
-FoxMap::PerformCutExpandsion(int lut_size)
+FoxMap::PerformCutExpansion(int lut_size)
 {
     auto start = clock();
 
@@ -1160,7 +1160,7 @@ FoxMap::PerformCutExpandsion(int lut_size)
 
         node_update(node, front);
 
-        cut->arr = cut->ComputeArr(this);
+        cut->arr = cut->ComputeArrTime(this);
         cut->RipMFFC(this);
         Area new_area = cut->RefMFFC(this);
 
