@@ -7,10 +7,9 @@
 | date:      2025-3-23                                                        |
 \============================================================================*/
 
-#include "foxmap.hpp"
+#include <algorithm>
 
-#include "base/main/main.h"
-#include "misc/util/utilTruth.h"
+#include "foxmap.hpp"
 
 namespace fox::foxmap
 {
@@ -253,5 +252,112 @@ Cut::Print()
     printf("{Arr %d, Area %.1f, Edge %.1f, cut-set {%4d, %4d, %4d, %4d, %4d, %4d}}\n",
         arr, area, edge, leaves[0], leaves[1], leaves[2], leaves[3], leaves[4], leaves[5]);
 }
+
+int 
+Prune::Pop(Cut *&cut_set, uint capacity)
+{
+    // a cut-set to store cuts in temp
+    std::vector<Cut *> cuts;
+    cuts.reserve(kMaxCutNum);
+
+    if (_mode == PruneMode::UL)
+    {
+        for (auto it = _unified_list.begin(); it != _unified_list.end(); ++it)
+        {
+            if (*it)
+                cuts.push_back(*it);
+            else
+                break;
+        }
+    }
+    else if (_mode == PruneMode::IDLP)
+    {
+        Area prev_one_area = kMaxArea;
+        for (int i = 2; i != _indexed_list.size(); ++i)
+        {
+            std::vector<Cut *> &list = _indexed_list[i];
+            if (!list.front())
+                continue;
+            assert(!list.back());
+            for (int m = list.size() - 2; m != -1; --m)
+            {
+                Cut *cut = list[m];
+                if (cut && cut->area < _min_area + 1.000 && cut->area < prev_one_area)
+                {
+                    cuts.push_back(cut);
+                    prev_one_area = cut->area;
+                }
+            }
+        }
+        std::reverse(cuts.begin(), cuts.end());
+    }
+
+    if (capacity < cuts.size() + 1)
+    {
+        delete[] cut_set;
+        cut_set = new Cut[cuts.size() + 1];        
+    }
+    else
+        std::fill(cut_set, cut_set + capacity, Cut{});
+
+    // copy candidates of cuts into cut_set
+    for (int i = 0; i != cuts.size(); ++i)
+        cut_set[i] = *cuts[i];
+
+    return cuts.size();
+}
+
+bool
+Prune::Push(Cut *cut)
+{
+    if (_mode == PruneMode::IDLP && cut->area > _min_area + 1.000)
+        return false;
+
+    _min_area = std::min(_min_area, cut->area);
+
+    std::vector<Cut *> &cut_list = _mode == PruneMode::UL ? _unified_list : _indexed_list[cut->size];
+
+    for (int i = 0; i != cut_list.size(); ++i)
+    {
+        // rank to the last one
+        if (!cut_list[i])
+        {
+            if (i == cut_list.size() - 1)
+                return false;
+            cut_list[i] = cut;
+            return true;
+        }
+        // compare with current cut
+        const int cmp_res = _rank_fn(cut, cut_list[i], _epsilon);
+        // win
+        if (cmp_res == 1)
+        {
+            for (int m = cut_list.size() - 1; m != i; --m)
+                cut_list[m] = cut_list[m - 1];
+            cut_list[i] = cut;
+            if (cut_list.back())
+                cut_list.back() = nullptr;
+            return true;
+        }
+        // same quality, only keep one
+        else if (cmp_res == 0)
+            return false;
+    }
+
+    assert(0 && "should not arrival here");
+    return true;
+}
+
+void
+Prune::Reset()
+{
+    std::fill(_temp_cuts, _temp_cuts + _temp_used_num, Cut{});
+    std::fill(_unified_list.begin(), _unified_list.end(), nullptr);
+    _min_area = kMaxArea;
+    _temp_used_num = 0;
+    for (auto &&cut_set: _indexed_list)
+        std::fill(cut_set.begin(), cut_set.end(), nullptr);
+}
+
 
 } // end namespace foxmap
