@@ -60,12 +60,13 @@ public:
     OptTarget    tar               = OptTarget::Timing;
     int          verbose           = 1;  // print log
     int          praetor_premap    = 0;  // always enumerates cuts during each mapping pass
+    int          expand_cut        = 0;  // expand cuts
 
-    std::size_t  lut_size          = 6;     // max LUT input size
-    std::size_t  required          = 0;     // the target delay of mapped LUT netlist
-    std::size_t  c_value           = 8;     // the cut number stored for each node (exclude trivial cut)
-    std::size_t  flow_pass_num     = 3;     // the number of pass performing with area-flow      heuristic method
-    std::size_t  exact_pass_num    = 2;     // the number of pass performing with exact area     heuristic method
+    std::size_t  lut_size          = 6;  // max LUT input size
+    std::size_t  required          = 0;  // the target delay of mapped LUT netlist
+    std::size_t  c_value           = 8;  // the cut number stored for each node (exclude trivial cut)
+    std::size_t  flow_pass_num     = 3;  // the number of pass performing with area-flow      heuristic method
+    std::size_t  exact_pass_num    = 2;  // the number of pass performing with exact area     heuristic method
 
     bool TimingDriven() const { return tar == OptTarget::Timing;      }  // timing
     bool AreaDriven ()  const { return tar == OptTarget::Area;        }  // area/routability/timing
@@ -105,10 +106,17 @@ struct Cut
     void ComputeCost(Node *node, Cut *lhs, Cut *rhs, FoxMap *mapper);
 
     /**
-     * @brief Compute cut truth table
+     * @brief Compute cut truth table according to two sub-cuts
      * 
      */
     void ComputeTruth(Cut *lhs, Cut *rhs, int compl0, int compl1);
+
+    /**
+     * @brief Compute cut truth table by reversed network visiting
+     * 
+     * @param root 
+     */
+    void ComputeTruth(Node *root);
 
     /**
      * @brief Merge two sub-cuts to form cut-set
@@ -117,6 +125,12 @@ struct Cut
      */
     bool MergeCut(Cut *lhs, Cut *rhs, int k);
 
+    /**
+     * @brief Test if this cut is a valid cut
+     * 
+     * @return true 
+     * @return false 
+     */
     bool IsValid() const { return size > 1 && leaves[0]; }
 
     /**
@@ -137,9 +151,21 @@ struct Cut
      */
     Edge RipMFFC(FoxMap *mapper);
 
-    Time ComputeArr(FoxMap *map) const;
+    /**
+     * @brief Compute the arrival time of this cut
+     * 
+     * @param map 
+     * @return Time 
+     */
+    Time ComputeArrTime(FoxMap *map) const;
 
-    void MarkCone(Node *node, std::vector<int> &cone);
+    /**
+     * @brief Mark the nodes int the cone of this cut
+     * 
+     * @param root 
+     * @param cone
+     */
+    void MarkCone(Node *root, std::vector<int> &cone);
 };
 
 //==----------------------------------------------------------------==//
@@ -166,6 +192,7 @@ private:
     uint      _required      ;  // required time
     uint      _num_ref{0}    ;  // reference count
     float     _est_ref{0}    ;  // estimated reference count
+    word      _truth{0}      ;  // truth table
 
     Cut      *_cut_set{nullptr};// cut-set
     Cut       _best_cut{};       // the best cut generated during last pass
@@ -198,6 +225,9 @@ public:
     bool IsPo()  const { return _type == NodeType::PO;    }
     bool IsAnd() const { return _type == NodeType::And;   }
 
+    bool GetCompl0() const { return _compl0; }
+    bool GetCompl1() const { return _compl1; }
+
     Area GetArea()       const { return _best_cut.area;   }
     Edge GetEdge()       const { return _best_cut.edge;   }
     Time GetArr()        const { return _best_cut.arr;    }
@@ -208,6 +238,7 @@ public:
     Cut *GetCut(int idx) const { return _cut_set + idx;           }
     Cut *GetTrivialCut() const { return _cut_set + _num_cuts - 1; }
     Cut *GetBestCut()          { return &_best_cut;               }
+    word &GetTruth()           { return _truth;                   }
     float &GetEstRefNum()      { return _est_ref;                 }
     void SetRequired(Time req) { _required = req;                 }
     void SetMark(int mark)     { _mark = mark;                    }
@@ -384,8 +415,6 @@ public:
      */
     uint &GetRefCount(uint id) { return _ref_counter[id]; }
 
-    bool HasCover() const { return _with_cover; }
-
     /**
      * @brief Compare this with rhs, return true if this has better qor
      * 
@@ -508,15 +537,15 @@ private:
     static Node *GetNode(int idx) { return Node::_const_1 + idx; }
 
     /**
-     * Get the estimated reference count for node idx
-     */
-    // float GetEstRef(uint id) const { assert(_est_refs[id]); return _est_refs[id]; }
-
-    /**
      * Get the mapping parameters
      */
     Param *GetParam() const { return _map_param; }
 
+    /**
+     * @brief Get the node number
+     * 
+     * @return uint 
+     */
     uint GetNodeNum() const { return _num_nodes; }
 
     /**
@@ -526,7 +555,18 @@ private:
      */
     Algo GetAlgo() const { return _algo; }
 
+    /**
+     * @brief Get the rank function for cut enumeration
+     * 
+     * @return RankFn 
+     */
     RankFn GetEnuRankFn() const { return _cut_rank_enu_fn; }
+
+    /**
+     * @brief Get the rank function for cut selection
+     * 
+     * @return RankFn 
+     */
     RankFn GetSelRankFn() const { return _cut_rank_sel_fn; }
 
     /**
@@ -564,6 +604,10 @@ private:
      */
     Prune &GetPrune() { _prune.Reset(); _prune.SetRankFn(_cut_rank_enu_fn); return _prune; }
 
+    /**
+     * @brief Setup LUT cost library according to ABC read_lut command
+     * 
+     */
     void SetupLib() {}
 
     /**
@@ -593,14 +637,42 @@ private:
      */
     void ReferenceBestCuts();
 
+    /**
+     * @brief Create a Solution from current node refernce status
+     * 
+     * @return Solution* 
+     */
     Solution *CreateSolFromCurrMap();
 
-    void PerformCutExpandsion(int lut_size);
+    /**
+     * @brief Perform cut expansion for current mapping solution
+     * 
+     * @param lut_size 
+     */
+    void PerformCutExpansion(int lut_size);
 
+    /**
+     * @brief Expand cut towards PI, cut-set size cannot grow
+     * 
+     * @param node 
+     * @return succeeded or not
+     */
     bool NodeFaninCompact0(Node *node, std::vector<int> &front, std::vector<int> &visited);
 
+    /**
+     * @brief Expand cut towards PI, cut-set size grow but cannot exceed lut size
+     * 
+     * @param node 
+     * @return succeeded or not
+     */
     bool NodeFaninCompact1(Node *node, std::vector<int> &front, std::vector<int> &visited);
 
+    /**
+     * @brief Print current mapping round status
+     * 
+     * @param stage 
+     * @param time 
+     */
     void PrintMapping(const char *stage, float time)
     {
         printf("%s: Delay = %3d  Area = %6d  Edge = %6d  Time = %.1f\n", stage, _map_num_level,
