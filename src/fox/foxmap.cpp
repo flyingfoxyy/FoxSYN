@@ -137,7 +137,7 @@ Solution::operator<(const Solution& rhs)
 void
 Solution::Remove(uint id)
 {
-    assert(_with_cover && _cuts[id]);
+    assert(_cuts[id]);
     Cut *cut = _cuts[id];
     _cuts[id] = nullptr;
     --_num_lut[cut->size];
@@ -169,7 +169,7 @@ Solution::GetDelayNum() const
         {
             for (int m = 0; m != cut->size; ++m)
                 arr_time[i] = std::max(arr_time[cut->leaves[m]], arr_time[i]);
-            arr_time[i] += _mapper->GetLutDelayCost(cut->size);
+            arr_time[i] += Cut::GetDelayCost(cut);
         }
     }
 
@@ -241,7 +241,7 @@ FoxMap::Print()
     for (int i = 0; i != _num_nodes; ++i)
     {
         printf("## node %d\n", i);
-        GetNode(i)->Print();
+        Node::GetNode(i)->Print();
     }
 }
 
@@ -281,7 +281,7 @@ FoxMap::ReferenceBestCuts()
 
     for (int i = 1; i != _num_nodes; ++i)
     {
-        Node *node = GetNode(i);
+        Node *node = Node::GetNode(i);
         node->GetRefNum() = 0;
         node->SetRequired(kMaxTime);
     }
@@ -302,7 +302,7 @@ FoxMap::ReferenceBestCuts()
             cut->edge = Cut::GetEdgeCost(cut);
             for (int i = 0; i != cut->size; ++i)
             {
-                if (Node *leaf = GetNode(cut->leaves[i]); leaf->IsAnd() && leaf->GetRefNum() == 0)
+                if (Node *leaf = Node::GetNode(cut->leaves[i]); leaf->IsAnd() && leaf->GetRefNum() == 0)
                 {
                     cut->area += leaf->GetArea();
                     cut->edge += leaf->GetEdge();
@@ -332,7 +332,7 @@ FoxMap::ReferenceBestCuts()
         // reorder the cuts
         for (int i = _num_nodes - 1; i != 1; --i)
         {
-            if (Node *node = GetNode(i); node->IsAnd() && node->GetRefNum())
+            if (Node *node = Node::GetNode(i); node->IsAnd() && node->GetRefNum())
             {
                 Cut *cut = reorder_cuts(node);
                 if (cut)
@@ -340,7 +340,7 @@ FoxMap::ReferenceBestCuts()
                 else
                     cut = node->GetBestCut();
                 for (int m = 0; m != cut->size; ++m)
-                    ++GetNode(cut->leaves[m])->GetRefNum();
+                    ++Node::GetNode(cut->leaves[m])->GetRefNum();
         
                 _map_num_lut  += Cut::GetAreaCost(cut);
                 _map_num_edge += Cut::GetEdgeCost(cut);
@@ -353,11 +353,11 @@ FoxMap::ReferenceBestCuts()
     {
         for (int i = _num_nodes - 1; i != 1; --i)
         {
-            if (Node *node = GetNode(i); node->IsAnd() && node->GetRefNum())
+            if (Node *node = Node::GetNode(i); node->IsAnd() && node->GetRefNum())
             {
                 Cut *cut = node->GetBestCut();
                 for (int m = 0; m != cut->size; ++m)
-                    ++GetNode(cut->leaves[m])->GetRefNum();
+                    ++Node::GetNode(cut->leaves[m])->GetRefNum();
         
                 _map_num_lut  += Cut::GetAreaCost(cut);
                 _map_num_edge += Cut::GetEdgeCost(cut);
@@ -372,12 +372,12 @@ FoxMap::ReferenceBestCuts()
     for (int i = 1; i != _num_nodes; ++i)
     {
         uint &level = node_level[i];
-        if (Node *node = GetNode(i); node->IsAnd() && node->GetRefNum())
+        if (Node *node = Node::GetNode(i); node->IsAnd() && node->GetRefNum())
         {
             Cut *cut = node->GetBestCut();
             for (int m = 0; m != cut->size; ++m)
                 level = std::max(level, node_level[cut->leaves[m]]);
-            level += GetLutDelayCost(cut->size);
+            level += Cut::GetDelayCost(cut);
         }
         _map_num_level = std::max(_map_num_level, level);
     }
@@ -391,7 +391,7 @@ FoxMap::CreateSolFromCurrMap()
     Solution *mapping = new Solution(this, _num_nodes);
     for (int i = 1; i != _num_nodes; ++i)
     {
-        Node *node = GetNode(i);
+        Node *node = Node::GetNode(i);
         mapping->GetRefCount(i) = node->GetRefNum();
         if (node->IsAnd() && node->GetRefNum())
         {
@@ -419,14 +419,14 @@ FoxMap::ComputeRequiredTime()
 
     for (int i = _num_nodes; i != 0; --i)
     {
-        Node *node = GetNode(i);
+        Node *node = Node::GetNode(i);
         if (!node->GetRefNum() || !node->IsAnd())
             continue;
         Cut *cut = node->GetBestCut();
-        Time req = node->GetRequired() - GetLutDelayCost(cut->size);
+        Time req = node->GetRequired() - Cut::GetDelayCost(cut);
         for (int i = 0; i != cut->size; ++i)
         {
-            Node *leaf = GetNode(cut->leaves[i]);
+            Node *leaf = Node::GetNode(cut->leaves[i]);
             leaf->SetRequired(std::min(leaf->GetRequired(), req));
         }
     }
@@ -444,7 +444,7 @@ FoxMap::PerformGeneralMapping(Algo algo, RankFn fn)
     // enumerate cuts
     for (int i = 1; i != _num_nodes; ++i)
     {
-        Node *node = GetNode(i);
+        Node *node = Node::GetNode(i);
         if (node->IsPi() || node->IsAnd())
             node->CutEnum(this);
     }
@@ -517,7 +517,7 @@ FoxMap::NodeFaninCompact0(Node *node, std::vector<int> &front, std::vector<int> 
 
     for (int id : front)
     {
-        Node *node = GetNode(id);
+        Node *node = Node::GetNode(id);
         if (node->IsPi())
             continue;
         if (!node->GetFanin0()->GetMark() && !node->GetFanin1()->GetMark())
@@ -574,7 +574,7 @@ FoxMap::NodeFaninCompact1(Node *node, std::vector<int> &front, std::vector<int> 
 
     for (int id : front)
     {
-        Node *node = GetNode(id);
+        Node *node = Node::GetNode(id);
         if (node->IsPi())
             continue;
         if (GetFaninCost(node) < 0)
@@ -595,7 +595,7 @@ FoxMap::PerformCutExpansion(int lut_size)
     {
         int cost = 0;
         for (int idx : nodes)
-            if (GetNode(idx)->GetRefNum() == 0)
+            if (Node::GetNode(idx)->GetRefNum() == 0)
                 ++cost;
         return cost;
     };
@@ -619,7 +619,7 @@ FoxMap::PerformCutExpansion(int lut_size)
 
     for (int i = 1; i != _num_nodes; ++i)
     {
-        Node *node = GetNode(i);
+        Node *node = Node::GetNode(i);
         if (!node->IsAnd() || !node->GetRefNum())
             continue;
         std::vector<int> front, front_old, visited;
@@ -635,7 +635,7 @@ FoxMap::PerformCutExpansion(int lut_size)
             front.push_back(leaf);
             front_old.push_back(leaf);
             visited.push_back(leaf);
-            GetNode(leaf)->SetMark(1);
+            Node::GetNode(leaf)->SetMark(1);
         }
         // mark the nodes in the cone
         cut->MarkCone(node, visited);
@@ -669,11 +669,11 @@ FoxMap::PerformCutExpansion(int lut_size)
         assert(cost_before >= cost_after);
         
         for (int id : visited)
-            GetNode(id)->SetMark(0);
+            Node::GetNode(id)->SetMark(0);
 
         node_update(node, front);
 
-        cut->arr = cut->ComputeArrTime(this);
+        cut->arr = cut->ComputeArrTime();
         cut->RipMFFC();
         Area new_area = cut->RefMFFC();
 
@@ -734,7 +734,7 @@ FoxMap::GenMappedNetwork(Solution *final_mapping)
     // create LUT nodes
     for (int i = 1; i != _num_nodes; ++i)
     {
-        if (!GetNode(i)->IsAnd() || final_mapping->GetRefCount(i) == 0)
+        if (!Node::GetNode(i)->IsAnd() || final_mapping->GetRefCount(i) == 0)
             continue;
         Cut *cut = final_mapping->GetSol(i);
         Abc_Obj_t *pLut = Abc_NtkCreateObj(mapped, ABC_OBJ_NODE);
@@ -829,7 +829,7 @@ FoxMap::MapToLut()
             if (i)
             {
                 for (int i = 1; i != _num_nodes; ++i)
-                    GetNode(i)->GetRefNum() = _num_refs[i];
+                    Node::GetNode(i)->GetRefNum() = _num_refs[i];
             }
             PerformGeneralMapping(Algo::Flow, rank_fn_set[i]);
         }

@@ -72,11 +72,7 @@ Node::CutEnum(FoxMap *mapper)
         return;
     }
 
-    // update node estimated reference count
-    // if (mapper->_premap)
-        _est_ref = std::max(1u, _num_ref);
-    // else if (mapper->GetAlgo() == Algo::Flow)
-    //     _est_ref = (_est_ref + 4 * _num_ref) / 5.00;
+    _est_ref = std::max(1u, _num_ref);
 
     Prune &prune = mapper->GetPrune();
     Node *fanin0 = GetFanin0();
@@ -91,7 +87,7 @@ Node::CutEnum(FoxMap *mapper)
     // check in last best cut
     if (!mapper->_first_pass)
     {
-        _best_cut.ComputeCost(this, nullptr, nullptr, mapper);
+        _best_cut.ComputeCost(this, nullptr, nullptr, mapper->GetAlgo());
         if (!mapper->_premap)
             prune.Push(&_best_cut);
     }
@@ -109,7 +105,7 @@ Node::CutEnum(FoxMap *mapper)
             // check cut is k-feasible or not
             if (!cut->MergeCut(lhs, rhs, k))
                 continue;
-            cut->ComputeCost(this, lhs, rhs, mapper);
+            cut->ComputeCost(this, lhs, rhs, mapper->GetAlgo());
             if (!mapper->_premap && cut->arr > _required)
                 continue;
             assert(cut->area > 0 && cut->area < kMaxArea);

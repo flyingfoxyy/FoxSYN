@@ -84,16 +84,15 @@ FlushCut1:
 }
 
 void
-Cut::ComputeCost(Node *node, Cut *lhs, Cut *rhs, FoxMap *mapper)
+Cut::ComputeCost(Node *node, Cut *lhs, Cut *rhs, Algo algo)
 {
-    Algo algo = mapper->GetAlgo();
     if (algo == Algo::Flow)
     {
         area = Cut::GetAreaCost(this);
         edge = Cut::GetEdgeCost(this);
         for (int i = 0; i != size; ++i)
         {
-            Node *leaf = mapper->GetNode(leaves[i]);
+            Node *leaf = Node::GetNode(leaves[i]);
             area += leaf->GetArea() / leaf->GetEstRefNum();
             edge += leaf->GetEdge() / leaf->GetEstRefNum();
         }
@@ -114,10 +113,16 @@ Cut::ComputeCost(Node *node, Cut *lhs, Cut *rhs, FoxMap *mapper)
     }
 
     // compute arrival time
-    arr = 0;
+    arr = ComputeArrTime();
+}
+
+Time
+Cut::ComputeArrTime() const
+{
+    Time max_arr = 0;
     for (int i = 0; i != size; ++i)
-        arr = std::max(mapper->GetNode(leaves[i])->GetArr(), arr);
-    arr += mapper->GetLutDelayCost(size);
+        max_arr = std::max(max_arr, Node::GetNode(leaves[i])->GetArr());
+    return max_arr + Cut::GetDelayCost(this);
 }
 
 Area
@@ -126,7 +131,7 @@ Cut::RefMFFC()
     Area area = Cut::GetAreaCost(this);
     for (int i = 0; i != size; ++i)
     {
-        Node *node = FoxMap::GetNode(leaves[i]);
+        Node *node = Node::GetNode(leaves[i]);
         if (node->GetRefNum()++ > 0 || !node->IsAnd())
             continue;
         area += node->GetBestCut()->RefMFFC();
@@ -140,7 +145,7 @@ Cut::RipMFFC()
     Edge edge = Cut::GetEdgeCost(this);
     for (int i = 0; i != size; ++i)
     {
-        Node *node = FoxMap::GetNode(leaves[i]);
+        Node *node = Node::GetNode(leaves[i]);
         assert(node->GetRefNum() > 0);
         if (--node->GetRefNum() > 0 || !node->IsAnd())
             continue;
@@ -149,13 +154,21 @@ Cut::RipMFFC()
     return edge;
 }
 
-Time
-Cut::ComputeArrTime(FoxMap *map) const
+std::pair<Area, Edge>
+Cut::GetMFFCCostInfo()
 {
-    Time max_arr = 0;
+    std::pair<Area, Edge> cost{Cut::GetAreaCost(this), Cut::GetEdgeCost(this)};
     for (int i = 0; i != size; ++i)
-        max_arr = std::max(max_arr, FoxMap::GetNode(leaves[i])->GetArr());
-    return max_arr + map->GetLutDelayCost(size);
+    {
+        Node *node = Node::GetNode(leaves[i]);
+        if (node->IsAnd() && node->GetRefNum() == 1)
+        {
+            auto leaf_cost = node->GetBestCut()->GetMFFCCostInfo();
+            cost.first  += leaf_cost.first;
+            cost.second += leaf_cost.second;
+        }
+    }
+    return cost;
 }
 
 void
@@ -209,7 +222,7 @@ Cut::ComputeTruth(Node *root)
 
     for (int i = 0; i != size; ++i)
     {
-        Node *node = FoxMap::GetNode(leaves[i]);
+        Node *node = Node::GetNode(leaves[i]);
         assert(node->GetRefNum());
         assert(node->GetMark() == 0);
         node->SetMark(1);

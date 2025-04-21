@@ -91,27 +91,27 @@ struct Cut
 {
     static thread_local LutCostLib *s_lut_cost_lib;
 
-    word   truth    ;   // truth table
-    Area   area  {0};   // effective area / area-flow / exact area
-    Edge   edge  {0};   // edge
-    Sign   sign  {0};   // signature
-    Time   arr   : 28;  // cut root arrival time
-    uint   size  :  4;  // cut-size
+    word   truth     ; // truth table
+    Area   area  {0} ; // effective area / area-flow / exact area
+    Edge   edge  {0} ; // edge
+    Sign   sign  {0} ; // signature
+    Time   arr   : 28; // cut root arrival time
+    uint   size  :  4; // cut-size
 
     uint   leaves[kMaxLutSize] {0};  // cut leafs
 
     Cut() : truth(0xAAAAAAAAAAAAAAAA), arr(0), size(1) {}
 
-    Cut(const Cut &cut) = default;
-    Cut(Cut &&cut) noexcept = default;
+    Cut(const Cut &cut)            = default;
+    Cut(Cut &&cut) noexcept        = default;
     Cut &operator=(const Cut &cut) = default;
 
-    static Area GetAreaCost (Cut *cut) { assert(s_lut_cost_lib); return s_lut_cost_lib->area_cost[cut->size]; }
-    static Edge GetEdgeCost (Cut *cut) { assert(s_lut_cost_lib); return s_lut_cost_lib->edge_cost[cut->size]; }
-    static Time GetDelayCost(Cut *cut) { return (Time)1; }
+    static Area GetAreaCost (const Cut *cut) { assert(s_lut_cost_lib); return s_lut_cost_lib->area_cost[cut->size]; }
+    static Edge GetEdgeCost (const Cut *cut) { assert(s_lut_cost_lib); return s_lut_cost_lib->edge_cost[cut->size]; }
+    static Time GetDelayCost(const Cut *cut) { return (Time)1; }
 
     /**
-     * @brief Print this cut on consol
+     * @brief Pretty print of cut
      * 
      */
     void Print();
@@ -120,7 +120,7 @@ struct Cut
      * @brief Compute the cost properties
      * 
      */
-    void ComputeCost(Node *node, Cut *lhs, Cut *rhs, FoxMap *mapper);
+    void ComputeCost(Node *node, Cut *lhs, Cut *rhs, Algo algo);
 
     /**
      * @brief Compute cut truth table according to two sub-cuts
@@ -165,12 +165,19 @@ struct Cut
     Edge RipMFFC();
 
     /**
+     * @brief Compute the area/edge cost of cut MFFC
+     * 
+     * @return std::pair<Area, Edge> 
+     */
+    std::pair<Area, Edge> GetMFFCCostInfo();
+
+    /**
      * @brief Compute the arrival time of this cut
      * 
      * @param map 
      * @return Time 
      */
-    Time ComputeArrTime(FoxMap *map) const;
+    Time ComputeArrTime() const;
 
     /**
      * @brief Mark the nodes int the cone of this cut
@@ -257,6 +264,14 @@ public:
     void SetMark(int mark)     { _mark = mark;                    }
 
     void Print();
+
+    /**
+     * @brief Get the node with id idx
+     * 
+     * @param idx 
+     * @return Node* 
+     */
+    static Node *GetNode(int idx) { return Node::s_const_1 + idx; }
 
     /**
      * @brief Perform cut enumeration
@@ -386,12 +401,11 @@ class Solution
     uint    _num_lut[kMaxLutSize + 1] {0};
     uint    _sum_lut    {0};
     uint    _sum_edge   {0};
-    bool    _with_cover {false};
 
     mutable uint _max_arr  {0};
 
 public:
-    Solution(FoxMap *map, uint num, bool with_cover = true) : _mapper(map), _with_cover(with_cover)
+    Solution(FoxMap *map, uint num, bool with_cover = true) : _mapper(map)
     {
         _cuts.resize(num);
         _ref_counter.resize(num);
@@ -506,7 +520,7 @@ public:
 
     ~FoxMap()
     {
-        delete[] GetNode(0);
+        delete[] Node::GetNode(0);
         delete _best_mapping;
     }
 
@@ -524,11 +538,6 @@ private:
     std::size_t NumPi()  const  { return _prim_inputs.size();  }
     std::size_t NumPo()  const  { return _prim_outputs.size(); }
     std::size_t NumAnd() const  { return _num_nodes - NumPi() - NumPo() - 2; }
-
-    /**
-     * Get the node 'idx'
-     */
-    static Node *GetNode(int idx) { return Node::s_const_1 + idx; }
 
     /**
      * Get the mapping parameters
