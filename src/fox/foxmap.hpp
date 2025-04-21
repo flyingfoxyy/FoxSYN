@@ -73,11 +73,24 @@ public:
     bool RouteDriven()  const { return tar == OptTarget::Routability; }  // routability/area/timing
 };
 
+struct LutCostLib
+{
+    std::vector<Area> area_cost { 0, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00 };
+    std::vector<Edge> edge_cost { 0, 1.00, 2.00, 3.00, 4.00, 5.00, 6.00 };
+
+    /**
+     * Sync LUT area cost according to ABC LUT library
+     */
+    void SyncUserLib();
+};
+
 //==----------------------------------------------------------------==//
 //                              Cut class                             //
 //==----------------------------------------------------------------==//
 struct Cut
 {
+    static thread_local LutCostLib *s_lut_cost_lib;
+
     word   truth    ;   // truth table
     Area   area  {0};   // effective area / area-flow / exact area
     Edge   edge  {0};   // edge
@@ -92,6 +105,10 @@ struct Cut
     Cut(const Cut &cut) = default;
     Cut(Cut &&cut) noexcept = default;
     Cut &operator=(const Cut &cut) = default;
+
+    static Area GetAreaCost (Cut *cut) { assert(s_lut_cost_lib); return s_lut_cost_lib->area_cost[cut->size]; }
+    static Edge GetEdgeCost (Cut *cut) { assert(s_lut_cost_lib); return s_lut_cost_lib->edge_cost[cut->size]; }
+    static Time GetDelayCost(Cut *cut) { return (Time)1; }
 
     /**
      * @brief Print this cut on consol
@@ -136,20 +153,16 @@ struct Cut
     /**
      * @brief Reference the MFFC of this cut
      * 
-     * @param mapping current mapping solution
-     * @param update update the solution on-the-fly
      * @return Area 
      */
-    Area RefMFFC(FoxMap *mapper);
+    Area RefMFFC();
 
     /**
      * @brief Rip up the MFFC of this cut
      * 
-     * @param mapping 
-     * @param update 
      * @return Edge 
      */
-    Edge RipMFFC(FoxMap *mapper);
+    Edge RipMFFC();
 
     /**
      * @brief Compute the arrival time of this cut
@@ -176,7 +189,7 @@ class Node
 public:
     enum NodeType { Const, PI, PO, And, None };
 
-    static thread_local Node *_const_1;
+    static thread_local Node *s_const_1;
 
 private:
     /* graph info */
@@ -190,11 +203,11 @@ private:
     uint      _mark     :  1 ;  // mark
     uint      _num_cuts :  25;  // number cuts
     uint      _required      ;  // required time
-    uint      _num_ref{0}    ;  // reference count
-    float     _est_ref{0}    ;  // estimated reference count
-    word      _truth{0}      ;  // truth table
+    uint      _num_ref {0}   ;  // reference count
+    float     _est_ref {0}   ;  // estimated reference count
+    word      _truth   {0}   ;  // truth table
 
-    Cut      *_cut_set{nullptr};// cut-set
+    Cut      *_cut_set {nullptr};// cut-set
     Cut       _best_cut{};       // the best cut generated during last pass
 
 public:
@@ -212,13 +225,13 @@ public:
         delete[] _cut_set;
     }
 
-    Node *GetFanin0()  const { return _fanin0 == kMaxId ? nullptr : Node::_const_1 + _fanin0; }
-    Node *GetFanin1()  const { return _fanin1 == kMaxId ? nullptr : Node::_const_1 + _fanin1; }
+    Node *GetFanin0()  const { return _fanin0 == kMaxId ? nullptr : Node::s_const_1 + _fanin0; }
+    Node *GetFanin1()  const { return _fanin1 == kMaxId ? nullptr : Node::s_const_1 + _fanin1; }
 
     uint GetFanin0Id() const { return _fanin0; }
     uint GetFanin1Id() const { return _fanin1; }
 
-    uint GetId() const { return this - Node::_const_1;    }
+    uint GetId() const { return this - Node::s_const_1;    }
     uint &GetRefNum()  { return _num_ref;                 }
 
     bool IsPi()  const { return _type == NodeType::PI;    }
@@ -450,25 +463,6 @@ public:
 //==----------------------------------------------------------------==//
 class FoxMap
 {
-    struct LutCostLib
-    {
-        float area_cost[2][kMaxLutSize + 1]
-        {
-            {0, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00},
-            {0, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00},
-        };
-        float edge_cost[2][kMaxLutSize + 1]
-        {
-            {0, 1.00, 2.00, 3.00, 4.00, 5.00, 6.00},
-            {0, 1.00, 2.00, 3.00, 4.00, 5.00, 6.00},
-        };
-
-        /**
-         * Sync LUT area cost according to ABC LUT library
-         */
-        void SyncUserLib();
-    } _lut_lib;
-
     /* technology mapping property and flags */
     Param       *_map_param   {nullptr   };  // parammeters of mapping algo
     Node        *_nodes       {nullptr   };  // all nodes
@@ -480,8 +474,8 @@ class FoxMap
 
     std::vector<uint>    _num_refs;  // real reference count in AIG
 
-    double     _cpu_time       {0   };
-    double     _wall_time      {0   };
+    LutCostLib _lut_lib{};
+
     bool       _first_pass     {true};
     Time       _max_po_arr_time{0   };
 
@@ -534,7 +528,7 @@ private:
     /**
      * Get the node 'idx'
      */
-    static Node *GetNode(int idx) { return Node::_const_1 + idx; }
+    static Node *GetNode(int idx) { return Node::s_const_1 + idx; }
 
     /**
      * Get the mapping parameters
@@ -575,16 +569,6 @@ private:
      * @param new_mapping 
      */
     void UpdateMapping(Solution *new_mapping);
-
-    /**
-     * Get LUT area cost for different input size
-     */
-    Area GetLutAreaCost(int size) const { return _lut_lib.area_cost[0][size]; }
-
-    /**
-     * Get LUT edge cost for different input size
-     */
-    Edge GetLutEdgeCost(int size) const { return _lut_lib.edge_cost[0][size]; }
 
     /**
      * @brief Get LUT delay cost for different input size
