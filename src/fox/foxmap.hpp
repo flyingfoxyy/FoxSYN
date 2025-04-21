@@ -238,7 +238,7 @@ public:
     uint GetFanin0Id() const { return _fanin0; }
     uint GetFanin1Id() const { return _fanin1; }
 
-    uint GetId() const { return this - Node::s_const_1;    }
+    uint GetId() const { return this - Node::s_const_1;   }
     uint &GetRefNum()  { return _num_ref;                 }
 
     bool IsPi()  const { return _type == NodeType::PI;    }
@@ -262,6 +262,7 @@ public:
     float &GetEstRefNum()      { return _est_ref;                 }
     void SetRequired(Time req) { _required = req;                 }
     void SetMark(int mark)     { _mark = mark;                    }
+    void SetBestCut(Cut *cut)  { _best_cut = *cut;                }
 
     void Print();
 
@@ -623,6 +624,14 @@ private:
      * @param fn 
      */
     void PerformGeneralMapping(Algo algo, RankFn fn);
+
+    /**
+     * @brief Try to improve the mapping by cuts reorder
+     * 
+     * @param algo 
+     * @param fn 
+     */
+    void PerformImproveWithReorder(Algo algo, RankFn fn);
 
     /**
      * @brief Reference the best cuts

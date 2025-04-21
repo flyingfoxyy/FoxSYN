@@ -381,6 +381,38 @@ FoxMap::PerformGeneralMapping(Algo algo, RankFn fn)
         PerformCutExpansion(6);
 }
 
+void
+FoxMap::PerformImproveWithReorder(Algo algo, RankFn fn)
+{
+    auto start = clock();
+
+    for (int i = 1; i != _num_nodes; ++i)
+    {
+        Node *node = Node::GetNode(i);
+        if (!node->IsAnd())
+            continue;
+
+        if (node->GetRefNum())
+            node->GetBestCut()->RipMFFC();
+
+        Cut *best = node->GetCut(0);
+        best->ComputeCost(node, nullptr, nullptr, algo);
+        for (int k = 1; k != node->GetCutNum() - 1; ++k)
+        {
+            Cut *cut = node->GetCut(k);
+            cut->ComputeCost(node, nullptr, nullptr, algo);
+            if (fn(cut, best, RankFnSet::kEpsilon) == 1)
+                best = cut;
+        }
+        node->SetBestCut(best);
+    }
+
+    auto end = clock();
+
+    if (_map_param->verbose)
+        PrintMapping("Im", (end - start) / (float)CLOCKS_PER_SEC);
+}
+
 bool
 FoxMap::NodeFaninCompact0(Node *node, std::vector<int> &front, std::vector<int> &visited)
 {
