@@ -13,6 +13,100 @@
 
 namespace fox::foxmap
 {
+int
+RankFnSet::CmpCutArrSizeAreaEdge(Cut *lhs, Cut *rhs, float epsilon)
+{
+    if (lhs->arr + epsilon < rhs->arr)
+        return 1;
+    if (lhs->arr - epsilon > rhs->arr)
+        return -1;
+    if (lhs->size < rhs->size)
+        return 1;
+    if (lhs->size > rhs->size)
+        return -1;
+    if (lhs->area + epsilon < rhs->area)
+        return 1;
+    if (lhs->area - epsilon > rhs->area)
+        return -1;
+    if (lhs->edge + epsilon < rhs->edge)
+        return 1;
+    if (lhs->edge - epsilon > rhs->edge)
+        return -1;
+    return 0;
+}
+
+int
+RankFnSet::CmpCutArrAreaEdge(Cut *lhs, Cut *rhs, float epsilon)
+{
+    if (lhs->arr + epsilon < rhs->arr)
+        return 1;
+    if (lhs->arr - epsilon > rhs->arr)
+        return -1;
+    if (lhs->area + epsilon < rhs->area)
+        return 1;
+    if (lhs->area - epsilon > rhs->area)
+        return -1;
+    if (lhs->edge + epsilon < rhs->edge)
+        return 1;
+    if (lhs->edge - epsilon > rhs->edge)
+        return -1;
+    return 0;
+}
+
+int
+RankFnSet::CmpCutArrEdgeArea(Cut *lhs, Cut *rhs, float epsilon)
+{
+    if (lhs->arr + epsilon < rhs->arr)
+        return 1;
+    if (lhs->arr - epsilon > rhs->arr)
+        return -1;
+    if (lhs->edge + epsilon < rhs->edge)
+        return 1;
+    if (lhs->edge - epsilon > rhs->edge)
+        return -1;
+    if (lhs->area + epsilon < rhs->area)
+        return 1;
+    if (lhs->area - epsilon > rhs->area)
+        return -1;
+    return 0;
+}
+
+int
+RankFnSet::CmpCutAreaEdge(Cut *lhs, Cut *rhs, float epsilon)
+{
+    if (lhs->area + epsilon < rhs->area)
+        return 1;
+    if (lhs->area - epsilon > rhs->area)
+        return -1;
+    if (lhs->edge + epsilon < rhs->edge)
+        return 1;
+    if (lhs->edge - epsilon > rhs->edge)
+        return -1;
+    if (lhs->size < rhs->size)
+        return 1;
+    if (lhs->size > rhs->size)
+        return -1;
+    return 0;
+}
+
+int
+RankFnSet::CmpCutEdgeArea(Cut *lhs, Cut *rhs, float epsilon)
+{
+    if (lhs->edge + epsilon < rhs->edge)
+        return 1;
+    if (lhs->edge - epsilon > rhs->edge)
+        return -1;
+    if (lhs->area + epsilon < rhs->area)
+        return 1;
+    if (lhs->area - epsilon > rhs->area)
+        return -1;
+    if (lhs->size < rhs->size)
+        return 1;
+    if (lhs->size > rhs->size)
+        return -1;
+    return 0;
+}
+
 bool
 Cut::MergeCut(Cut *lhs, Cut *rhs, int lut_size)
 {
