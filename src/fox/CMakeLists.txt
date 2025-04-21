@@ -1,4 +1,4 @@
-add_library(fox foxmap.cpp)
+add_library(fox foxmap.cpp cut.cpp)
 
 target_link_libraries(fox PRIVATE libabc)
 
