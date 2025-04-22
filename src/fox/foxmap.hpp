@@ -120,7 +120,7 @@ struct Cut
      * @brief Compute the cost properties
      * 
      */
-    void ComputeCost(Node *node, Cut *lhs, Cut *rhs, Algo algo);
+    void ComputeCost(Algo algo, Node *node = nullptr, Cut *lhs = nullptr, Cut *rhs = nullptr);
 
     /**
      * @brief Compute cut truth table according to two sub-cuts
@@ -262,7 +262,7 @@ public:
     float &GetEstRefNum()      { return _est_ref;                 }
     void SetRequired(Time req) { _required = req;                 }
     void SetMark(int mark)     { _mark = mark;                    }
-    void SetBestCut(Cut *cut)  { _best_cut = *cut;                }
+    void SetBestCut(Cut *cut)  { if (cut != &_best_cut) _best_cut = *cut; }
 
     void Print();
 

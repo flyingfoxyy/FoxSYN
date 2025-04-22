@@ -376,7 +376,10 @@ FoxMap::PerformGeneralMapping(Algo algo, RankFn fn)
         PrintMapping(stage, (mapping_end - mapping_start) / (float)CLOCKS_PER_SEC);
     }
 
-    // performa cut expandsion to reduce LUT number
+    // perform exact area recovery
+    PerformImproveWithReorder(Algo::Exact, fn);
+
+    // performa cut expandsion to reduce LUT number    
     if (_map_param->expand_cut)
         PerformCutExpansion(6);
 }
@@ -395,17 +398,24 @@ FoxMap::PerformImproveWithReorder(Algo algo, RankFn fn)
         if (node->GetRefNum())
             node->GetBestCut()->RipMFFC();
 
-        Cut *best = node->GetCut(0);
-        best->ComputeCost(node, nullptr, nullptr, algo);
-        for (int k = 1; k != node->GetCutNum() - 1; ++k)
+        Cut *best = node->GetBestCut();
+        best->ComputeCost(algo);
+
+        assert(best->arr <= node->GetRequired());
+        for (int k = 0; k != node->GetCutNum() - 1; ++k)
         {
             Cut *cut = node->GetCut(k);
-            cut->ComputeCost(node, nullptr, nullptr, algo);
-            if (fn(cut, best, RankFnSet::kEpsilon) == 1)
+            cut->ComputeCost(algo);
+            if (cut->arr <= node->GetRequired() && fn(cut, best, RankFnSet::kEpsilon) == 1)
                 best = cut;
         }
         node->SetBestCut(best);
+
+        if (node->GetRefNum())
+            best->RefMFFC();
     }
+
+    ComputeRequiredTime();
 
     auto end = clock();
 

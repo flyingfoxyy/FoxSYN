@@ -87,7 +87,7 @@ Node::CutEnum(FoxMap *mapper)
     // check in last best cut
     if (!mapper->_first_pass)
     {
-        _best_cut.ComputeCost(this, nullptr, nullptr, mapper->GetAlgo());
+        _best_cut.ComputeCost(mapper->GetAlgo());
         if (!mapper->_premap)
             prune.Push(&_best_cut);
     }
@@ -105,7 +105,7 @@ Node::CutEnum(FoxMap *mapper)
             // check cut is k-feasible or not
             if (!cut->MergeCut(lhs, rhs, k))
                 continue;
-            cut->ComputeCost(this, lhs, rhs, mapper->GetAlgo());
+            cut->ComputeCost(mapper->GetAlgo(), this, lhs, rhs);
             if (!mapper->_premap && cut->arr > _required)
                 continue;
             assert(cut->area > 0 && cut->area < kMaxArea);

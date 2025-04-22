@@ -178,7 +178,7 @@ FlushCut1:
 }
 
 void
-Cut::ComputeCost(Node *node, Cut *lhs, Cut *rhs, Algo algo)
+Cut::ComputeCost(Algo algo, Node *node, Cut *lhs, Cut *rhs)
 {
     if (algo == Algo::Flow)
     {
