@@ -58,3 +58,4 @@ release
 debug
 abc.history
 regression/alu4.v
+regression/src/__pycache__/
