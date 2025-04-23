@@ -34,7 +34,7 @@ class BenchmarkSet():
         return self.case_path
 
 def run_command(cmd):
-    print(f"launch command: {cmd}")
+    # print(f"launch command: {cmd}")
     ret = os.system(cmd)
     if ret != 0:
         print(f"command failed: {cmd} (ret code: {ret})", file=sys.stderr)
@@ -46,53 +46,43 @@ def execute_commands_parallel(commands, processes=None):
 
     # check if some commands failed
     if any(r != 0 for r in results):
-        print("some commands failed", file=sys.stderr)
+        # print("some commands failed", file=sys.stderr)
         sys.exit(1)
 
-def ParallelRunAbcCmd(set_name, case_names, cmd_list, log_file):
-    assert len(case_names) == len(cmd_list)
+def RunAbcCommands(circuit_set, cmd :str, log :str):
+    if not os.path.exists("rundir"):
+        os.makedirs("rundir")
+
+    cmd_pre_fix = '../release/FoxSYN -c '
+    core_cmd = CoreCmd.format(cmd)
 
     log_file_set = []
-
-    idx = 0
-    for case in case_names:
-        path = "./rundir/" + set_name + "/" + case
-        if not os.path.exists(path):
-            os.makedirs(path, exist_ok=True)
-        log_file_set.append(path + '/' + log_file)
-        cmd_list[idx] = "cd " + path + "; " + cmd_list[idx] + " > " + log_file
-        idx += 1
-
-    execute_commands_parallel(set(cmd_list))
-
-    return log_file_set
-
-def RunAbcCommands(circuit_set, cmd :str, log_file :str):
-    set_cmd_logs = {}
-
-    cmd_pre_fix = CurrentPath + '../release/FoxSYN -c '
-
-    core_cmd = CoreCmd.format(cmd)
 
     for set_name in circuit_set:
         if set_name != "mcnc" and set_name != "EPFL" and set_name != "opencores" and set_name != "vtr":
             print("unknown benchmark set " + set_name)
             exit(1)
-        set = BenchmarkSet(set_name)
+
+        caset_set = BenchmarkSet(set_name)
 
         # get the name and detail path for each case
-        case_name_set = set.GetCaseNames()
-        case_path_set = set.GetCasePaths()
+        case_name_set = caset_set.GetCaseNames()
+        case_path_set = caset_set.GetCasePaths()
 
         complete_cmds = []
 
         idx = 0
-        for caes in case_name_set:
-            complete_cmds.append(cmd_pre_fix + "\"read " + case_path_set[idx] + "; " + core_cmd + "\"")
+        for case in case_name_set:
+            abc_cmd_str = cmd_pre_fix + "\"read " + case_path_set[idx] + "; " + core_cmd + "\""
+            log_path = path = "./rundir/" + case + "/"
+            if not os.path.exists(log_path):
+                os.makedirs(log_path)
+            log_file = log_path + log
+            complete_cmds.append(abc_cmd_str + " > " + log_file)
+            log_file_set.append(log_file)
             idx += 1
 
-        # create directoies for each case
-        log_file_set = ParallelRunAbcCmd(set_name, case_name_set, complete_cmds, log_file)
+        execute_commands_parallel(set(complete_cmds))
 
     return log_file_set
 
@@ -102,7 +92,6 @@ def LaunchFoxSynTest(args):
     if args.formal is True:
         Formal = "cec"
 
-    failed_case = None
     circuit_set = []
     log_set_enhanced = []
     log_set_base = []
@@ -117,14 +106,11 @@ def LaunchFoxSynTest(args):
         circuit_set.append(args.case_set)
 
     # launch enhanced command first
-    failed_case, log_set_enhanced = RunAbcCommands(circuit_set, args.enhanced, 'enhanced.log')
-
-    if failed_case is not None:
-        return failed_case, None
+    log_set_enhanced = RunAbcCommands(circuit_set, args.enhanced, 'enhanced.log')
 
     if args.base != "default":
-        failed_case, log_set_base = RunAbcCommands(circuit_set, args.base, 'base.log')
-        if failed_case is not None:
-            return failed_case, None
+        log_set_base = RunAbcCommands(circuit_set, args.base, 'base.log')
+        return log_set_base, log_set_enhanced
+    else:
+        return None, log_set_enhanced
 
-    return None, list(log_set_base, log_set_enhanced)
