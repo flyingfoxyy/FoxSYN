@@ -8,12 +8,12 @@ from diff   import *
 
 def parse_arguments():
     parser = argparse.ArgumentParser("FoxTest")
-    parser.add_argument('-base',      type = str,  default='default', help='the command which is used for baseline')
-    parser.add_argument('-enhanced',  type = str,  default=None,      help='the command which is used for test')
-    parser.add_argument('-case_set',  type = str,  default='all',     help='the case set used for regression')
-    parser.add_argument('-formal',    type = int,  default=0,         help='enable formal verification or not')
-    parser.add_argument('-no_diff',   type = int,  default=0,         help='disable comparison')
-    parser.add_argument('-post',      type = str,  default=None,      help='abc commands used for post-run')
+    parser.add_argument('-base',      type = str,  default=None,   help='the command which is used for base')
+    parser.add_argument('-sota',      type = str,  default=None,   help='the command which is used for sota')
+    parser.add_argument('-pre_opt',   type = str,  default="opt",  help='command used for post-processing')
+    parser.add_argument('-case_set',  type = str,  default='all',  help='the case set used for regression')
+    parser.add_argument('-formal',    type = int,  default=0,      help='enable formal verification or not')
+    parser.add_argument('-post',      type = str,  default=None,   help='command used for post-processing')
 
     args = parser.parse_args()
 
@@ -23,12 +23,13 @@ args = parse_arguments()
 
 if __name__ == "__main__":
     try:
-        base_log, enhanced_log = LaunchFoxSynTest(args)
+        if args.base is None and args.sota is None:
+            print("-base and -sota both are not set\n")
+            sys.exit(1)
 
-        if args.no_diff == 0:
-            CompareAndPrint(base_log, enhanced_log)
-        else:
-            print("Nice work! all testcases passed :)\n")
+        base_log, sota_log = LaunchFoxSynTest(args)
+
+        CompareAndPrint(base_log, sota_log)
 
     except KeyboardInterrupt:
         print("killed by Ctrl-C")

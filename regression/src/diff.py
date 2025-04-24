@@ -88,7 +88,7 @@ def CompareAndPrint(base_log, sota_log):
             row.append(info.num_edge / base_info.num_edge)
         row.append(info.runtime)
         if with_compare:
-            row.append(info.num_runtime / base_info.num_runtime)
+            row.append(info.runtime / base_info.runtime)
 
         table.append(row)
 
@@ -100,7 +100,4 @@ def CompareAndPrint(base_log, sota_log):
             print("{:<10} {:<6} {:<6} {:<6} {:<6} {:<6} {:<6} {:<6} {:<6} {:<6} {:<6} {:<6} {:<6}".format(*row))
     else:
         for row in table:
-            print("{:<10} {:<6} {:<6} {:<6} {:<6}".format(*row)) 
-    
-    
-    
+            print("{:<10} {:<6} {:<6} {:<6} {:<6}".format(*row))

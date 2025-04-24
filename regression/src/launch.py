@@ -3,17 +3,21 @@ import shutil
 import sys
 import pdb
 import threading
+import queue
 
 from multiprocessing import Pool
 
 # Globale Varibales
 CaseRoot = 'SimpleCircuits/circuits/'
-CoreCmd  = 'st; resyn; resyn2; {}; ps'
+CoreCmd  = 'st; {}; {}; ps'
 
 # Runtime flags
+PreOpt      = None
 PostCmd     = None
 Formal      = None
 CurrentPath = None
+
+res_queue = queue.Queue()
 
 class BenchmarkSet():
     def __init__(self, name: str):
@@ -25,6 +29,8 @@ class BenchmarkSet():
         file_list = set_path + "/list"
         with open(file_list, "r", encoding="utf-8") as file:
             for line in file:
+                if "#" in line:
+                    continue
                 self.case_name.append(line.rpartition('.')[0])
                 self.case_path.append(set_path + '/' + line)
 
@@ -55,7 +61,7 @@ def RunAbcCommands(circuit_set, cmd :str, log :str):
         os.makedirs("rundir")
 
     cmd_pre_fix = '../release/FoxSYN -c '
-    core_cmd = CoreCmd.format(cmd)
+    core_cmd = CoreCmd.format(PreOpt, cmd)
 
     log_file_set = []
 
@@ -87,18 +93,26 @@ def RunAbcCommands(circuit_set, cmd :str, log :str):
 
     return log_file_set
 
+def thread_wrapper(circuit_set, cmd :str, log :str):
+    result = RunAbcCommands(circuit_set, cmd, log)
+    res_queue.put(result)
+
 def LaunchFoxSynTest(args):
     # initialize global variables
+    global CurrentPath
     CurrentPath = os.getcwd()
+    global PreOpt
+    PreOpt = args.pre_opt
+
     if args.formal is True:
         Formal = "cec"
 
     circuit_set = []
-    log_set_enhanced = []
+    log_set_sota = []
     log_set_base = []
 
-    if args.enhanced is None:
-        print("Error: no enhanced commandn\n")
+    if args.sota is None:
+        print("error: no sota commandn\n")
         sys.exit(1)
 
     if args.case_set == "all":
@@ -106,12 +120,19 @@ def LaunchFoxSynTest(args):
     else:
         circuit_set.append(args.case_set)
 
-    # launch enhanced command first
-    log_set_enhanced = RunAbcCommands(circuit_set, args.enhanced, 'enhanced.log')
+    # launch sota command first
+    thread = threading.Thread(target=thread_wrapper, args=(circuit_set, args.sota, 'sota.log'))
+    thread.start()
+    # log_set_sota = RunAbcCommands(circuit_set, args.sota, 'sota.log')
 
-    if args.base != "default":
+    if args.base is not None:
         log_set_base = RunAbcCommands(circuit_set, args.base, 'base.log')
-        return log_set_base, log_set_enhanced
+        # waiting sota end
+        thread.join()
+        log_set_sota = res_queue.get()
+        return log_set_base, log_set_sota
     else:
-        return None, log_set_enhanced
+        thread.join()
+        log_set_sota = res_queue.get()
+        return None, log_set_sota
 
