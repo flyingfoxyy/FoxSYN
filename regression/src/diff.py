@@ -47,7 +47,6 @@ class NetlsitInfo():
                         str_set = line.split(' ')
                         self.runtime = float(str_set[1])
 
-
 def CompareAndPrint(base_log, sota_log):
     assert(base_log is None or len(base_log) == len(sota_log))
 
