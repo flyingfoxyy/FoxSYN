@@ -56,14 +56,17 @@ def execute_commands_parallel(commands, processes=None):
         # print("some commands failed", file=sys.stderr)
         sys.exit(1)
 
-def RunAbcCommands(circuit_set, cmd :str, log :str):
-    if not os.path.exists("rundir"):
-        os.makedirs("rundir")
+def RunAbcCommands(circuit_set, cmd :str, db :str):
+    target_db_dir = "rundir/" + db
+    if not os.path.exists(target_db_dir):
+        os.makedirs(target_db_dir)
+    else:
+        os.system("rm " + target_db_dir + "/*.log")
 
-    cmd_pre_fix = '../release/FoxSYN -c '
     core_cmd = CoreCmd.format(PreOpt, cmd)
 
     log_file_set = []
+    complete_cmds = []
 
     for set_name in circuit_set:
         if set_name != "mcnc" and set_name != "EPFL" and set_name != "opencores" and set_name != "vtr":
@@ -76,25 +79,20 @@ def RunAbcCommands(circuit_set, cmd :str, log :str):
         case_name_set = caset_set.GetCaseNames()
         case_path_set = caset_set.GetCasePaths()
 
-        complete_cmds = []
-
         idx = 0
         for case in case_name_set:
-            abc_cmd_str = cmd_pre_fix + "\"read " + case_path_set[idx] + "; " + core_cmd + "\""
-            log_path = path = "./rundir/" + case + "/"
-            if not os.path.exists(log_path):
-                os.makedirs(log_path)
-            log_file = log_path + log
+            abc_cmd_str = "../release/FoxSYN -c \"read " + case_path_set[idx] + "; " + core_cmd + "\""
+            log_file = target_db_dir + "/" + case + ".log"
             complete_cmds.append(abc_cmd_str + " > " + log_file)
             log_file_set.append(log_file)
             idx += 1
 
-        execute_commands_parallel(set(complete_cmds))
+    execute_commands_parallel(set(complete_cmds))
 
     return log_file_set
 
-def thread_wrapper(circuit_set, cmd :str, log :str):
-    result = RunAbcCommands(circuit_set, cmd, log)
+def thread_wrapper(circuit_set, cmd :str, db :str):
+    result = RunAbcCommands(circuit_set, cmd, db)
     res_queue.put(result)
 
 def LaunchFoxSynTest(args):
@@ -102,9 +100,9 @@ def LaunchFoxSynTest(args):
     global CurrentPath
     CurrentPath = os.getcwd()
     global PreOpt
-    PreOpt = args.pre_opt
+    PreOpt = args.pre
 
-    if args.formal is True:
+    if args.cec is True:
         Formal = "cec"
 
     circuit_set = []
@@ -121,12 +119,12 @@ def LaunchFoxSynTest(args):
         circuit_set.append(args.case_set)
 
     # launch sota command first
-    thread = threading.Thread(target=thread_wrapper, args=(circuit_set, args.sota, 'sota.log'))
+    thread = threading.Thread(target=thread_wrapper, args=(circuit_set, args.sota, 'sota'))
     thread.start()
     # log_set_sota = RunAbcCommands(circuit_set, args.sota, 'sota.log')
 
     if args.base is not None:
-        log_set_base = RunAbcCommands(circuit_set, args.base, 'base.log')
+        log_set_base = RunAbcCommands(circuit_set, args.base, 'base')
         # waiting sota end
         thread.join()
         log_set_sota = res_queue.get()
@@ -135,4 +133,3 @@ def LaunchFoxSynTest(args):
         thread.join()
         log_set_sota = res_queue.get()
         return None, log_set_sota
-

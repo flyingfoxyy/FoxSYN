@@ -22,6 +22,7 @@ class NetlsitInfo():
         # parse the log
         with open(log_file, "r", encoding="utf-8") as file:
             count = 0
+            self.case_name = os.path.splitext(os.path.basename(log_file))[0]
             for line in file:
                 if "i/o" in line:
                     data_part = line.split(":", 1)[1].strip()
@@ -74,11 +75,12 @@ def CompareAndPrint(base_log, sota_log):
 
     idx = 0
     for info in sota_nl_info:
-        row = ["name"]
+        row = [info.case_name]
 
         base_info = NetlsitInfo(None)
         if with_compare:
             base_info = base_nl_info[idx]
+            assert base_info.case_name == info.case_name
             row.append(base_info.num_node)
             row.append(base_info.num_level)
             row.append(base_info.num_edge)
@@ -107,7 +109,7 @@ def CompareAndPrint(base_log, sota_log):
     # print the table
     if with_compare:
         for row in table:
-            print("{:<10} {:<6} {:<6} {:<6} {:<6.2} {:<6} {:<6.3} {:<6} {:<6.3} {:<6} {:<6.3} {:<6.2} {:<6.3}".format(*row))
+            print("{:<18} {:>6} {:>6} {:>6} {:>6.2} {:>6} {:>6.3} {:>6} {:>6.3} {:>6} {:>6.3} {:>6.2} {:>6.3}".format(*row))
     else:
         for row in table:
-            print("{:<10} {:<6} {:<6} {:<6} {:<6}".format(*row))
+            print("{:<18} {:>6} {:>6} {:>6} {:>6}".format(*row))
