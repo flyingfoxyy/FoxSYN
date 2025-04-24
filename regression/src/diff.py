@@ -21,6 +21,7 @@ class NetlsitInfo():
 
         # parse the log
         with open(log_file, "r", encoding="utf-8") as file:
+            count = 0
             for line in file:
                 if "i/o" in line:
                     data_part = line.split(":", 1)[1].strip()
@@ -39,6 +40,12 @@ class NetlsitInfo():
                             self.num_cube = int(value)
                         elif key == 'lev':
                             self.num_level = int(value)
+                elif "elapse" in line:
+                    count += 1
+                    if count == 2:
+                        str_set = line.split(' ')
+                        self.runtime = float(str_set[1])
+
 
 def CompareAndPrint(base_log, sota_log):
     assert(base_log is None or len(base_log) == len(sota_log))
@@ -79,16 +86,19 @@ def CompareAndPrint(base_log, sota_log):
 
         row.append(info.num_node)
         if with_compare:
-            row.append(info.num_node / base_info.num_node)
+            row.append(float(info.num_node / base_info.num_node))
         row.append(info.num_level)
         if with_compare:
-            row.append(info.num_level / base_info.num_level)
+            row.append(float(info.num_level / base_info.num_level))
         row.append(info.num_edge)
         if with_compare:
-            row.append(info.num_edge / base_info.num_edge)
+            row.append(float(info.num_edge / base_info.num_edge))
         row.append(info.runtime)
         if with_compare:
-            row.append(info.runtime / base_info.runtime)
+            if base_info.runtime == 0:
+                row.append(1.00)
+            else:
+                row.append(float(info.runtime / base_info.runtime))
 
         table.append(row)
 
@@ -97,7 +107,7 @@ def CompareAndPrint(base_log, sota_log):
     # print the table
     if with_compare:
         for row in table:
-            print("{:<10} {:<6} {:<6} {:<6} {:<6} {:<6} {:<6} {:<6} {:<6} {:<6} {:<6} {:<6} {:<6}".format(*row))
+            print("{:<10} {:<6} {:<6} {:<6} {:<6.2} {:<6} {:<6.3} {:<6} {:<6.3} {:<6} {:<6.3} {:<6.2} {:<6.3}".format(*row))
     else:
         for row in table:
             print("{:<10} {:<6} {:<6} {:<6} {:<6}".format(*row))

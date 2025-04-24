@@ -9,7 +9,7 @@ from multiprocessing import Pool
 
 # Globale Varibales
 CaseRoot = 'SimpleCircuits/circuits/'
-CoreCmd  = 'st; {}; {}; ps'
+CoreCmd  = 'st; {}; time; {}; time; ps'
 
 # Runtime flags
 PreOpt      = None
