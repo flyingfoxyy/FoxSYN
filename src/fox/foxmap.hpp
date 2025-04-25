@@ -84,6 +84,8 @@ struct LutCostLib
     void SyncUserLib();
 };
 
+class MffcInfo;
+
 //==----------------------------------------------------------------==//
 //                              Cut class                             //
 //==----------------------------------------------------------------==//
@@ -97,6 +99,7 @@ struct Cut
     Sign   sign  {0} ; // signature
     Time   arr   : 28; // cut root arrival time
     uint   size  :  4; // cut-size
+    float  ratio{0};
 
     uint   leaves[kMaxLutSize] {0};  // cut leafs
 
@@ -164,6 +167,9 @@ struct Cut
      */
     Edge RipMFFC();
 
+    void RefMFFC(MffcInfo &info);
+    void RipMFFC(MffcInfo &info);
+
     /**
      * @brief Compute the area/edge cost of cut MFFC
      * 
@@ -186,6 +192,51 @@ struct Cut
      * @param cone
      */
     void MarkCone(Node *root, std::vector<int> &cone);
+};
+
+class MffcInfo
+{
+    std::vector<Area> mffc_node_area;
+    std::vector<Edge> mffc_node_edge;
+
+    Area sum_area {0};
+    Area sum_edge {0};
+
+public:
+    MffcInfo()
+    {
+        mffc_node_area.reserve(10);
+        mffc_node_edge.reserve(10);
+    }
+
+    ~MffcInfo() = default;
+
+    void AddNode(Cut *cut)
+    {
+        Area area = Cut::GetAreaCost(cut);
+        Area edge = Cut::GetEdgeCost(cut);
+        mffc_node_area.push_back(area);
+        mffc_node_edge.push_back(edge);
+        sum_area += area;
+        sum_edge += edge;
+    }
+
+
+    int GetNodeNum() const { return mffc_node_area.size(); }
+
+    Area GetArea() const { return sum_area; }
+    Edge GetEdge() const { return sum_edge; }
+
+    float GetAvgEdge() const { return sum_edge / GetNodeNum(); }
+
+    float GetRatio() const
+    {
+        Edge sum = 0;
+        for (Edge edge : mffc_node_edge)
+            sum += edge * edge;
+        return (float)sum / mffc_node_edge.size();
+    }
+
 };
 
 //==----------------------------------------------------------------==//
@@ -631,7 +682,7 @@ private:
      * @param algo 
      * @param fn 
      */
-    void PerformImproveWithReorder(Algo algo, RankFn fn);
+    void PerformExactImprovement(Algo algo, RankFn fn);
 
     /**
      * @brief Reference the best cuts

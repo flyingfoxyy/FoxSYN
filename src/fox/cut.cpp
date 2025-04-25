@@ -82,6 +82,10 @@ RankFnSet::CmpCutAreaEdge(Cut *lhs, Cut *rhs, float epsilon)
         return 1;
     if (lhs->edge - epsilon > rhs->edge)
         return -1;
+    if (lhs->ratio + epsilon < rhs->ratio)
+        return 1;
+    if (lhs->ratio - epsilon > rhs->ratio)
+        return -1;
     if (lhs->size < rhs->size)
         return 1;
     if (lhs->size > rhs->size)
@@ -99,6 +103,10 @@ RankFnSet::CmpCutEdgeArea(Cut *lhs, Cut *rhs, float epsilon)
     if (lhs->area + epsilon < rhs->area)
         return 1;
     if (lhs->area - epsilon > rhs->area)
+        return -1;
+    if (lhs->ratio + epsilon < rhs->ratio)
+        return 1;
+    if (lhs->ratio - epsilon > rhs->ratio)
         return -1;
     if (lhs->size < rhs->size)
         return 1;
@@ -193,8 +201,13 @@ Cut::ComputeCost(Algo algo, Node *node, Cut *lhs, Cut *rhs)
     }
     else if (algo == Algo::Exact)
     {
-        area = RefMFFC();
-        edge = RipMFFC();
+        MffcInfo info0, info1;
+        RefMFFC(info0);
+        RipMFFC(info1);
+        assert(info0.GetArea() == info1.GetArea() && info0.GetEdge() == info1.GetEdge());
+        ratio = info0.GetRatio();
+        area = info0.GetArea();
+        edge = info0.GetEdge();
     }
     else
     {
@@ -246,6 +259,34 @@ Cut::RipMFFC()
         edge += node->GetBestCut()->RipMFFC();
     }
     return edge;
+}
+
+void
+Cut::RefMFFC(MffcInfo &info)
+{
+    info.AddNode(this);
+    for (int i = 0; i != size; ++i)
+    {
+        Node *node = Node::GetNode(leaves[i]);
+        if (node->GetRefNum()++ > 0 || !node->IsAnd())
+            continue;
+        node->GetBestCut()->RefMFFC(info);
+    }
+}
+
+void
+Cut::RipMFFC(MffcInfo &info)
+{
+    info.AddNode(this);
+    for (int i = 0; i != size; ++i)
+    {
+        Node *node = Node::GetNode(leaves[i]);
+        assert(node->GetRefNum() > 0);
+        if (--node->GetRefNum() > 0 || !node->IsAnd())
+            continue;
+        node->GetBestCut()->RipMFFC(info);
+    }
+
 }
 
 std::pair<Area, Edge>

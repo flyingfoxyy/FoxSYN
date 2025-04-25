@@ -377,7 +377,7 @@ FoxMap::PerformGeneralMapping(Algo algo, RankFn fn)
     }
 
     // perform exact area recovery
-    PerformImproveWithReorder(Algo::Exact, fn);
+    PerformExactImprovement(Algo::Exact, fn);
 
     // performa cut expandsion to reduce LUT number    
     if (_map_param->expand_cut)
@@ -385,7 +385,7 @@ FoxMap::PerformGeneralMapping(Algo algo, RankFn fn)
 }
 
 void
-FoxMap::PerformImproveWithReorder(Algo algo, RankFn fn)
+FoxMap::PerformExactImprovement(Algo algo, RankFn fn)
 {
     auto start = clock();
 
