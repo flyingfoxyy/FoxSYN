@@ -349,7 +349,7 @@ struct RankFnSet
 //==----------------------------------------------------------------==//
 //                            Prune class                             //
 //==----------------------------------------------------------------==//
-class Prune
+class CutSet
 {
 public:
     enum class PruneMode
@@ -382,7 +382,7 @@ private:
     uint      _temp_used_num {0};
 
 public:
-    Prune(Param *param) : _temp_cuts(new Cut[(kMaxCutNum + 1) * (kMaxCutNum + 1)])
+    CutSet(Param *param) : _temp_cuts(new Cut[(kMaxCutNum + 1) * (kMaxCutNum + 1)])
     {
         // initialize unified list
         _unified_list.resize(param->c_value + 1, nullptr); // the last one is not used
@@ -393,7 +393,7 @@ public:
             _indexed_list[i].resize(_size_upper[k][i] + 1);
     }
 
-    ~Prune()
+    ~CutSet()
     {
         delete[] _temp_cuts;
     }
@@ -430,7 +430,7 @@ public:
      * 
      * @param cut_set 
      */
-    int Pop(Cut *&cut_set, uint capacity);
+    int Get(Cut *&cut_set, uint capacity);
 
     /**
      * @brief push a cut into storage
@@ -540,13 +540,13 @@ class FoxMap
 
     std::vector<uint>    _num_refs;  // real reference count in AIG
 
-    LutCostLib _lut_lib{};
-
     bool       _first_pass     {true};
     Time       _max_po_arr_time{0   };
 
-    Prune      _prune;
+    CutSet     _cut_set;
     Solution  *_best_mapping   {nullptr};
+
+    LutCostLib _lut_lib;
 
     /* mapping runtime options */
     RankFn     _cut_rank_enu_fn{nullptr};
@@ -567,7 +567,7 @@ public:
     FoxMap(Param *param, Abc_Ntk_t *pAig)
     :   _map_param(param),
         _pAig(pAig),
-        _prune(param)
+        _cut_set(param)
     {}
 
     ~FoxMap()
@@ -645,9 +645,9 @@ private:
     Abc_Ntk_t *GenMappedNetwork(Solution *final);
 
     /**
-     * Return the Prune for cut enumeration
+     * Return the CutSet for cut enumeration
      */
-    Prune &GetPrune() { _prune.Reset(); _prune.SetRankFn(_cut_rank_enu_fn); return _prune; }
+    CutSet &GetCutSet() { _cut_set.Reset(); _cut_set.SetRankFn(_cut_rank_enu_fn); return _cut_set; }
 
     /**
      * @brief Setup LUT cost library according to ABC read_lut command

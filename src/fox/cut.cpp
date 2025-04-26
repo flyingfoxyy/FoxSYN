@@ -402,7 +402,7 @@ Cut::Print()
 }
 
 int 
-Prune::Pop(Cut *&cut_set, uint capacity)
+CutSet::Get(Cut *&cut_set, uint capacity)
 {
     // a cut-set to store cuts in temp
     std::vector<Cut *> cuts;
@@ -456,7 +456,7 @@ Prune::Pop(Cut *&cut_set, uint capacity)
 }
 
 bool
-Prune::Push(Cut *cut)
+CutSet::Push(Cut *cut)
 {
     if (_mode == PruneMode::IDLP && cut->area > _min_area + 1.000)
         return false;
@@ -497,7 +497,7 @@ Prune::Push(Cut *cut)
 }
 
 void
-Prune::Reset()
+CutSet::Reset()
 {
     std::fill(_temp_cuts, _temp_cuts + _temp_used_num, Cut{});
     std::fill(_unified_list.begin(), _unified_list.end(), nullptr);

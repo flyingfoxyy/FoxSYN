@@ -74,7 +74,7 @@ Node::CutEnum(FoxMap *mapper)
 
     _est_ref = std::max(1u, _num_ref);
 
-    Prune &prune = mapper->GetPrune();
+    CutSet &cut_set = mapper->GetCutSet();
     Node *fanin0 = GetFanin0();
     Node *fanin1 = GetFanin1();
 
@@ -89,7 +89,7 @@ Node::CutEnum(FoxMap *mapper)
     {
         _best_cut.ComputeCost(mapper->GetAlgo());
         if (!mapper->_premap)
-            prune.Push(&_best_cut);
+            cut_set.Push(&_best_cut);
     }
 
     // merge the cuts from fanins
@@ -101,7 +101,7 @@ Node::CutEnum(FoxMap *mapper)
             Cut *rhs = fanin1->GetCut(m);
             if (lhs->size + rhs->size > k && fox::popcount(lhs->sign | rhs->sign) > k)
                 continue;
-            Cut *cut = prune.GetCandidate();
+            Cut *cut = cut_set.GetCandidate();
             // check cut is k-feasible or not
             if (!cut->MergeCut(lhs, rhs, k))
                 continue;
@@ -110,7 +110,7 @@ Node::CutEnum(FoxMap *mapper)
                 continue;
             assert(cut->area > 0 && cut->area < kMaxArea);
             assert(cut->edge > 0 && cut->edge < kMaxArea);
-            if (prune.Push(cut))
+            if (cut_set.Push(cut))
             {
                 cut->sign = lhs->sign | rhs->sign;
                 cut->ComputeTruth(lhs, rhs, _compl0, _compl1);
@@ -119,7 +119,7 @@ Node::CutEnum(FoxMap *mapper)
     }
 
     // pop the cuts
-    _num_cuts = 1 + prune.Pop(_cut_set, _num_cuts);
+    _num_cuts = 1 + cut_set.Get(_cut_set, _num_cuts);
     assert(_num_cuts > 1);
 
     // update the best cut if on non-timing pass or (in timing pass but arrival time is ok)

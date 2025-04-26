@@ -123,7 +123,7 @@ FoxMap::Initialize()
     Abc_NtkCleanCopy(_pAig);
 
     // initialize default mapping settings
-    _prune.SetMode(Prune::PruneMode::UL);
+    _cut_set.SetMode(CutSet::PruneMode::UL);
 }
 
 void
@@ -749,7 +749,7 @@ FoxMap::MapToLut()
     if (_map_param->praetor_premap)
     {
         _premap = 1;
-        _prune.SetMode(Prune::PruneMode::IDL);
+        _cut_set.SetMode(CutSet::PruneMode::IDL);
 
         RankFn fn;
         if (_map_param->TimingDriven())
@@ -761,7 +761,7 @@ FoxMap::MapToLut()
         PerformGeneralMapping(Algo::Praetor, fn);
 
         _premap = 0;
-        _prune.SetMode(Prune::PruneMode::UL);
+        _cut_set.SetMode(CutSet::PruneMode::UL);
     }
 
     if (_map_param->TimingDriven())
