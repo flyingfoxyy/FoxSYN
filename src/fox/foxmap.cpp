@@ -647,7 +647,7 @@ FoxMap::PerformCutExpansion(int lut_size)
     auto end = clock();
 
     if (_map_param->verbose)
-        PrintMapping("EP", (end - start) / (float)CLOCKS_PER_SEC);
+        PrintMapping("Ep", (end - start) / (float)CLOCKS_PER_SEC);
 }
 
 Abc_Ntk_t *
