@@ -60,3 +60,5 @@ abc.history
 regression/alu4.v
 regression/src/__pycache__/
 regression/rundir
+.cache
+compile_commands.json
