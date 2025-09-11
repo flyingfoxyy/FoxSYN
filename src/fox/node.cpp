@@ -8,6 +8,8 @@
 \============================================================================*/
 
 #include <algorithm>
+#include <iostream>
+#include <istream>
 
 #include "foxmap.hpp"
 
@@ -63,7 +65,7 @@ Node::Node(Abc_Obj_t *abc_node) : _mark(0), _num_cuts(0)
 }
 
 void
-Node::CutEnum(FoxMap *mapper)
+Node::CutEnum(const FoxMap *mapper)
 {
     if (IsPi())
     {
@@ -74,7 +76,11 @@ Node::CutEnum(FoxMap *mapper)
 
     _est_ref = std::max(1u, _num_ref);
 
-    CutSet &cut_set = mapper->GetCutSet();
+    CutSet cut_set(mapper->GetParam());
+    cut_set.Reset();
+    cut_set.SetRankFn(mapper->_cut_rank_enu_fn);
+    cut_set.SetMode(CutSet::PruneMode::UL);
+
     Node *fanin0 = GetFanin0();
     Node *fanin1 = GetFanin1();
 

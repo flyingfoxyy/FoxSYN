@@ -8,7 +8,12 @@
 \============================================================================*/
 
 #include <iostream>
+#include <chrono>
 #include <algorithm>
+#include <utility>
+
+#include "/home/longfei/taskflow/taskflow/taskflow.hpp"
+
 
 #include "foxmap.hpp"
 
@@ -16,8 +21,8 @@ namespace fox
 {
 namespace foxmap
 {
-thread_local Node        * Node::s_const_1      = nullptr;
-thread_local LutCostLib  * Cut ::s_lut_cost_lib = nullptr;
+Node        * Node::s_const_1      = nullptr;
+LutCostLib  * Cut ::s_lut_cost_lib = nullptr;
 
 bool
 Solution::operator<(const Solution& rhs)
@@ -52,7 +57,7 @@ Solution::Remove(uint id)
     delete cut;
 }
 
-void 
+void
 Solution::Add(uint id, Cut *cut)
 {
     assert(_cuts[id] == nullptr);
@@ -115,7 +120,7 @@ FoxMap::Initialize()
                 _prim_inputs.push_back(node);
             else if (node->IsPo())
                 _prim_outputs.push_back(node);
-        
+
             _num_refs[i] = Abc_ObjFanoutNum(pObj);
         }
     }
@@ -247,10 +252,10 @@ FoxMap::ReferenceBestCuts()
                     cut = node->GetBestCut();
                 for (int m = 0; m != cut->size; ++m)
                     ++Node::GetNode(cut->leaves[m])->GetRefNum();
-        
+
                 _map_num_lut  += Cut::GetAreaCost(cut);
                 _map_num_edge += Cut::GetEdgeCost(cut);
-        
+
                 assert(cut->arr <= node->GetRequired());
             }
         }
@@ -264,10 +269,10 @@ FoxMap::ReferenceBestCuts()
                 Cut *cut = node->GetBestCut();
                 for (int m = 0; m != cut->size; ++m)
                     ++Node::GetNode(cut->leaves[m])->GetRefNum();
-        
+
                 _map_num_lut  += Cut::GetAreaCost(cut);
                 _map_num_edge += Cut::GetEdgeCost(cut);
-        
+
                 assert(cut->arr <= node->GetRequired());
             }
         }
@@ -348,11 +353,39 @@ FoxMap::PerformGeneralMapping(Algo algo, RankFn fn)
     _cut_rank_enu_fn = fn;
 
     // enumerate cuts
-    for (int i = 1; i != _num_nodes; ++i)
+
+    if (algo == Algo::Flow && _map_param->parallel)
     {
-        Node *node = Node::GetNode(i);
-        if (node->IsPi() || node->IsAnd())
-            node->CutEnum(this);
+        // using taskflow to parallize
+        tf::Taskflow taskflow;
+        std::vector<tf::Task> tasks;
+        tasks.reserve(_num_nodes + 10);
+        tasks.emplace_back(tf::Task());
+        for (int i = 1; i != _num_nodes; ++i)
+        {
+            Node *node = Node::GetNode(i);
+            if (node->IsPi() || node->IsAnd()) {
+                tasks.emplace_back(taskflow.emplace([=]() { node->CutEnum(this); }));
+            } else {
+                tasks.emplace_back(tf::Task());
+            }
+            assert(tasks.size() == i + 1);
+            if (node->IsAnd()) {
+                tasks[node->GetFanin0Id()].precede(tasks.back());
+                tasks[node->GetFanin1Id()].precede(tasks.back());
+            }
+        }
+        tf::Executor executor;
+        executor.run(taskflow).wait();
+    }
+    else
+    {
+        for (int i = 1; i != _num_nodes; ++i)
+        {
+            Node *node = Node::GetNode(i);
+            if (node->IsPi() || node->IsAnd())
+                node->CutEnum(this);
+        }
     }
 
     // compute and propagate required times
@@ -379,7 +412,7 @@ FoxMap::PerformGeneralMapping(Algo algo, RankFn fn)
     // perform exact area recovery
     PerformExactImprovement(Algo::Exact, fn);
 
-    // performa cut expandsion to reduce LUT number    
+    // performa cut expandsion to reduce LUT number
     if (_map_param->expand_cut)
         PerformCutExpansion(6);
 }
@@ -453,7 +486,7 @@ FoxMap::NodeFaninCompact0(Node *node, std::vector<int> &front, std::vector<int> 
             visited.push_back(fanin->GetId());
             fanin->SetMark(1);
         }
-        
+
         fanin = n->GetFanin1();
         if (fanin->GetMark() == 0)
         {
@@ -510,7 +543,7 @@ FoxMap::NodeFaninCompact1(Node *node, std::vector<int> &front, std::vector<int> 
             visited.push_back(fanin->GetId());
             fanin->SetMark(1);
         }
-        
+
         fanin = n->GetFanin1();
         if (fanin->GetMark() == 0)
         {
@@ -615,7 +648,7 @@ FoxMap::PerformCutExpansion(int lut_size)
         int cost_after = compute_cut_cost(front);
         cut->RefMFFC();
         assert(cost_before >= cost_after);
-        
+
         for (int id : visited)
             Node::GetNode(id)->SetMark(0);
 
@@ -802,6 +835,7 @@ FoxMap::MapToLut()
 Abc_Ntk_t *
 PerformFoxMap(Abc_Ntk_t *pAig, foxmap::Param *param)
 {
+    auto t0 = std::chrono::high_resolution_clock::now();
     if (Abc_NtkGetChoiceNum(pAig))
     {
         Abc_Ntk_t *pNew = Abc_NtkStrash(pAig = Abc_NtkDup(pAig), 0, 1, 0);
@@ -814,7 +848,12 @@ PerformFoxMap(Abc_Ntk_t *pAig, foxmap::Param *param)
     foxmap::Cut ::s_lut_cost_lib = nullptr;
     foxmap::FoxMap mapper(param, pAig);
 
-    return mapper.MapToLut();
+    Abc_Ntk_t *result = mapper.MapToLut();
+    auto t1 = std::chrono::high_resolution_clock::now();
+    std::cout << "Wall time: "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()
+              << " ms" << std::endl;
+    return result;
 }
 
 } // namespace fox

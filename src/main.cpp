@@ -45,6 +45,9 @@ int Foxmap_Command(Abc_Frame_t *pAbc, int argc, char **argv)
         case 'p':
             param.praetor_premap ^= 1;
             break;
+        case 'P':
+            param.parallel ^= 1;
+            break;
         case 'v':
             param.verbose ^= 1;
             break;

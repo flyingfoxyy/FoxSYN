@@ -61,6 +61,7 @@ public:
     int          verbose           = 1;  // print log
     int          praetor_premap    = 0;  // always enumerates cuts during each mapping pass
     int          expand_cut        = 0;  // expand cuts
+    int          parallel          = 0;  
 
     std::size_t  lut_size          = 6;  // max LUT input size
     std::size_t  required          = 0;  // the target delay of mapped LUT netlist
@@ -91,7 +92,7 @@ class MffcInfo;
 //==----------------------------------------------------------------==//
 struct Cut
 {
-    static thread_local LutCostLib *s_lut_cost_lib;
+    static LutCostLib *s_lut_cost_lib;
 
     word   truth     ; // truth table
     Area   area  {0} ; // effective area / area-flow / exact area
@@ -247,7 +248,7 @@ class Node
 public:
     enum NodeType { Const, PI, PO, And, None };
 
-    static thread_local Node *s_const_1;
+    static Node *s_const_1;
 
 private:
     /* graph info */
@@ -330,7 +331,7 @@ public:
      * 
      * @param mapper 
      */
-    void CutEnum(FoxMap *mapper);
+    void CutEnum(const FoxMap *mapper);
 };
 
 
