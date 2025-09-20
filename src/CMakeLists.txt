@@ -8,6 +8,7 @@ include_directories(/home/longfei/taskflow)
 
 add_subdirectory(abc)
 add_subdirectory(fox)
+add_subdirectory(supper)
 
 add_compile_options(-fexceptions)
 
@@ -17,4 +18,5 @@ add_executable(FoxSYN "main.cpp")
 target_link_libraries(FoxSYN PRIVATE
     libabc
     fox
+    supper
 )
