@@ -69,9 +69,9 @@ public:
     std::size_t  flow_pass_num     = 3;  // the number of pass performing with area-flow      heuristic method
     std::size_t  exact_pass_num    = 2;  // the number of pass performing with exact area     heuristic method
 
-    bool TimingDriven() const { return tar == OptTarget::Timing;      }  // timing
-    bool AreaDriven ()  const { return tar == OptTarget::Area;        }  // area/routability/timing
-    bool RouteDriven()  const { return tar == OptTarget::Routability; }  // routability/area/timing
+    bool timing_driven() const { return tar == OptTarget::Timing;      }  // timing
+    bool area_driven ()  const { return tar == OptTarget::Area;        }  // area/routability/timing
+    bool route_driven()  const { return tar == OptTarget::Routability; }  // routability/area/timing
 };
 
 struct LutCostLib
@@ -82,7 +82,7 @@ struct LutCostLib
     /**
      * Sync LUT area cost according to ABC LUT library
      */
-    void SyncUserLib();
+    void sync_user_lib();
 };
 
 class MffcInfo;
@@ -110,41 +110,41 @@ struct Cut
     Cut(Cut &&cut) noexcept        = default;
     Cut &operator=(const Cut &cut) = default;
 
-    static Area GetAreaCost (const Cut *cut) { assert(s_lut_cost_lib); return s_lut_cost_lib->area_cost[cut->size]; }
-    static Edge GetEdgeCost (const Cut *cut) { assert(s_lut_cost_lib); return s_lut_cost_lib->edge_cost[cut->size]; }
-    static Time GetDelayCost(const Cut *cut) { return (Time)1; }
+    static Area get_area_cost (const Cut *cut) { assert(s_lut_cost_lib); return s_lut_cost_lib->area_cost[cut->size]; }
+    static Edge get_edge_cost (const Cut *cut) { assert(s_lut_cost_lib); return s_lut_cost_lib->edge_cost[cut->size]; }
+    static Time get_delay_cost(const Cut *cut) { return (Time)1; }
 
     /**
      * @brief Pretty print of cut
      * 
      */
-    void Print();
+    void print();
 
     /**
      * @brief Compute the cost properties
      * 
      */
-    void ComputeCost(Algo algo, Node *node = nullptr, Cut *lhs = nullptr, Cut *rhs = nullptr);
+    void compute_cost(Algo algo, Node *node = nullptr, Cut *lhs = nullptr, Cut *rhs = nullptr);
 
     /**
      * @brief Compute cut truth table according to two sub-cuts
      * 
      */
-    void ComputeTruth(Cut *lhs, Cut *rhs, int compl0, int compl1);
+    void compute_truth(Cut *lhs, Cut *rhs, int compl0, int compl1);
 
     /**
      * @brief Compute cut truth table by reversed network visiting
      * 
      * @param root 
      */
-    void ComputeTruth(Node *root);
+    void compute_truth(Node *root);
 
     /**
      * @brief Merge two sub-cuts to form cut-set
      * 
      * @return k-feasible or not
      */
-    bool MergeCut(Cut *lhs, Cut *rhs, int k);
+    bool merge_cut(Cut *lhs, Cut *rhs, int k);
 
     /**
      * @brief Test if this cut is a valid cut
@@ -152,31 +152,31 @@ struct Cut
      * @return true 
      * @return false 
      */
-    bool IsValid() const { return size > 1 && leaves[0]; }
+    bool is_valid() const { return size > 1 && leaves[0]; }
 
     /**
      * @brief Reference the MFFC of this cut
      * 
      * @return Area 
      */
-    Area RefMFFC();
+    Area ref_mffc();
 
     /**
      * @brief Rip up the MFFC of this cut
      * 
      * @return Edge 
      */
-    Edge RipMFFC();
+    Edge rip_mffc();
 
-    void RefMFFC(MffcInfo &info);
-    void RipMFFC(MffcInfo &info);
+    void ref_mffc(MffcInfo &info);
+    void rip_mffc(MffcInfo &info);
 
     /**
      * @brief Compute the area/edge cost of cut MFFC
      * 
      * @return std::pair<Area, Edge> 
      */
-    std::pair<Area, Edge> GetMFFCCostInfo();
+    std::pair<Area, Edge> get_mffc_cost_info();
 
     /**
      * @brief Compute the arrival time of this cut
@@ -184,7 +184,7 @@ struct Cut
      * @param map 
      * @return Time 
      */
-    Time ComputeArrTime() const;
+    Time compute_arr_time() const;
 
     /**
      * @brief Mark the nodes int the cone of this cut
@@ -192,7 +192,7 @@ struct Cut
      * @param root 
      * @param cone
      */
-    void MarkCone(Node *root, std::vector<int> &cone);
+    void mark_cone(Node *root, std::vector<int> &cone);
 };
 
 class MffcInfo
@@ -212,10 +212,10 @@ public:
 
     ~MffcInfo() = default;
 
-    void AddNode(Cut *cut)
+    void add_node(Cut *cut)
     {
-        Area area = Cut::GetAreaCost(cut);
-        Area edge = Cut::GetEdgeCost(cut);
+        Area area = Cut::get_area_cost(cut);
+        Area edge = Cut::get_edge_cost(cut);
         mffc_node_area.push_back(area);
         mffc_node_edge.push_back(edge);
         sum_area += area;
@@ -223,14 +223,14 @@ public:
     }
 
 
-    int GetNodeNum() const { return mffc_node_area.size(); }
+    int get_node_num() const { return mffc_node_area.size(); }
 
-    Area GetArea() const { return sum_area; }
-    Edge GetEdge() const { return sum_edge; }
+    Area get_area() const { return sum_area; }
+    Edge get_edge() const { return sum_edge; }
 
-    float GetAvgEdge() const { return sum_edge / GetNodeNum(); }
+    float get_avg_edge() const { return sum_edge / get_node_num(); }
 
-    float GetRatio() const
+    float get_ratio() const
     {
         Edge sum = 0;
         for (Edge edge : mffc_node_edge)
@@ -284,39 +284,39 @@ public:
         delete[] _cut_set;
     }
 
-    Node *GetFanin0()  const { return _fanin0 == kMaxId ? nullptr : Node::s_const_1 + _fanin0; }
-    Node *GetFanin1()  const { return _fanin1 == kMaxId ? nullptr : Node::s_const_1 + _fanin1; }
+    Node *get_fanin0()  const { return _fanin0 == kMaxId ? nullptr : Node::s_const_1 + _fanin0; }
+    Node *get_fanin1()  const { return _fanin1 == kMaxId ? nullptr : Node::s_const_1 + _fanin1; }
 
-    uint GetFanin0Id() const { return _fanin0; }
-    uint GetFanin1Id() const { return _fanin1; }
+    uint get_fanin0_id() const { return _fanin0; }
+    uint get_fanin1_id() const { return _fanin1; }
 
-    uint GetId() const { return this - Node::s_const_1;   }
-    uint &GetRefNum()  { return _num_ref;                 }
+    uint get_id() const { return this - Node::s_const_1;   }
+    uint &get_ref_num()  { return _num_ref;                 }
 
-    bool IsPi()  const { return _type == NodeType::PI;    }
-    bool IsPo()  const { return _type == NodeType::PO;    }
-    bool IsAnd() const { return _type == NodeType::And;   }
+    bool is_pi()  const { return _type == NodeType::PI;    }
+    bool is_po()  const { return _type == NodeType::PO;    }
+    bool is_and() const { return _type == NodeType::And;   }
 
-    bool GetCompl0() const { return _compl0; }
-    bool GetCompl1() const { return _compl1; }
+    bool get_compl0() const { return _compl0; }
+    bool get_compl1() const { return _compl1; }
 
-    Area GetArea()       const { return _best_cut.area;   }
-    Edge GetEdge()       const { return _best_cut.edge;   }
-    Time GetArr()        const { return _best_cut.arr;    }
+    Area get_area()       const { return _best_cut.area;   }
+    Edge get_edge()       const { return _best_cut.edge;   }
+    Time get_arr()        const { return _best_cut.arr;    }
 
-    uint GetCutNum()     const { return _num_cuts;                }
-    uint GetMark()       const { return _mark;                    }
-    Time GetRequired()   const { return _required;                }
-    Cut *GetCut(int idx) const { return _cut_set + idx;           }
-    Cut *GetTrivialCut() const { return _cut_set + _num_cuts - 1; }
-    Cut *GetBestCut()          { return &_best_cut;               }
-    word &GetTruth()           { return _truth;                   }
-    float &GetEstRefNum()      { return _est_ref;                 }
-    void SetRequired(Time req) { _required = req;                 }
-    void SetMark(int mark)     { _mark = mark;                    }
-    void SetBestCut(Cut *cut)  { if (cut != &_best_cut) _best_cut = *cut; }
+    uint get_cut_num()     const { return _num_cuts;                }
+    uint get_mark()       const { return _mark;                    }
+    Time get_required()   const { return _required;                }
+    Cut *get_cut(int idx) const { return _cut_set + idx;           }
+    Cut *get_trivial_cut() const { return _cut_set + _num_cuts - 1; }
+    Cut *get_best_cut()          { return &_best_cut;               }
+    word &get_truth()           { return _truth;                   }
+    float &get_est_ref_num()      { return _est_ref;                 }
+    void set_required(Time req) { _required = req;                 }
+    void set_mark(int mark)     { _mark = mark;                    }
+    void set_best_cut(Cut *cut)  { if (cut != &_best_cut) _best_cut = *cut; }
 
-    void Print();
+    void print();
 
     /**
      * @brief Get the node with id idx
@@ -324,14 +324,14 @@ public:
      * @param idx 
      * @return Node* 
      */
-    static Node *GetNode(int idx) { return Node::s_const_1 + idx; }
+    static Node *get_node(int idx) { return Node::s_const_1 + idx; }
 
     /**
      * @brief Perform cut enumeration
      * 
      * @param mapper 
      */
-    void CutEnum(const FoxMap *mapper);
+    void cut_enum(const FoxMap *mapper);
 };
 
 
@@ -339,11 +339,11 @@ struct RankFnSet
 {
     static constexpr float kEpsilon = 0.001;
 
-    static int CmpCutArrSizeAreaEdge (Cut *lhs, Cut *rhs, float epsilon = kEpsilon);
-    static int CmpCutArrAreaEdge     (Cut *lhs, Cut *rhs, float epsilon = kEpsilon);
-    static int CmpCutArrEdgeArea     (Cut *lhs, Cut *rhs, float epsilon = kEpsilon);
-    static int CmpCutAreaEdge        (Cut *lhs, Cut *rhs, float epsilon = kEpsilon);
-    static int CmpCutEdgeArea        (Cut *lhs, Cut *rhs, float epsilon = kEpsilon);
+    static int cmp_cut_arr_size_area_edge (Cut *lhs, Cut *rhs, float epsilon = kEpsilon);
+    static int cmp_cut_arr_area_edge     (Cut *lhs, Cut *rhs, float epsilon = kEpsilon);
+    static int cmp_cut_arr_edge_area     (Cut *lhs, Cut *rhs, float epsilon = kEpsilon);
+    static int cmp_cut_area_edge        (Cut *lhs, Cut *rhs, float epsilon = kEpsilon);
+    static int cmp_cut_edge_area        (Cut *lhs, Cut *rhs, float epsilon = kEpsilon);
 };
 
 
@@ -404,41 +404,41 @@ public:
      * 
      * @param mode 
      */
-    void SetMode(PruneMode mode) { _mode = mode; }
+    void set_mode(PruneMode mode) { _mode = mode; }
 
     /**
      * @brief Set the rank function for cuts
      * 
      * @param fn 
      */
-    void SetRankFn(RankFn fn) { _rank_fn = fn; }
+    void set_rank_fn(RankFn fn) { _rank_fn = fn; }
 
     /**
      * @brief Get the a general cut candidate
      * 
      * @return Cut* 
      */
-    Cut *GetCandidate() { return _temp_cuts + _temp_used_num++; }
+    Cut *get_candidate() { return _temp_cuts + _temp_used_num++; }
 
     /**
      * @brief Reset the status of this prune
      * 
      */
-    void Reset();
+    void reset();
 
     /**
      * @brief pop the stored cuts into cut_set
      * 
      * @param cut_set 
      */
-    int Get(Cut *&cut_set, uint capacity);
+    int get(Cut *&cut_set, uint capacity);
 
     /**
      * @brief push a cut into storage
      * 
      * @param cut 
      */
-    bool Push(Cut *cut);
+    bool push(Cut *cut);
 };
 
 //==----------------------------------------------------------------==//
@@ -475,17 +475,17 @@ public:
      * 
      * @return FoxMap* 
      */
-    FoxMap *GetMapper() const { return _mapper; }
+    FoxMap *get_mapper() const { return _mapper; }
 
     /**
      * @brief Get the cut solution for node
      * 
      */
-    Cut *GetSol(uint node) const { return _cuts[node]; }
+    Cut *get_sol(uint node) const { return _cuts[node]; }
 
-    uint GetLutNum()   const { return _sum_lut;  }
-    uint GetEdgeNum()  const { return _sum_edge; }
-    Time GetDelayNum() const;
+    uint get_lut_num()   const { return _sum_lut;  }
+    uint get_edge_num()  const { return _sum_edge; }
+    Time get_delay_num() const;
 
     /**
      * @brief Get the reference count of node 'id'
@@ -493,7 +493,7 @@ public:
      * @param id 
      * @return uint&
      */
-    uint &GetRefCount(uint id) { return _ref_counter[id]; }
+    uint &get_ref_count(uint id) { return _ref_counter[id]; }
 
     /**
      * @brief Compare this with rhs, return true if this has better qor
@@ -506,22 +506,22 @@ public:
      * @brief Add a solution for node 'id'
      * 
      */
-    void Add(uint id, Cut *cut);
+    void add(uint id, Cut *cut);
 
     /**
      * @brief Remove solution for node 'id'
      * 
      */
-    void Remove(uint id);
+    void remove(uint id);
 
     /**
      * @brief Print mapping solution briefly
      * 
      */
-    void Print(const char *algo, float time)
+    void print(const char *algo, float time)
     {
-        printf("%s: Delay = %3d  Area = %6d  Edge = %6d  Time = %.1f\n", algo, GetDelayNum(),
-            GetLutNum(), GetEdgeNum(), time);
+        printf("%s: Delay = %3d  Area = %6d  Edge = %6d  Time = %.1f\n", algo, get_delay_num(),
+            get_lut_num(), get_edge_num(), time);
     }
 };
 
@@ -573,7 +573,7 @@ public:
 
     ~FoxMap()
     {
-        delete[] Node::GetNode(0);
+        delete[] Node::get_node(0);
         delete _best_mapping;
     }
 
@@ -582,55 +582,55 @@ public:
      * 
      * @return Abc_Ntk_t* 
      */
-    Abc_Ntk_t *MapToLut();
+    Abc_Ntk_t *map_to_lut();
 
 private:
 
-    void Print();
+    void print();
 
-    std::size_t NumPi()  const  { return _prim_inputs.size();  }
-    std::size_t NumPo()  const  { return _prim_outputs.size(); }
-    std::size_t NumAnd() const  { return _num_nodes - NumPi() - NumPo() - 2; }
+    std::size_t num_pi()  const  { return _prim_inputs.size();  }
+    std::size_t num_po()  const  { return _prim_outputs.size(); }
+    std::size_t num_and() const  { return _num_nodes - num_pi() - num_po() - 2; }
 
     /**
      * Get the mapping parameters
      */
-    Param *GetParam() const { return _map_param; }
+    Param *get_param() const { return _map_param; }
 
     /**
      * @brief Get the node number
      * 
      * @return uint 
      */
-    uint GetNodeNum() const { return _num_nodes; }
+    uint get_node_num() const { return _num_nodes; }
 
     /**
      * @brief Get the algorithm for current mapping pass
      * 
      * @return Algo 
      */
-    Algo GetAlgo() const { return _algo; }
+    Algo get_algo() const { return _algo; }
 
     /**
      * @brief Get the rank function for cut enumeration
      * 
      * @return RankFn 
      */
-    RankFn GetEnuRankFn() const { return _cut_rank_enu_fn; }
+    RankFn get_enu_rank_fn() const { return _cut_rank_enu_fn; }
 
     /**
      * @brief Get the rank function for cut selection
      * 
      * @return RankFn 
      */
-    RankFn GetSelRankFn() const { return _cut_rank_sel_fn; }
+    RankFn get_sel_rank_fn() const { return _cut_rank_sel_fn; }
 
     /**
      * @brief Update the best mapping solution
      * 
      * @param new_mapping 
      */
-    void UpdateMapping(Solution *new_mapping);
+    void update_mapping(Solution *new_mapping);
 
     /**
      * @brief Get LUT delay cost for different input size
@@ -638,36 +638,36 @@ private:
      * @param size 
      * @return Time 
      */
-    Time GetLutDelayCost(int size) const { return 1; }
+    Time get_lut_delay_cost(int size) const { return 1; }
 
     /**
      * Generate mapped network according to final solution
      */
-    Abc_Ntk_t *GenMappedNetwork(Solution *final);
+    Abc_Ntk_t *gen_mapped_network(Solution *final);
 
     /**
      * Return the CutSet for cut enumeration
      */
-    CutSet &GetCutSet() { _cut_set.Reset(); _cut_set.SetRankFn(_cut_rank_enu_fn); return _cut_set; }
+    CutSet &get_cut_set() { _cut_set.reset(); _cut_set.set_rank_fn(_cut_rank_enu_fn); return _cut_set; }
 
     /**
      * @brief Setup LUT cost library according to ABC read_lut command
      * 
      */
-    void SetupLib() {}
+    void setup_lib() {}
 
     /**
      * @brief Get the global required time
      * 
      * @return Time 
      */
-    Time GetGlobalRequired();
+    Time get_global_required();
 
     /**
      * @brief Compute the required time and propagate them
      * 
      */
-    void ComputeRequiredTime();
+    void compute_required_time();
 
     /**
      * @brief Perform a general mapping pass according to given settings
@@ -675,7 +675,7 @@ private:
      * @param algo 
      * @param fn 
      */
-    void PerformGeneralMapping(Algo algo, RankFn fn);
+    void perform_general_mapping(Algo algo, RankFn fn);
 
     /**
      * @brief Try to improve the mapping by cuts reorder
@@ -683,27 +683,27 @@ private:
      * @param algo 
      * @param fn 
      */
-    void PerformExactImprovement(Algo algo, RankFn fn);
+    void perform_exact_improvement(Algo algo, RankFn fn);
 
     /**
      * @brief Reference the best cuts
      * 
      */
-    void ReferenceBestCuts();
+    void reference_best_cuts();
 
     /**
      * @brief Create a Solution from current node refernce status
      * 
      * @return Solution* 
      */
-    Solution *CreateSolFromCurrMap();
+    Solution *create_sol_from_curr_map();
 
     /**
      * @brief Perform cut expansion for current mapping solution
      * 
      * @param lut_size 
      */
-    void PerformCutExpansion(int lut_size);
+    void perform_cut_expansion(int lut_size);
 
     /**
      * @brief Expand cut towards PI, cut-set size cannot grow
@@ -711,7 +711,7 @@ private:
      * @param node 
      * @return succeeded or not
      */
-    bool NodeFaninCompact0(Node *node, std::vector<int> &front, std::vector<int> &visited);
+    bool node_fanin_compact0(Node *node, std::vector<int> &front, std::vector<int> &visited);
 
     /**
      * @brief Expand cut towards PI, cut-set size grow but cannot exceed lut size
@@ -719,7 +719,7 @@ private:
      * @param node 
      * @return succeeded or not
      */
-    bool NodeFaninCompact1(Node *node, std::vector<int> &front, std::vector<int> &visited);
+    bool node_fanin_compact1(Node *node, std::vector<int> &front, std::vector<int> &visited);
 
     /**
      * @brief Print current mapping round status
@@ -727,7 +727,7 @@ private:
      * @param stage 
      * @param time 
      */
-    void PrintMapping(const char *stage, float time)
+    void print_mapping(const char *stage, float time)
     {
         printf("%s: Delay = %3d  Area = %6d  Edge = %6d  Time = %.1f\n", stage, _map_num_level,
             _map_num_lut, _map_num_edge, time);
@@ -737,7 +737,7 @@ private:
      * @brief Initialize the mapping graph from input AIG
      * 
      */
-    void Initialize();
+    void initialize();
 };
 
 } // end namespace foxmap
@@ -745,6 +745,6 @@ private:
 /**
  * @brief execute queen map
  */
-Abc_Ntk_t *PerformFoxMap(Abc_Ntk_t *Aig, supper::Param *param);
+Abc_Ntk_t *perform_supper_map(Abc_Ntk_t *Aig, supper::Param *param);
 
 } // end namespace fox

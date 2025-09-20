@@ -27,26 +27,26 @@ LutCostLib  * Cut ::s_lut_cost_lib = nullptr;
 bool
 Solution::operator<(const Solution& rhs)
 {
-    if (_mapper->GetParam()->tar == OptTarget::Timing)
+    if (_mapper->get_param()->tar == OptTarget::Timing)
     {
-        if (GetDelayNum() < rhs.GetDelayNum())
+        if (get_delay_num() < rhs.get_delay_num())
             return true;
-        if (GetDelayNum() > rhs.GetDelayNum())
+        if (get_delay_num() > rhs.get_delay_num())
             return false;
     }
-    if (GetLutNum() < rhs.GetLutNum())
+    if (get_lut_num() < rhs.get_lut_num())
         return true;
-    if (GetLutNum() > rhs.GetLutNum())
+    if (get_lut_num() > rhs.get_lut_num())
         return false;
-    if (GetEdgeNum() < rhs.GetEdgeNum())
+    if (get_edge_num() < rhs.get_edge_num())
         return true;
-    if (GetEdgeNum() > rhs.GetEdgeNum())
+    if (get_edge_num() > rhs.get_edge_num())
         return false;
     return false;
 }
 
 void
-Solution::Remove(uint id)
+Solution::remove(uint id)
 {
     assert(_cuts[id]);
     Cut *cut = _cuts[id];
@@ -58,7 +58,7 @@ Solution::Remove(uint id)
 }
 
 void
-Solution::Add(uint id, Cut *cut)
+Solution::add(uint id, Cut *cut)
 {
     assert(_cuts[id] == nullptr);
     _cuts[id] = new Cut(*cut);
@@ -68,33 +68,33 @@ Solution::Add(uint id, Cut *cut)
 }
 
 Time
-Solution::GetDelayNum() const
+Solution::get_delay_num() const
 {
     if (_max_arr)
         return _max_arr;
 
-    std::vector<int> arr_time(_mapper->GetNodeNum(), 0);
-    for (int i = 1; i != _mapper->GetNodeNum(); ++i)
+    std::vector<int> arr_time(_mapper->get_node_num(), 0);
+    for (int i = 1; i != _mapper->get_node_num(); ++i)
     {
-        if (Cut *cut = GetSol(i); cut)
+        if (Cut *cut = get_sol(i); cut)
         {
             for (int m = 0; m != cut->size; ++m)
                 arr_time[i] = std::max(arr_time[cut->leaves[m]], arr_time[i]);
-            arr_time[i] += Cut::GetDelayCost(cut);
+            arr_time[i] += Cut::get_delay_cost(cut);
         }
     }
 
     for (Node *po : _mapper->_prim_outputs)
     {
-        if (po->GetFanin0())
-            _max_arr = std::max(_max_arr, (uint)arr_time[po->GetFanin0Id()]);
+        if (po->get_fanin0())
+            _max_arr = std::max(_max_arr, (uint)arr_time[po->get_fanin0_id()]);
     }
 
     return _max_arr;
 }
 
 void
-FoxMap::Initialize()
+FoxMap::initialize()
 {
     _prim_inputs.reserve(Abc_NtkPiNum(_pAig));
     _prim_outputs.reserve(Abc_NtkPoNum(_pAig));
@@ -116,9 +116,9 @@ FoxMap::Initialize()
             Node *node = Node::s_const_1 + i;
             pObj->pTemp = static_cast<void *>(new (node)Node(pObj));
 
-            if (node->IsPi())
+            if (node->is_pi())
                 _prim_inputs.push_back(node);
-            else if (node->IsPo())
+            else if (node->is_po())
                 _prim_outputs.push_back(node);
 
             _num_refs[i] = Abc_ObjFanoutNum(pObj);
@@ -128,11 +128,11 @@ FoxMap::Initialize()
     Abc_NtkCleanCopy(_pAig);
 
     // initialize default mapping settings
-    _cut_set.SetMode(CutSet::PruneMode::UL);
+    _cut_set.set_mode(CutSet::PruneMode::UL);
 }
 
 void
-FoxMap::UpdateMapping(Solution *new_mapping)
+FoxMap::update_mapping(Solution *new_mapping)
 {
     if (!_best_mapping)
         _best_mapping = new_mapping;
@@ -146,28 +146,28 @@ FoxMap::UpdateMapping(Solution *new_mapping)
 }
 
 void
-FoxMap::Print()
+FoxMap::print()
 {
-    printf("# Pi %ld, Po %ld, And %ld --> All %d\n", NumPi(), NumPo(), NumAnd(), _num_nodes);
+    printf("# Pi %ld, Po %ld, And %ld --> All %d\n", num_pi(), num_po(), num_and(), _num_nodes);
     for (int i = 0; i != _num_nodes; ++i)
     {
         printf("## node %d\n", i);
-        Node::GetNode(i)->Print();
+        Node::get_node(i)->print();
     }
 }
 
 Time
-FoxMap::GetGlobalRequired()
+FoxMap::get_global_required()
 {
-    if (!_map_param->TimingDriven())
+    if (!_map_param->timing_driven())
         return kMaxTime;
 
     if (!_max_po_arr_time)
     {
         for (Node *po : _prim_outputs)
         {
-            if (po->GetFanin0())
-                _max_po_arr_time = std::max(po->GetFanin0()->GetArr(), _max_po_arr_time);
+            if (po->get_fanin0())
+                _max_po_arr_time = std::max(po->get_fanin0()->get_arr(), _max_po_arr_time);
         }
     }
     assert(_max_po_arr_time);
@@ -184,7 +184,7 @@ FoxMap::GetGlobalRequired()
 }
 
 void
-FoxMap::ReferenceBestCuts()
+FoxMap::reference_best_cuts()
 {
     _map_num_lut   = 0;
     _map_num_edge  = 0;
@@ -192,16 +192,16 @@ FoxMap::ReferenceBestCuts()
 
     for (int i = 1; i != _num_nodes; ++i)
     {
-        Node *node = Node::GetNode(i);
-        node->GetRefNum() = 0;
-        node->SetRequired(kMaxTime);
+        Node *node = Node::get_node(i);
+        node->get_ref_num() = 0;
+        node->set_required(kMaxTime);
     }
 
     // reference the po drivers
     for (Node *po : _prim_outputs)
     {
-        if (po->GetFanin0())
-            ++po->GetFanin0()->GetRefNum();
+        if (po->get_fanin0())
+            ++po->get_fanin0()->get_ref_num();
     }
 
     // reference from PO to PIs
@@ -209,54 +209,54 @@ FoxMap::ReferenceBestCuts()
     {
         auto recompute_cost = [this](Cut *cut) -> void
         {
-            cut->area = Cut::GetAreaCost(cut);
-            cut->edge = Cut::GetEdgeCost(cut);
+            cut->area = Cut::get_area_cost(cut);
+            cut->edge = Cut::get_edge_cost(cut);
             for (int i = 0; i != cut->size; ++i)
             {
-                if (Node *leaf = Node::GetNode(cut->leaves[i]); leaf->IsAnd() && leaf->GetRefNum() == 0)
+                if (Node *leaf = Node::get_node(cut->leaves[i]); leaf->is_and() && leaf->get_ref_num() == 0)
                 {
-                    cut->area += leaf->GetArea();
-                    cut->edge += leaf->GetEdge();
+                    cut->area += leaf->get_area();
+                    cut->edge += leaf->get_edge();
                 }
             }
         };
 
         auto reorder_cuts = [recompute_cost, this](Node *node) -> Cut *
         {
-            Time required = node->GetRequired();
+            Time required = node->get_required();
             int best = -1;
-            for (int i = 0; i != node->GetCutNum() - 1; ++i)
+            for (int i = 0; i != node->get_cut_num() - 1; ++i)
             {
-                Cut *cut = node->GetCut(i);
+                Cut *cut = node->get_cut(i);
                 if (cut->arr > required)
                     continue;
                 recompute_cost(cut);
-                if (best == -1 || _cut_rank_enu_fn(cut, node->GetCut(best), 0.001) == 1)
+                if (best == -1 || _cut_rank_enu_fn(cut, node->get_cut(best), 0.001) == 1)
                     best = i;
             }
             if (best == -1)
                 return nullptr;
             else
-                return node->GetCut(best);
+                    return node->get_cut(best);
         };
 
         // reorder the cuts
         for (int i = _num_nodes - 1; i != 1; --i)
         {
-            if (Node *node = Node::GetNode(i); node->IsAnd() && node->GetRefNum())
+            if (Node *node = Node::get_node(i); node->is_and() && node->get_ref_num())
             {
                 Cut *cut = reorder_cuts(node);
                 if (cut)
-                    *node->GetBestCut() = *cut;
+                    *node->get_best_cut() = *cut;
                 else
-                    cut = node->GetBestCut();
+                    cut = node->get_best_cut();
                 for (int m = 0; m != cut->size; ++m)
-                    ++Node::GetNode(cut->leaves[m])->GetRefNum();
+                    ++Node::get_node(cut->leaves[m])->get_ref_num();
 
-                _map_num_lut  += Cut::GetAreaCost(cut);
-                _map_num_edge += Cut::GetEdgeCost(cut);
+                _map_num_lut  += Cut::get_area_cost(cut);
+                _map_num_edge += Cut::get_edge_cost(cut);
 
-                assert(cut->arr <= node->GetRequired());
+                assert(cut->arr <= node->get_required());
             }
         }
     }
@@ -264,16 +264,16 @@ FoxMap::ReferenceBestCuts()
     {
         for (int i = _num_nodes - 1; i != 1; --i)
         {
-            if (Node *node = Node::GetNode(i); node->IsAnd() && node->GetRefNum())
+            if (Node *node = Node::get_node(i); node->is_and() && node->get_ref_num())
             {
-                Cut *cut = node->GetBestCut();
+                Cut *cut = node->get_best_cut();
                 for (int m = 0; m != cut->size; ++m)
-                    ++Node::GetNode(cut->leaves[m])->GetRefNum();
+                    ++Node::get_node(cut->leaves[m])->get_ref_num();
 
-                _map_num_lut  += Cut::GetAreaCost(cut);
-                _map_num_edge += Cut::GetEdgeCost(cut);
+                _map_num_lut  += Cut::get_area_cost(cut);
+                _map_num_edge += Cut::get_edge_cost(cut);
 
-                assert(cut->arr <= node->GetRequired());
+                assert(cut->arr <= node->get_required());
             }
         }
     }
@@ -283,12 +283,12 @@ FoxMap::ReferenceBestCuts()
     for (int i = 1; i != _num_nodes; ++i)
     {
         uint &level = node_level[i];
-        if (Node *node = Node::GetNode(i); node->IsAnd() && node->GetRefNum())
+        if (Node *node = Node::get_node(i); node->is_and() && node->get_ref_num())
         {
-            Cut *cut = node->GetBestCut();
+            Cut *cut = node->get_best_cut();
             for (int m = 0; m != cut->size; ++m)
                 level = std::max(level, node_level[cut->leaves[m]]);
-            level += Cut::GetDelayCost(cut);
+            level += Cut::get_delay_cost(cut);
         }
         _map_num_level = std::max(_map_num_level, level);
     }
@@ -297,54 +297,54 @@ FoxMap::ReferenceBestCuts()
 }
 
 Solution *
-FoxMap::CreateSolFromCurrMap()
+FoxMap::create_sol_from_curr_map()
 {
     Solution *mapping = new Solution(this, _num_nodes);
     for (int i = 1; i != _num_nodes; ++i)
     {
-        Node *node = Node::GetNode(i);
-        mapping->GetRefCount(i) = node->GetRefNum();
-        if (node->IsAnd() && node->GetRefNum())
+        Node *node = Node::get_node(i);
+        mapping->get_ref_count(i) = node->get_ref_num();
+        if (node->is_and() && node->get_ref_num())
         {
-            mapping->Add(i, node->GetBestCut());
+            mapping->add(i, node->get_best_cut());
         }
     }
     return mapping;
 }
 
 void
-FoxMap::ComputeRequiredTime()
+FoxMap::compute_required_time()
 {
     // reference the best cuts to form mapping
-    ReferenceBestCuts();
+    reference_best_cuts();
 
-    Time required = GetGlobalRequired();
+    Time required = get_global_required();
     if (required == kMaxTime)
         return;
 
     for (Node *po : _prim_outputs)
     {
-        if (Node *fanin = po->GetFanin0(); fanin && fanin->IsAnd())
-            fanin->SetRequired(required);
+        if (Node *fanin = po->get_fanin0(); fanin && fanin->is_and())
+            fanin->set_required(required);
     }
 
     for (int i = _num_nodes; i != 0; --i)
     {
-        Node *node = Node::GetNode(i);
-        if (!node->GetRefNum() || !node->IsAnd())
+        Node *node = Node::get_node(i);
+        if (!node->get_ref_num() || !node->is_and())
             continue;
-        Cut *cut = node->GetBestCut();
-        Time req = node->GetRequired() - Cut::GetDelayCost(cut);
+        Cut *cut = node->get_best_cut();
+        Time req = node->get_required() - Cut::get_delay_cost(cut);
         for (int i = 0; i != cut->size; ++i)
         {
-            Node *leaf = Node::GetNode(cut->leaves[i]);
-            leaf->SetRequired(std::min(leaf->GetRequired(), req));
+            Node *leaf = Node::get_node(cut->leaves[i]);
+            leaf->set_required(std::min(leaf->get_required(), req));
         }
     }
 }
 
 void
-FoxMap::PerformGeneralMapping(Algo algo, RankFn fn)
+FoxMap::perform_general_mapping(Algo algo, RankFn fn)
 {
     auto mapping_start = clock();
 
@@ -363,16 +363,16 @@ FoxMap::PerformGeneralMapping(Algo algo, RankFn fn)
         tasks.emplace_back(tf::Task());
         for (int i = 1; i != _num_nodes; ++i)
         {
-            Node *node = Node::GetNode(i);
-            if (node->IsPi() || node->IsAnd()) {
-                tasks.emplace_back(taskflow.emplace([=]() { node->CutEnum(this); }));
+            Node *node = Node::get_node(i);
+            if (node->is_pi() || node->is_and()) {
+                tasks.emplace_back(taskflow.emplace([=]() { node->cut_enum(this); }));
             } else {
                 tasks.emplace_back(tf::Task());
             }
             assert(tasks.size() == i + 1);
-            if (node->IsAnd()) {
-                tasks[node->GetFanin0Id()].precede(tasks.back());
-                tasks[node->GetFanin1Id()].precede(tasks.back());
+            if (node->is_and()) {
+                tasks[node->get_fanin0_id()].precede(tasks.back());
+                tasks[node->get_fanin1_id()].precede(tasks.back());
             }
         }
         tf::Executor executor;
@@ -382,14 +382,14 @@ FoxMap::PerformGeneralMapping(Algo algo, RankFn fn)
     {
         for (int i = 1; i != _num_nodes; ++i)
         {
-            Node *node = Node::GetNode(i);
-            if (node->IsPi() || node->IsAnd())
-                node->CutEnum(this);
+            Node *node = Node::get_node(i);
+            if (node->is_pi() || node->is_and())
+                node->cut_enum(this);
         }
     }
 
     // compute and propagate required times
-    ComputeRequiredTime();
+    compute_required_time();
 
     auto mapping_end = clock();
 
@@ -406,67 +406,67 @@ FoxMap::PerformGeneralMapping(Algo algo, RankFn fn)
             stage = "Ex";
         else
             stage = "Ef";
-        PrintMapping(stage, (mapping_end - mapping_start) / (float)CLOCKS_PER_SEC);
+        print_mapping(stage, (mapping_end - mapping_start) / (float)CLOCKS_PER_SEC);
     }
 
     // perform exact area recovery
-    PerformExactImprovement(Algo::Exact, fn);
+    perform_exact_improvement(Algo::Exact, fn);
 
     // performa cut expandsion to reduce LUT number
     if (_map_param->expand_cut)
-        PerformCutExpansion(6);
+        perform_cut_expansion(6);
 }
 
 void
-FoxMap::PerformExactImprovement(Algo algo, RankFn fn)
+FoxMap::perform_exact_improvement(Algo algo, RankFn fn)
 {
     auto start = clock();
 
     for (int i = 1; i != _num_nodes; ++i)
     {
-        Node *node = Node::GetNode(i);
-        if (!node->IsAnd())
+        Node *node = Node::get_node(i);
+        if (!node->is_and())
             continue;
 
-        if (node->GetRefNum())
-            node->GetBestCut()->RipMFFC();
+        if (node->get_ref_num())
+            node->get_best_cut()->rip_mffc();
 
-        Cut *best = node->GetBestCut();
-        best->ComputeCost(algo);
+        Cut *best = node->get_best_cut();
+        best->compute_cost(algo);
 
-        assert(best->arr <= node->GetRequired());
-        for (int k = 0; k != node->GetCutNum() - 1; ++k)
+        assert(best->arr <= node->get_required());
+        for (int k = 0; k != node->get_cut_num() - 1; ++k)
         {
-            Cut *cut = node->GetCut(k);
-            cut->ComputeCost(algo);
-            if (cut->arr <= node->GetRequired() && fn(cut, best, RankFnSet::kEpsilon) == 1)
+            Cut *cut = node->get_cut(k);
+            cut->compute_cost(algo);
+            if (cut->arr <= node->get_required() && fn(cut, best, RankFnSet::kEpsilon) == 1)
                 best = cut;
         }
-        node->SetBestCut(best);
+        node->set_best_cut(best);
 
-        if (node->GetRefNum())
-            best->RefMFFC();
+        if (node->get_ref_num())
+            best->ref_mffc();
     }
 
-    ComputeRequiredTime();
+    compute_required_time();
 
     auto end = clock();
 
     if (_map_param->verbose)
-        PrintMapping("Im", (end - start) / (float)CLOCKS_PER_SEC);
+        print_mapping("Im", (end - start) / (float)CLOCKS_PER_SEC);
 }
 
 bool
-FoxMap::NodeFaninCompact0(Node *node, std::vector<int> &front, std::vector<int> &visited)
+FoxMap::node_fanin_compact0(Node *node, std::vector<int> &front, std::vector<int> &visited)
 {
     auto GetFaninCost = [&](Node *n) -> int
     {
         int counter = 0;
-        if (n->GetRefNum() == 0)
+        if (n->get_ref_num() == 0)
             --counter;
-        if (!n->GetFanin0()->GetMark() && n->GetFanin0()->GetRefNum() == 0)
+        if (!n->get_fanin0()->get_mark() && n->get_fanin0()->get_ref_num() == 0)
             ++counter;
-        if (!n->GetFanin1()->GetMark() && n->GetFanin1()->GetRefNum() == 0)
+        if (!n->get_fanin1()->get_mark() && n->get_fanin1()->get_ref_num() == 0)
             ++counter;
         return counter;
     };
@@ -476,32 +476,32 @@ FoxMap::NodeFaninCompact0(Node *node, std::vector<int> &front, std::vector<int> 
         // remove n from front
         std::vector<int> temp;
         for (int id : front)
-            if (id != n->GetId())
+            if (id != n->get_id())
                 temp.push_back(id);
         std::swap(front, temp);
-        Node *fanin = n->GetFanin0();
-        if (fanin->GetMark() == 0)
+        Node *fanin = n->get_fanin0();
+        if (fanin->get_mark() == 0)
         {
-            front.push_back(fanin->GetId());
-            visited.push_back(fanin->GetId());
-            fanin->SetMark(1);
+            front.push_back(fanin->get_id());
+            visited.push_back(fanin->get_id());
+            fanin->set_mark(1);
         }
 
-        fanin = n->GetFanin1();
-        if (fanin->GetMark() == 0)
+        fanin = n->get_fanin1();
+        if (fanin->get_mark() == 0)
         {
-            front.push_back(fanin->GetId());
-            visited.push_back(fanin->GetId());
-            fanin->SetMark(1);
+            front.push_back(fanin->get_id());
+            visited.push_back(fanin->get_id());
+            fanin->set_mark(1);
         }
     };
 
     for (int id : front)
     {
-        Node *node = Node::GetNode(id);
-        if (node->IsPi())
+        Node *node = Node::get_node(id);
+        if (node->is_pi())
             continue;
-        if (!node->GetFanin0()->GetMark() && !node->GetFanin1()->GetMark())
+        if (!node->get_fanin0()->get_mark() && !node->get_fanin1()->get_mark())
             continue;
         if (GetFaninCost(node) <= 0)
         {
@@ -513,16 +513,16 @@ FoxMap::NodeFaninCompact0(Node *node, std::vector<int> &front, std::vector<int> 
 }
 
 bool
-FoxMap::NodeFaninCompact1(Node *node, std::vector<int> &front, std::vector<int> &visited)
+FoxMap::node_fanin_compact1(Node *node, std::vector<int> &front, std::vector<int> &visited)
 {
     auto GetFaninCost = [&](Node *n) -> int
     {
         int counter = 0;
-        if (n->GetRefNum() == 0)
+        if (n->get_ref_num() == 0)
             --counter;
-        if (!n->GetFanin0()->GetMark() && n->GetFanin0()->GetRefNum() == 0)
+        if (!n->get_fanin0()->get_mark() && n->get_fanin0()->get_ref_num() == 0)
             ++counter;
-        if (!n->GetFanin1()->GetMark() && n->GetFanin1()->GetRefNum() == 0)
+        if (!n->get_fanin1()->get_mark() && n->get_fanin1()->get_ref_num() == 0)
             ++counter;
         return counter;
     };
@@ -532,31 +532,31 @@ FoxMap::NodeFaninCompact1(Node *node, std::vector<int> &front, std::vector<int> 
         /// remove n from front
         std::vector<int> temp;
         for (int id : front)
-            if (id != n->GetId())
+            if (id != n->get_id())
                 temp.push_back(id);
         std::swap(front, temp);
         // update
-        Node *fanin = n->GetFanin0();
-        if (fanin->GetMark() == 0)
+        Node *fanin = n->get_fanin0();
+        if (fanin->get_mark() == 0)
         {
-            front.push_back(fanin->GetId());
-            visited.push_back(fanin->GetId());
-            fanin->SetMark(1);
+            front.push_back(fanin->get_id());
+            visited.push_back(fanin->get_id());
+            fanin->set_mark(1);
         }
 
-        fanin = n->GetFanin1();
-        if (fanin->GetMark() == 0)
+        fanin = n->get_fanin1();
+        if (fanin->get_mark() == 0)
         {
-            front.push_back(fanin->GetId());
-            visited.push_back(fanin->GetId());
-            fanin->SetMark(1);
+            front.push_back(fanin->get_id());
+            visited.push_back(fanin->get_id());
+            fanin->set_mark(1);
         }
     };
 
     for (int id : front)
     {
-        Node *node = Node::GetNode(id);
-        if (node->IsPi())
+        Node *node = Node::get_node(id);
+        if (node->is_pi())
             continue;
         if (GetFaninCost(node) < 0)
         {
@@ -568,7 +568,7 @@ FoxMap::NodeFaninCompact1(Node *node, std::vector<int> &front, std::vector<int> 
 }
 
 void
-FoxMap::PerformCutExpansion(int lut_size)
+FoxMap::perform_cut_expansion(int lut_size)
 {
     auto start = clock();
 
@@ -576,15 +576,15 @@ FoxMap::PerformCutExpansion(int lut_size)
     {
         int cost = 0;
         for (int idx : nodes)
-            if (Node::GetNode(idx)->GetRefNum() == 0)
+            if (Node::get_node(idx)->get_ref_num() == 0)
                 ++cost;
         return cost;
     };
 
     auto node_update = [this](Node *node, std::vector<int> &front)
     {
-        Cut *cut = node->GetBestCut();
-        cut->RipMFFC();
+        Cut *cut = node->get_best_cut();
+        cut->rip_mffc();
         cut->size = front.size();
         assert(cut->size <= 6);
         cut->sign = 0;
@@ -594,20 +594,20 @@ FoxMap::PerformCutExpansion(int lut_size)
             cut->leaves[i] = front[i];
         }
         std::sort(cut->leaves, cut->leaves + cut->size);
-        cut->RefMFFC();
-        assert(cut->IsValid());
+        cut->ref_mffc();
+        assert(cut->is_valid());
     };
 
     for (int i = 1; i != _num_nodes; ++i)
     {
-        Node *node = Node::GetNode(i);
-        if (!node->IsAnd() || !node->GetRefNum())
+        Node *node = Node::get_node(i);
+        if (!node->is_and() || !node->get_ref_num())
             continue;
         std::vector<int> front, front_old, visited;
-        Cut *cut = node->GetBestCut();
+        Cut *cut = node->get_best_cut();
         Time old_arr = cut->arr;
-        cut->RipMFFC();
-        Area old_area = cut->RefMFFC();
+        cut->rip_mffc();
+        Area old_area = cut->ref_mffc();
         // mark the cone nodes
         // improve prepare
         for (int m = 0; m != cut->size; ++m)
@@ -616,14 +616,14 @@ FoxMap::PerformCutExpansion(int lut_size)
             front.push_back(leaf);
             front_old.push_back(leaf);
             visited.push_back(leaf);
-            Node::GetNode(leaf)->SetMark(1);
+            Node::get_node(leaf)->set_mark(1);
         }
         // mark the nodes in the cone
-        cut->MarkCone(node, visited);
+        cut->mark_cone(node, visited);
         // end prepare
 
         // rip-up the cone
-        cut->RipMFFC();
+        cut->rip_mffc();
 
         // compute initial cost
         int cost_before = compute_cut_cost(front);
@@ -632,9 +632,9 @@ FoxMap::PerformCutExpansion(int lut_size)
         while (true)
         {
             bool result = false;
-            if (NodeFaninCompact0(node, front, visited) )
+            if (node_fanin_compact0(node, front, visited) )
                 result = true;
-            else if (front.size() < 6 && NodeFaninCompact1(node, front, visited))
+            else if (front.size() < 6 && node_fanin_compact1(node, front, visited))
                 result = true;
             else
                 result = false;
@@ -646,45 +646,45 @@ FoxMap::PerformCutExpansion(int lut_size)
         }
 
         int cost_after = compute_cut_cost(front);
-        cut->RefMFFC();
+        cut->ref_mffc();
         assert(cost_before >= cost_after);
 
         for (int id : visited)
-            Node::GetNode(id)->SetMark(0);
+            Node::get_node(id)->set_mark(0);
 
         node_update(node, front);
 
-        cut->arr = cut->ComputeArrTime();
-        cut->RipMFFC();
-        Area new_area = cut->RefMFFC();
+        cut->arr = cut->compute_arr_time();
+        cut->rip_mffc();
+        Area new_area = cut->ref_mffc();
 
         // if there is no gain or required is not met
         // recall the previous one
-        if (new_area > old_area || cut->arr > node->GetRequired())
+        if (new_area > old_area || cut->arr > node->get_required())
         {
             node_update(node, front_old);
-            cut->RipMFFC();
-            new_area = cut->RefMFFC();
+            cut->rip_mffc();
+            new_area = cut->ref_mffc();
             assert(new_area == old_area);
             cut->arr = old_arr;
         }
         else
         {
-            cut->ComputeTruth(node);
+            cut->compute_truth(node);
         }
         assert(cut->size <= 6);
     }
 
-    ComputeRequiredTime();
+    compute_required_time();
 
     auto end = clock();
 
     if (_map_param->verbose)
-        PrintMapping("Ep", (end - start) / (float)CLOCKS_PER_SEC);
+        print_mapping("Ep", (end - start) / (float)CLOCKS_PER_SEC);
 }
 
 Abc_Ntk_t *
-FoxMap::GenMappedNetwork(Solution *final_mapping)
+FoxMap::gen_mapped_network(Solution *final_mapping)
 {
     Abc_Ntk_t *mapped = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
     mapped->pName = Extra_UtilStrsav(_pAig->pName);
@@ -715,9 +715,9 @@ FoxMap::GenMappedNetwork(Solution *final_mapping)
     // create LUT nodes
     for (int i = 1; i != _num_nodes; ++i)
     {
-        if (!Node::GetNode(i)->IsAnd() || final_mapping->GetRefCount(i) == 0)
+        if (!Node::get_node(i)->is_and() || final_mapping->get_ref_count(i) == 0)
             continue;
-        Cut *cut = final_mapping->GetSol(i);
+        Cut *cut = final_mapping->get_sol(i);
         Abc_Obj_t *pLut = Abc_NtkCreateObj(mapped, ABC_OBJ_NODE);
         if (word truth = cut->truth; truth == 0ul || truth == ~0ul)
         {
@@ -768,72 +768,72 @@ FoxMap::GenMappedNetwork(Solution *final_mapping)
 }
 
 Abc_Ntk_t *
-FoxMap::MapToLut()
+FoxMap::map_to_lut()
 {
-    Initialize();
+    initialize();
 
     // report the graph info
     if (_map_param->verbose)
-        printf("mapping graph -- Pi %ld, Po %ld, And %ld\n", NumPi(), NumPo(), NumAnd());
+        printf("mapping graph -- Pi %ld, Po %ld, And %ld\n", num_pi(), num_po(), num_and());
 
     // set up LUT library
-    SetupLib();
+    setup_lib();
 
     if (_map_param->praetor_premap)
     {
         _premap = 1;
-        _cut_set.SetMode(CutSet::PruneMode::IDL);
+        _cut_set.set_mode(CutSet::PruneMode::IDL);
 
         RankFn fn;
-        if (_map_param->TimingDriven())
-            fn = RankFnSet::CmpCutArrSizeAreaEdge;
-        else if (_map_param->AreaDriven())
-            fn = RankFnSet::CmpCutAreaEdge;
+        if (_map_param->timing_driven())
+            fn = RankFnSet::cmp_cut_arr_size_area_edge;
+        else if (_map_param->area_driven())
+            fn = RankFnSet::cmp_cut_area_edge;
         else
-            fn = RankFnSet::CmpCutEdgeArea;
-        PerformGeneralMapping(Algo::Praetor, fn);
+            fn = RankFnSet::cmp_cut_edge_area;
+        perform_general_mapping(Algo::Praetor, fn);
 
         _premap = 0;
-        _cut_set.SetMode(CutSet::PruneMode::UL);
+        _cut_set.set_mode(CutSet::PruneMode::UL);
     }
 
-    if (_map_param->TimingDriven())
+        if (_map_param->timing_driven())
     {
         _premap = 1;
         std::vector<RankFn> rank_fn_set = {
-            RankFnSet::CmpCutArrSizeAreaEdge,
-            RankFnSet::CmpCutArrAreaEdge,
-            RankFnSet::CmpCutAreaEdge
+            RankFnSet::cmp_cut_arr_size_area_edge,
+            RankFnSet::cmp_cut_arr_area_edge,
+            RankFnSet::cmp_cut_area_edge
         };
         for (int i = 0; i != 3; ++i)
         {
             if (i)
             {
                 for (int i = 1; i != _num_nodes; ++i)
-                    Node::GetNode(i)->GetRefNum() = _num_refs[i];
+                    Node::get_node(i)->get_ref_num() = _num_refs[i];
             }
-            PerformGeneralMapping(Algo::Flow, rank_fn_set[i]);
+            perform_general_mapping(Algo::Flow, rank_fn_set[i]);
         }
 
         _premap = 0;
     }
 
-    RankFn fn = _map_param->tar == OptTarget::Area ? RankFnSet::CmpCutAreaEdge : RankFnSet::CmpCutEdgeArea;
+    RankFn fn = _map_param->tar == OptTarget::Area ? RankFnSet::cmp_cut_area_edge : RankFnSet::cmp_cut_edge_area;
 
     for (int i = 0; i != _map_param->flow_pass_num; ++i)
-        PerformGeneralMapping(Algo::Flow, fn);
+        perform_general_mapping(Algo::Flow, fn);
 
     for (int i = 0; i != _map_param->exact_pass_num; ++i)
-        PerformGeneralMapping(Algo::Exact, fn);
+        perform_general_mapping(Algo::Exact, fn);
 
     // mapping solution
-    return GenMappedNetwork(CreateSolFromCurrMap());
+    return gen_mapped_network(create_sol_from_curr_map());
 }
 
 } // namespace foxmap
 
 Abc_Ntk_t *
-PerformFoxMap(Abc_Ntk_t *pAig, supper::Param *param)
+perform_supper_map(Abc_Ntk_t *pAig, supper::Param *param)
 {
     auto t0 = std::chrono::high_resolution_clock::now();
     if (Abc_NtkGetChoiceNum(pAig))
@@ -848,7 +848,7 @@ PerformFoxMap(Abc_Ntk_t *pAig, supper::Param *param)
     supper::Cut ::s_lut_cost_lib = nullptr;
     supper::FoxMap mapper(param, pAig);
 
-    Abc_Ntk_t *result = mapper.MapToLut();
+    Abc_Ntk_t *result = mapper.map_to_lut();
     auto t1 = std::chrono::high_resolution_clock::now();
     std::cout << "Wall time: "
               << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()

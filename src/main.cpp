@@ -237,7 +237,7 @@ int Suppermap_Command(Abc_Frame_t *pAbc, int argc, char **argv)
         return 1;
     }
 
-    pMapped = fox::PerformFoxMap(pAig, &param);
+    pMapped = fox::perform_supper_map(pAig, &param);
 
     if (!pMapped)
     {

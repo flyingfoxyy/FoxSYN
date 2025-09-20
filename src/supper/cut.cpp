@@ -14,7 +14,7 @@
 namespace fox::supper
 {
 int
-RankFnSet::CmpCutArrSizeAreaEdge(Cut *lhs, Cut *rhs, float epsilon)
+RankFnSet::cmp_cut_arr_size_area_edge(Cut *lhs, Cut *rhs, float epsilon)
 {
     if (lhs->arr + epsilon < rhs->arr)
         return 1;
@@ -36,7 +36,7 @@ RankFnSet::CmpCutArrSizeAreaEdge(Cut *lhs, Cut *rhs, float epsilon)
 }
 
 int
-RankFnSet::CmpCutArrAreaEdge(Cut *lhs, Cut *rhs, float epsilon)
+RankFnSet::cmp_cut_arr_area_edge(Cut *lhs, Cut *rhs, float epsilon)
 {
     if (lhs->arr + epsilon < rhs->arr)
         return 1;
@@ -54,7 +54,7 @@ RankFnSet::CmpCutArrAreaEdge(Cut *lhs, Cut *rhs, float epsilon)
 }
 
 int
-RankFnSet::CmpCutArrEdgeArea(Cut *lhs, Cut *rhs, float epsilon)
+RankFnSet::cmp_cut_arr_edge_area(Cut *lhs, Cut *rhs, float epsilon)
 {
     if (lhs->arr + epsilon < rhs->arr)
         return 1;
@@ -72,7 +72,7 @@ RankFnSet::CmpCutArrEdgeArea(Cut *lhs, Cut *rhs, float epsilon)
 }
 
 int
-RankFnSet::CmpCutAreaEdge(Cut *lhs, Cut *rhs, float epsilon)
+RankFnSet::cmp_cut_area_edge(Cut *lhs, Cut *rhs, float epsilon)
 {
     if (lhs->area + epsilon < rhs->area)
         return 1;
@@ -94,7 +94,7 @@ RankFnSet::CmpCutAreaEdge(Cut *lhs, Cut *rhs, float epsilon)
 }
 
 int
-RankFnSet::CmpCutEdgeArea(Cut *lhs, Cut *rhs, float epsilon)
+RankFnSet::cmp_cut_edge_area(Cut *lhs, Cut *rhs, float epsilon)
 {
     if (lhs->edge + epsilon < rhs->edge)
         return 1;
@@ -116,7 +116,7 @@ RankFnSet::CmpCutEdgeArea(Cut *lhs, Cut *rhs, float epsilon)
 }
 
 bool
-Cut::MergeCut(Cut *lhs, Cut *rhs, int lut_size)
+Cut::merge_cut(Cut *lhs, Cut *rhs, int lut_size)
 {
     int nSize0 = lhs->size;
     int nSize1 = rhs->size;
@@ -186,119 +186,119 @@ FlushCut1:
 }
 
 void
-Cut::ComputeCost(Algo algo, Node *node, Cut *lhs, Cut *rhs)
+Cut::compute_cost(Algo algo, Node *node, Cut *lhs, Cut *rhs)
 {
     if (algo == Algo::Flow)
     {
-        area = Cut::GetAreaCost(this);
-        edge = Cut::GetEdgeCost(this);
+        area = Cut::get_area_cost(this);
+        edge = Cut::get_edge_cost(this);
         for (int i = 0; i != size; ++i)
         {
-            Node *leaf = Node::GetNode(leaves[i]);
-            area += leaf->GetArea() / leaf->GetEstRefNum();
-            edge += leaf->GetEdge() / leaf->GetEstRefNum();
+            Node *leaf = Node::get_node(leaves[i]);
+            area += leaf->get_area() / leaf->get_est_ref_num();
+            edge += leaf->get_edge() / leaf->get_est_ref_num();
         }
     }
     else if (algo == Algo::Exact)
     {
         MffcInfo info0, info1;
-        RefMFFC(info0);
-        RipMFFC(info1);
-        assert(info0.GetArea() == info1.GetArea() && info0.GetEdge() == info1.GetEdge());
-        ratio = info0.GetRatio();
-        area = info0.GetArea();
-        edge = info0.GetEdge();
+        ref_mffc(info0);
+        rip_mffc(info1);
+        assert(info0.get_area() == info1.get_area() && info0.get_edge() == info1.get_edge());
+        ratio = info0.get_ratio();
+        area = info0.get_area();
+        edge = info0.get_edge();
     }
     else
     {
-        area = Cut::GetAreaCost(this);
-        area += (lhs->area - Cut::GetAreaCost(lhs)) / node->GetFanin0()->GetEstRefNum();
-        area += (rhs->area - Cut::GetAreaCost(rhs)) / node->GetFanin1()->GetEstRefNum();
-        edge = Cut::GetEdgeCost(this);
-        edge += (lhs->edge - Cut::GetEdgeCost(lhs)) / node->GetFanin0()->GetEstRefNum();
-        edge += (rhs->edge - Cut::GetEdgeCost(rhs)) / node->GetFanin1()->GetEstRefNum();
+        area = Cut::get_area_cost(this);
+        area += (lhs->area - Cut::get_area_cost(lhs)) / node->get_fanin0()->get_est_ref_num();
+        area += (rhs->area - Cut::get_area_cost(rhs)) / node->get_fanin1()->get_est_ref_num();
+        edge = Cut::get_edge_cost(this);
+        edge += (lhs->edge - Cut::get_edge_cost(lhs)) / node->get_fanin0()->get_est_ref_num();
+        edge += (rhs->edge - Cut::get_edge_cost(rhs)) / node->get_fanin1()->get_est_ref_num();
     }
 
     // compute arrival time
-    arr = ComputeArrTime();
+    arr = compute_arr_time();
 }
 
 Time
-Cut::ComputeArrTime() const
+Cut::compute_arr_time() const
 {
     Time max_arr = 0;
     for (int i = 0; i != size; ++i)
-        max_arr = std::max(max_arr, Node::GetNode(leaves[i])->GetArr());
-    return max_arr + Cut::GetDelayCost(this);
+        max_arr = std::max(max_arr, Node::get_node(leaves[i])->get_arr());
+    return max_arr + Cut::get_delay_cost(this);
 }
 
 Area
-Cut::RefMFFC()
+Cut::ref_mffc()
 {
-    Area area = Cut::GetAreaCost(this);
+    Area area = Cut::get_area_cost(this);
     for (int i = 0; i != size; ++i)
     {
-        Node *node = Node::GetNode(leaves[i]);
-        if (node->GetRefNum()++ > 0 || !node->IsAnd())
+        Node *node = Node::get_node(leaves[i]);
+        if (node->get_ref_num()++ > 0 || !node->is_and())
             continue;
-        area += node->GetBestCut()->RefMFFC();
+        area += node->get_best_cut()->ref_mffc();
     }
     return area;
 }
 
 Edge
-Cut::RipMFFC()
+Cut::rip_mffc()
 {
-    Edge edge = Cut::GetEdgeCost(this);
+    Edge edge = Cut::get_edge_cost(this);
     for (int i = 0; i != size; ++i)
     {
-        Node *node = Node::GetNode(leaves[i]);
-        assert(node->GetRefNum() > 0);
-        if (--node->GetRefNum() > 0 || !node->IsAnd())
+        Node *node = Node::get_node(leaves[i]);
+        assert(node->get_ref_num() > 0);
+        if (--node->get_ref_num() > 0 || !node->is_and())
             continue;
-        edge += node->GetBestCut()->RipMFFC();
+        edge += node->get_best_cut()->rip_mffc();
     }
     return edge;
 }
 
 void
-Cut::RefMFFC(MffcInfo &info)
+Cut::ref_mffc(MffcInfo &info)
 {
-    info.AddNode(this);
+    info.add_node(this);
     for (int i = 0; i != size; ++i)
     {
-        Node *node = Node::GetNode(leaves[i]);
-        if (node->GetRefNum()++ > 0 || !node->IsAnd())
+        Node *node = Node::get_node(leaves[i]);
+        if (node->get_ref_num()++ > 0 || !node->is_and())
             continue;
-        node->GetBestCut()->RefMFFC(info);
+        node->get_best_cut()->ref_mffc(info);
     }
 }
 
 void
-Cut::RipMFFC(MffcInfo &info)
+Cut::rip_mffc(MffcInfo &info)
 {
-    info.AddNode(this);
+    info.add_node(this);
     for (int i = 0; i != size; ++i)
     {
-        Node *node = Node::GetNode(leaves[i]);
-        assert(node->GetRefNum() > 0);
-        if (--node->GetRefNum() > 0 || !node->IsAnd())
+        Node *node = Node::get_node(leaves[i]);
+        assert(node->get_ref_num() > 0);
+        if (--node->get_ref_num() > 0 || !node->is_and())
             continue;
-        node->GetBestCut()->RipMFFC(info);
+        node->get_best_cut()->rip_mffc(info);
     }
 
 }
 
 std::pair<Area, Edge>
-Cut::GetMFFCCostInfo()
+Cut::get_mffc_cost_info()
 {
-    std::pair<Area, Edge> cost{Cut::GetAreaCost(this), Cut::GetEdgeCost(this)};
+    std::pair<Area, Edge> cost{Cut::get_area_cost(this), Cut::get_edge_cost(this)};
     for (int i = 0; i != size; ++i)
     {
-        Node *node = Node::GetNode(leaves[i]);
-        if (node->IsAnd() && node->GetRefNum() == 1)
+        Node *node = Node::get_node(leaves[i]);
+        if (node->is_and() && node->get_ref_num() == 1)
         {
-            auto leaf_cost = node->GetBestCut()->GetMFFCCostInfo();
+            auto leaf_cost = node->get_best_cut()->get_mffc_cost_info();
             cost.first  += leaf_cost.first;
             cost.second += leaf_cost.second;
         }
@@ -307,19 +307,19 @@ Cut::GetMFFCCostInfo()
 }
 
 void
-Cut::MarkCone(Node *node, std::vector<int> &cone)
+Cut::mark_cone(Node *node, std::vector<int> &cone)
 {
-    if (node->GetMark())
+    if (node->get_mark())
         return;
-    assert(node->IsAnd());
-    MarkCone(node->GetFanin0(), cone);
-    MarkCone(node->GetFanin1(), cone);
-    cone.push_back(node->GetId());
-    node->SetMark(1);
+    assert(node->is_and());
+    mark_cone(node->get_fanin0(), cone);
+    mark_cone(node->get_fanin1(), cone);
+    cone.push_back(node->get_id());
+    node->set_mark(1);
 }
 
 void
-Cut::ComputeTruth(Cut *lhs, Cut *rhs, int compl0, int compl1)
+Cut::compute_truth(Cut *lhs, Cut *rhs, int compl0, int compl1)
 {
     auto TtExpand = [](word * pTruth0, int nVars, Cut *sub, Cut *cut) -> void
     {
@@ -348,7 +348,7 @@ Cut::ComputeTruth(Cut *lhs, Cut *rhs, int compl0, int compl1)
 }
 
 void
-Cut::ComputeTruth(Node *root)
+Cut::compute_truth(Node *root)
 {
     std::vector<Node *> cone_nodes;
     cone_nodes.reserve(100);
@@ -357,52 +357,52 @@ Cut::ComputeTruth(Node *root)
 
     for (int i = 0; i != size; ++i)
     {
-        Node *node = Node::GetNode(leaves[i]);
-        assert(node->GetRefNum());
-        assert(node->GetMark() == 0);
-        node->SetMark(1);
-        Abc_TtElemInit2(&node->GetTruth(), i);
+        Node *node = Node::get_node(leaves[i]);
+        assert(node->get_ref_num());
+        assert(node->get_mark() == 0);
+        node->set_mark(1);
+        Abc_TtElemInit2(&node->get_truth(), i);
         cone_nodes.push_back(node);
     }
 
     std::function<void(Node *)> compute_tt_rec = [&compute_tt_rec, &cone_nodes](Node *node) -> void
     {
-        if (node->GetMark())
+        if (node->get_mark())
             return;
-        node->SetMark(1);
-        compute_tt_rec(node->GetFanin0());
-        compute_tt_rec(node->GetFanin1());
-        word tt0 = node->GetFanin0()->GetTruth();
-        word tt1 = node->GetFanin1()->GetTruth();
-        if (node->GetCompl0())
+        node->set_mark(1);
+        compute_tt_rec(node->get_fanin0());
+        compute_tt_rec(node->get_fanin1());
+        word tt0 = node->get_fanin0()->get_truth();
+        word tt1 = node->get_fanin1()->get_truth();
+        if (node->get_compl0())
             tt0 = ~tt0;
-        if (node->GetCompl1())
+        if (node->get_compl1())
             tt1 = ~tt1;
-        node->GetTruth() = tt0 & tt1;
+        node->get_truth() = tt0 & tt1;
         cone_nodes.push_back(node);
     };
 
     compute_tt_rec(root);
 
-    truth = root->GetTruth();
+    truth = root->get_truth();
 
     // clear the node mark and truth table
     for (Node *node : cone_nodes)
     {
-        node->SetMark(0);
-        node->GetTruth() = 0;
+        node->set_mark(0);
+        node->get_truth() = 0;
     }
 }
 
 void
-Cut::Print()
+Cut::print()
 {
     printf("{Arr %d, Area %.1f, Edge %.1f, cut-set {%4d, %4d, %4d, %4d, %4d, %4d}}\n",
         arr, area, edge, leaves[0], leaves[1], leaves[2], leaves[3], leaves[4], leaves[5]);
 }
 
 int 
-CutSet::Get(Cut *&cut_set, uint capacity)
+CutSet::get(Cut *&cut_set, uint capacity)
 {
     // a cut-set to store cuts in temp
     std::vector<Cut *> cuts;
@@ -456,7 +456,7 @@ CutSet::Get(Cut *&cut_set, uint capacity)
 }
 
 bool
-CutSet::Push(Cut *cut)
+CutSet::push(Cut *cut)
 {
     if (_mode == PruneMode::IDLP && cut->area > _min_area + 1.000)
         return false;
@@ -497,7 +497,7 @@ CutSet::Push(Cut *cut)
 }
 
 void
-CutSet::Reset()
+CutSet::reset()
 {
     std::fill(_temp_cuts, _temp_cuts + _temp_used_num, Cut{});
     std::fill(_unified_list.begin(), _unified_list.end(), nullptr);

@@ -75,67 +75,67 @@ Node::Node(Abc_Obj_t *abc_node) : _mark(0), _num_cuts(0)
 }
 
 void
-Node::CutEnum(const FoxMap *mapper)
+Node::cut_enum(const FoxMap *mapper)
 {
-    if (IsPi())
+    if (is_pi())
     {
-        GetTrivialCut()->area = mapper->GetAlgo() == Algo::Praetor ? Cut::GetAreaCost(GetTrivialCut()) : 0;
-        GetTrivialCut()->edge = mapper->GetAlgo() == Algo::Praetor ? Cut::GetEdgeCost(GetTrivialCut()) : 0;
+        get_trivial_cut()->area = mapper->get_algo() == Algo::Praetor ? Cut::get_area_cost(get_trivial_cut()) : 0;
+        get_trivial_cut()->edge = mapper->get_algo() == Algo::Praetor ? Cut::get_edge_cost(get_trivial_cut()) : 0;
         return;
     }
 
     _est_ref = std::max(1u, _num_ref);
 
-    CutSet cut_set(mapper->GetParam());
-    cut_set.Reset();
-    cut_set.SetRankFn(mapper->_cut_rank_enu_fn);
-    cut_set.SetMode(CutSet::PruneMode::UL);
+    CutSet cut_set(mapper->get_param());
+    cut_set.reset();
+    cut_set.set_rank_fn(mapper->_cut_rank_enu_fn);
+    cut_set.set_mode(CutSet::PruneMode::UL);
 
-    Node *fanin0 = GetFanin0();
-    Node *fanin1 = GetFanin1();
+    Node *fanin0 = get_fanin0();
+    Node *fanin1 = get_fanin1();
 
-    const int k = mapper->GetParam()->lut_size;
+    const int k = mapper->get_param()->lut_size;
 
     // rip-up current mapping
-    if (_num_ref && !mapper->_premap && mapper->GetAlgo() == Algo::Exact)
-        _best_cut.RipMFFC();
+    if (_num_ref && !mapper->_premap && mapper->get_algo() == Algo::Exact)
+        _best_cut.rip_mffc();
 
     // check in last best cut
     if (!mapper->_first_pass)
     {
-        _best_cut.ComputeCost(mapper->GetAlgo());
+        _best_cut.compute_cost(mapper->get_algo());
         if (!mapper->_premap)
-            cut_set.Push(&_best_cut);
+            cut_set.push(&_best_cut);
     }
 
     // merge the cuts from fanins
-    for (int i = 0; i != fanin0->GetCutNum(); ++i)
+    for (int i = 0; i != fanin0->get_cut_num(); ++i)
     {
-        Cut *lhs = fanin0->GetCut(i);
-        for (int m = 0; m != fanin1->GetCutNum(); ++m)
+        Cut *lhs = fanin0->get_cut(i);
+        for (int m = 0; m != fanin1->get_cut_num(); ++m)
         {
-            Cut *rhs = fanin1->GetCut(m);
+            Cut *rhs = fanin1->get_cut(m);
             if (lhs->size + rhs->size > k && __builtin_popcount(lhs->sign | rhs->sign) > k)
                 continue;
-            Cut *cut = cut_set.GetCandidate();
+            Cut *cut = cut_set.get_candidate();
             // check cut is k-feasible or not
-            if (!cut->MergeCut(lhs, rhs, k))
+            if (!cut->merge_cut(lhs, rhs, k))
                 continue;
-            cut->ComputeCost(mapper->GetAlgo(), this, lhs, rhs);
+            cut->compute_cost(mapper->get_algo(), this, lhs, rhs);
             if (!mapper->_premap && cut->arr > _required)
                 continue;
             assert(cut->area > 0 && cut->area < kMaxArea);
             assert(cut->edge > 0 && cut->edge < kMaxArea);
-            if (cut_set.Push(cut))
+            if (cut_set.push(cut))
             {
                 cut->sign = lhs->sign | rhs->sign;
-                cut->ComputeTruth(lhs, rhs, _compl0, _compl1);
+                cut->compute_truth(lhs, rhs, _compl0, _compl1);
             }
         }
     }
 
     // pop the cuts
-    _num_cuts = 1 + cut_set.Get(_cut_set, _num_cuts);
+    _num_cuts = 1 + cut_set.get(_cut_set, _num_cuts);
     assert(_num_cuts > 1);
 
     // update the best cut if on non-timing pass or (in timing pass but arrival time is ok)
@@ -143,26 +143,26 @@ Node::CutEnum(const FoxMap *mapper)
         _best_cut = _cut_set[0];
 
     // reference the best cut into mapping
-    if (_num_ref && !mapper->_premap && mapper->GetAlgo() == Algo::Exact)
-        _best_cut.RefMFFC();
+    if (_num_ref && !mapper->_premap && mapper->get_algo() == Algo::Exact)
+        _best_cut.ref_mffc();
 
     // create trivial cut
-    Cut *trival_cut = GetTrivialCut();
-    trival_cut->leaves[0] = GetId();
-    trival_cut->sign = GetSign(GetId());
-    if (mapper->GetAlgo() == Algo::Praetor)
+    Cut *trival_cut = get_trivial_cut();
+    trival_cut->leaves[0] = get_id();
+    trival_cut->sign = GetSign(get_id());
+    if (mapper->get_algo() == Algo::Praetor)
     {
-        trival_cut->area = Cut::GetAreaCost(trival_cut) + GetBestCut()->area;
-        trival_cut->edge = Cut::GetEdgeCost(trival_cut) + GetBestCut()->edge;
+        trival_cut->area = Cut::get_area_cost(trival_cut) + get_best_cut()->area;
+        trival_cut->edge = Cut::get_edge_cost(trival_cut) + get_best_cut()->edge;
     }
 }
 
 void
-Node::Print()
+Node::print()
 {
-    printf("node: %d, cut num: %d\n", GetId(), _num_cuts);
+    printf("node: %d, cut num: %d\n", get_id(), _num_cuts);
     for (int i = 0; i != _num_cuts; ++i)
-        GetCut(i)->Print();
+        get_cut(i)->print();
 }
 
 }
