@@ -15,10 +15,28 @@ using Edge = float   ;
 using Time = uint    ;
 using Sign = uint    ;
 using word = uint64_t;
-using Lit  = uint    ;
 
-#define Lit2Var(lit)    ((lit) >> 1)
-#define Var2Lit(var, c) ((var) + (var) + c)
+class Lit {
+    uint _val;
+public:
+    Lit(uint v, uint c = 0) : _val((v << 1) | (c & 1)) {}
+    Lit()                   : _val(0)                  {}
+
+    ~Lit() = default;
+
+    bool operator==(const Lit &b) const { return _val == b._val; }
+    bool operator!=(const Lit &b) const { return _val != b._val; }
+    bool operator< (const Lit &b) const { return _val <  b._val; }
+    bool operator<=(const Lit &b) const { return _val <= b._val; }
+    bool operator> (const Lit &b) const { return _val >  b._val; }
+    bool operator>=(const Lit &b) const { return _val >= b._val; }
+
+    Lit operator~() const { return Lit(id(), !is_complement()); }
+    Lit operator=(const Lit &b) = default;
+
+    bool is_complement() const { return _val & 1;  }
+    uint id()            const { return _val >> 1; }
+};
 
 template <typename T>
 macro T regular(T var) {
