@@ -32,7 +32,7 @@ public:
     bool operator>=(const Lit &b) const { return _val >= b._val; }
 
     Lit operator~() const { return Lit(id(), !is_complement()); }
-    Lit operator=(const Lit &b) = default;
+    Lit &operator=(const Lit &b) = default;
 
     bool is_complement() const { return _val & 1;  }
     uint id()            const { return _val >> 1; }
@@ -76,10 +76,11 @@ static inline T* allocate(uint size, Args&&... args) {
 }
 
 template <typename T>
-static inline void deallocate(T* elem) noexcept {
-    assert(elem);
-    elem->~T();
-    std::free(elem);
+static inline void deallocate(T* item) noexcept {
+    if (item) {
+        item->~T();
+        std::free(item);
+    }
 }
 
 }

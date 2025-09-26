@@ -1,9 +1,13 @@
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
 #include <limits>
 #include <vector>
 #include <cassert>
+#include <functional>
+#include <deque>
 
 #include "basic.hpp"
 
@@ -27,6 +31,10 @@ public:
         std::memcpy(leaves, begin, size);
     }
 
+    Cut(const Cut &cut) : size(cut.size), sign(cut.sign) {
+        std::memcpy(leaves, cut.leaves, sizeof(uint) * size);
+    }
+
     Cut(uint id) : size(1), sign(SIGNATURE(id, BIT_NUM_SIGN)) { leaves[0] = id; }
 
     Cut *next() const {
@@ -41,6 +49,10 @@ public:
                 reinterpret_cast<uintptr_t>(this) + sizeof(Cut) + sizeof(uint) * size
             );
         }
+    }
+
+    Cut *clone() const {
+        return allocate<Cut>(size, *this);
     }
 };
 
@@ -122,11 +134,12 @@ class enumerate_cut;
 
 class mapping_config {
 public:
-    uint cut_size;
-    uint lut_size;
-    uint prune_mode;
-    uint opt_target;
-    uint max_cut_num;
+    uint  cut_size;
+    uint  lut_size;
+    uint  prune_mode;
+    uint  opt_target;
+    uint  max_cut_num;
+    float epsilon;
 };
 
 class mapper : public graph_t {
@@ -145,7 +158,7 @@ public:
     : graph_t(max_node_num, num_pi, num_po)
     {
         _int_ref .resize(max_node_num, 0);
-        _num_ref .resize(max_node_num, 0);
+        _est_ref .resize(max_node_num, 0);
         _area    .resize(max_node_num, 0);
         _edge    .resize(max_node_num, 0);
         _arrival .resize(max_node_num, 0);
@@ -170,6 +183,8 @@ public:
     Edge edge(uint n)    const { return _edge[n];    }
     Time arrival(uint n) const { return _arrival[n]; }
 
+    Cut *&best_cut(uint n) { return _best_cut[n]; }
+
     float num_est_ref(uint n) const { return _est_ref[n]; }
 
 };
@@ -177,25 +192,47 @@ public:
 
 struct CutCost {
     enum class cmp_res {
-        LWIN,
-        RWIN,
-        SAME
+        LWIN = 0,
+        RWIN = 1,
+        SAME = 2
     };
+    using rank_fn = std::function<cmp_res(const CutCost &, const CutCost &, float)>;
 
     Area area {0};
     Edge edge {0};
     Time arr  {123456};
+    uint size {0};
     uint idx  {0};
 
-    CutCost(uint idx) : idx(idx) {}
+    static rank_fn GetRankFn(int mode) {
+        auto rank_fn_area_edge = [](const CutCost &lhs, const CutCost &rhs, float epsilon) -> auto {
+            if (lhs.area + epsilon < rhs.area)
+                return cmp_res::LWIN;
+            if (lhs.area - epsilon > rhs.area)
+                return cmp_res::RWIN;
+            if (lhs.edge + epsilon < rhs.edge)
+                return cmp_res::LWIN;
+            if (lhs.edge - epsilon > rhs.edge)
+                return cmp_res::RWIN;
+            if (lhs.size < rhs.size)
+                return cmp_res::LWIN;
+            if (lhs.size > rhs.size)
+                return cmp_res::RWIN;
+            return cmp_res::SAME;
+        };
+        if (mode == 0) // area
+            return rank_fn_area_edge;
+        return rank_fn_area_edge;
+    }
 
-    using rank_fn = std::function<cmp_res(const CutCost &, const CutCost &)>;
 };
 
 
 
-CutCost compute_cost(uint idx, mapper &mgr, Cut *cut, const mapping_config &cfg) {
-    CutCost cost(idx);
+static CutCost compute_cost(uint idx, mapper &mgr, Cut *cut, const mapping_config &cfg) {
+    CutCost cost;
+    cost.size = cut->size;
+    cost.idx  = idx;
     // area-flow/edge-flow
     for (int i = 0; i != cut->size; ++i) {
         uint leaf = cut->leaves[i];
@@ -205,51 +242,51 @@ CutCost compute_cost(uint idx, mapper &mgr, Cut *cut, const mapping_config &cfg)
     return cost;
 }
 
-template <typename T>
-class CutList {
-    std::deque<CutCost>  _cost;
-    CutCost::rank_fn     _fn;
-    uint                 _cap;
-public:
-    CutList(uint max_num) : _cap(max_num) {
-        _cost.reserve(max_num);
-    }
+// template <typename T>
+// class CutList {
+//     std::deque<CutCost>  _cost;
+//     CutCost::rank_fn     _fn;
+//     uint                 _cap;
+// public:
+//     CutList(uint max_num) : _cap(max_num) {
+//         // _cost.reserve(max_num);
+//     }
 
-    void add(CutCost cost) {
-        if (_cost.size() == _cap) {
-            // compare with the last one first
-            if (_fn(cost, _cost.back()) != CutCost::cmp_res::LWIN) {
-                // same or worse than the last one, discard at once
-                // deallocate(cut);
-                return;
-            } else {
-                // cut could be saved
-                // check if cut can be the best one
-                auto res = _fn(cost, _cost.front());
-                if (res == CutCost::cmp_res::SAME) [[unlikely]] {
-                    return;
-                } else
-                if (res == CutCost::cmp_res::LWIN) { // better than the current best one
-                    _cost.push_front(cost);
-                    _cost.pop_back();
-                    return;
-                }
-                // cost is better than last one, worse than best one 
+//     void add(CutCost cost) {
+//         if (_cost.size() == _cap) {
+//             // compare with the last one first
+//             if (_fn(cost, _cost.back()) != CutCost::cmp_res::LWIN) {
+//                 // same or worse than the last one, discard at once
+//                 // deallocate(cut);
+//                 return;
+//             } else {
+//                 // cut could be saved
+//                 // check if cut can be the best one
+//                 auto res = _fn(cost, _cost.front());
+//                 if (res == CutCost::cmp_res::SAME) [[unlikely]] {
+//                     return;
+//                 } else
+//                 if (res == CutCost::cmp_res::LWIN) { // better than the current best one
+//                     _cost.push_front(cost);
+//                     _cost.pop_back();
+//                     return;
+//                 }
+//                 // cost is better than last one, worse than best one 
 
 
 
-            }
-        } else {
-            _cost.push_back(cost);
-            if (_cost.size() == _cap) {
-                std::sort(_cost.begin(), _cost.end(), _fn);
-            }
-        }
-        assert(_cost.size() <= _cap);
-    }
+//             }
+//         } else {
+//             _cost.push_back(cost);
+//             if (_cost.size() == _cap) {
+//                 std::sort(_cost.begin(), _cost.end(), _fn);
+//             }
+//         }
+//         assert(_cost.size() <= _cap);
+//     }
 
-    std::vector<Cut *> &get() { return _list; }
-};
+//     // std::vector<Cut *> &get() { return _list; }
+// };
 
 // normal enumerate cut way
 class enumerate_cut {
@@ -263,8 +300,6 @@ public:
         if (!node.is_logic()) [[unlikely]]
             return;
 
-        std::vector<Cut *> &cuts = _mgr.cut_set(id);
-
         Lit f0 = node[0];
         Lit f1 = node[1];
 
@@ -277,8 +312,8 @@ public:
         // Complexity reduced from O(nlogn) to O(n)
         const bool sort = merge_num_upper > cfg.max_cut_num;
 
-        int merge_idx = -1;
-        int num_valid = 0;
+        // int merge_idx = -1;
+        // int num_valid = 0;
 
         static_assert(Cut::R); Cut t0(f0.id()); Cut t1(f1.id());
 
@@ -292,8 +327,8 @@ public:
 
         for (int i0 = -1; i0 != cuts0.size(); ++i0) { Cut *c0 = i0 < 0 ? &t0 : cuts0[i0];
         for (int i1 = -1; i1 != cuts1.size(); ++i1) { Cut *c1 = i1 < 0 ? &t1 : cuts1[i1];
-            ++merge_idx;
-            if (c0->size + c1->size > cfg.cut_size && std::popcount(c0->sign | c1->sign) > cfg.cut_size)
+            // ++merge_idx;
+            if (c0->size + c1->size > cfg.cut_size && __builtin_popcount(c0->sign | c1->sign) > cfg.cut_size)
                 continue;
             std::memset(buffer, 0, sizeof(uint) * (cfg.cut_size * 2));
             uint *end = std::set_union(
@@ -305,15 +340,39 @@ public:
             if (size > cfg.cut_size)
                 continue;
             gen_cuts.push_back(allocate<Cut>(size, buffer, end));
-            CutCost cost = compute_cost(gen_cust.size(), _mgr, cut, cfg, gen_cuts.size());
+            CutCost cost = compute_cost(gen_cuts.size() - 1, _mgr, gen_cuts.back(), cfg);
             gen_costs.push_back(cost);
         }}
 
+        float epsilon = cfg.epsilon;
+        CutCost::rank_fn fn = CutCost::GetRankFn(0);
+        auto fn_wrap = [epsilon, fn](const CutCost &lhs, const CutCost &rhs) -> bool {
+            return fn(lhs, rhs, epsilon) == CutCost::cmp_res::LWIN;
+        };
+
         if (sort) {
-
+            std::sort(gen_costs.begin(), gen_costs.end(), fn_wrap);
         } else {
-
+            auto best_itr = std::min_element(gen_costs.begin(), gen_costs.end(), fn_wrap);
+            assert(best_itr != gen_costs.end());
+            std::iter_swap(gen_costs.begin(), best_itr);
         }
+
+        // mapping cost ranking back to cuts
+        std::vector<Cut *> &cuts = _mgr.cut_set(id);
+        for (int i = 0; i != gen_costs.size() && i != cfg.max_cut_num; ++i) {
+            Cut *&cut = gen_cuts[gen_costs[i].idx];
+            cuts.push_back(cut);
+            cut = nullptr;
+        }
+        for (Cut *cut : gen_cuts) {
+            deallocate(cut);
+        }
+        Cut *&best_cut = _mgr.best_cut(id);
+        best_cut = cuts.front()->clone();
+        // Set the node area/edge/arr info
+        _mgr.area(id) = gen_costs.front().area / _mgr.num_est_ref(id);
+        _mgr.edge(id) = gen_costs.front().edge / _mgr.num_est_ref(id);
     }
 };
 
