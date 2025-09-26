@@ -8,6 +8,8 @@
 \============================================================================*/
 
 #include <algorithm>
+#include <array>
+#include <cstddef>
 #include <iostream>
 #include <istream>
 
