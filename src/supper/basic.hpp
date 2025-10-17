@@ -4,6 +4,7 @@
 #include <type_traits>
 #include <memory>
 #include <cstdlib>
+#include <vector>
 
 #define macro static inline
 
@@ -16,11 +17,14 @@ using Time = uint    ;
 using Sign = uint    ;
 using word = uint64_t;
 
+
+constexpr Time kMaxTime = 123456;
+
 class Lit {
     uint _val;
 public:
-    Lit(uint v, uint c = 0) : _val((v << 1) | (c & 1)) {}
-    Lit()                   : _val(0)                  {}
+    explicit Lit(uint v, uint c = 0) : _val((v << 1) | (c & 1)) {}
+             Lit()                   : _val(0)                  {}
 
     ~Lit() = default;
 
@@ -37,6 +41,31 @@ public:
     bool is_complement() const { return _val & 1;  }
     uint id()            const { return _val >> 1; }
 };
+
+template<typename T>
+class SigMap : public std::vector<T> {
+public:
+    enum class flag_t : uint8_t {
+        RESERVE,
+        ALLOCATE
+    };
+
+    template <typename... Args>
+    SigMap(Args&&... args) : std::vector<T>(std::forward<Args>(args)...) {}
+
+    ~SigMap() = default;
+
+    const T &operator[](Lit lit)           const { return std::vector<T>::operator[](lit.id()); }
+    const T &operator[](std::size_t index) const { return std::vector<T>::operator[](index);    }
+
+    T &operator[](Lit lit)           { return std::vector<T>::operator[](lit.id()); }
+    T &operator[](std::size_t index) { return std::vector<T>::operator[](index);    }
+};
+
+// mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+// Concepts 
+template<typename T>
+concept Indexable = std::integral<T> || std::same_as<T, Lit>;
 
 template <typename T>
 macro T regular(T var) {
@@ -69,14 +98,14 @@ macro T compl_cond(T var, uint cond) {
 // For class with dynamic array
 
 template <typename T, typename... Args>
-static inline T* allocate(uint size, Args&&... args) {
+macro T* allocate(uint size, Args&&... args) {
     constexpr uint preserved_size = T::R;
     const     uint extra_size     = preserved_size >= size ? 0 : (size - preserved_size);
     return new (std::malloc(sizeof(T) + sizeof(typename T::elem_type) * extra_size)) T(std::forward<Args>(args)...);
 }
 
 template <typename T>
-static inline void deallocate(T* item) noexcept {
+macro void deallocate(T* item) noexcept {
     if (item) {
         item->~T();
         std::free(item);
