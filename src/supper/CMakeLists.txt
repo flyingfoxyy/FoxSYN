@@ -1,7 +1,5 @@
 add_library(supper
-    foxmap.cpp
-    cut.cpp
-    node.cpp
+    map.cpp
 )
 
 add_compile_options(-fexceptions)

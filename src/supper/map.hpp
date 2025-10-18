@@ -73,6 +73,8 @@ public:
     static constexpr uint SIGN_MASK    = BIT_NUM_SIGN - 1;
     static constexpr uint R            = 0;
 
+    using elem_type = uint;
+
 // protected:
     uint size : BIT_NUM_SIZE;
     uint sign : BIT_NUM_SIGN;
@@ -80,7 +82,7 @@ public:
 
 // public:
     Cut(uint *begin, uint *end, Sign s) : size(end - begin), sign(s) {
-        std::memcpy(leaves, begin, size);
+        std::memcpy(leaves, begin, sizeof(uint) * size);
     }
 
     Cut(const Cut &cut) : size(cut.size), sign(cut.sign) {
@@ -108,18 +110,9 @@ public:
         }
     }
 
-    Cut *clone() const {
-        return allocate<Cut>(size, *this);
-    }
+    Cut *clone() const { return allocate<Cut>(size, *this); }
 
-    std::string to_str() const {
-        std::string res = "{ ";
-        for (int i = 0; i != size; ++i) {
-            res += std::to_string(leaves[i]) + " ";
-        }
-        res += "}";
-        return res;
-    }
+    std::string to_str() const;
 };
 
 class function_db {
@@ -183,16 +176,10 @@ public:
 
     ~graph_t() = default;
 
-    void add_node(node_type_t type, Lit f0 = Lit{}, Lit f1 = Lit{}) {
-        _nodes.emplace_back(type, f0, f1);
-        if      (type == node_type_t::PI)   _pi.push_back(_nodes.size() - 1);
-        else if (type == node_type_t::PO)   _po.push_back(_nodes.size() - 1);
-    }
-
     uint num_nodes() const { return _nodes.size(); }
     uint num_po()    const { return _po.size();    }
     uint num_pi()    const { return _pi.size();    }
-    uint num_logic() const { return num_nodes() - num_po() - num_pi(); }
+    uint num_logic() const { return num_nodes() - num_po() - num_pi() - 1; }
 
     int begin()  const { return 0;                  }
     int end()    const { return _nodes.size();      }
@@ -203,13 +190,7 @@ public:
     const node_t &pi(uint idx)       const { return _nodes[_pi[idx]]; }
     const node_t &po(uint idx)       const { return _nodes[_po[idx]]; }
 
-    void report(std::ostream &os) {
-        os << "graph stats: ";
-        os << "PI "    << num_pi()    << "\t";
-        os << "PO "    << num_po()    << "\t";
-        os << "LOGIC " << num_logic() << "\t";
-        os << "\n";
-    }
+    void report(std::ostream &os);
 
     abc::Abc_Ntk_t *to_ntk();
 };
@@ -252,7 +233,7 @@ public:
     };
 
     // user controllable
-    target_t     opt_target  {target_t::DELAY};
+    target_t     opt_target  {target_t::AREA};
     uint         map_impl    {(uint)map_impl_t::PRIORITY_CUTS};
     uint         cut_size    {6};
     uint         lut_size    {6};
@@ -279,7 +260,7 @@ class mapper : public graph_t {
     SigMap<Cut *> _best_cut;
 
     SigMap<std::vector<Cut *>> _cuts; // TODO: Using a pointer
-    
+
 public:
     friend class enumerate_cut;
 
@@ -315,25 +296,29 @@ public:
 
     template<Indexable IDX> std::vector<Cut *> &cut_set(IDX n) { return _cuts[n]; }
 
-    template<Indexable IDX> Area  area(IDX n)     const { return _area[n];     }
-    template<Indexable IDX> Area &area(IDX n)           { return _area[n];     }
-    template<Indexable IDX> Edge  edge(IDX n)     const { return _edge[n];     }
-    template<Indexable IDX> Edge &edge(IDX n)           { return _edge[n];     }
-    template<Indexable IDX> Time  arrival(IDX n)  const { return _arrival[n];  }
-    template<Indexable IDX> Time &arrival(IDX n)        { return _arrival[n];  }
-    template<Indexable IDX> Time  required(IDX n) const { return _required[n]; }
-    template<Indexable IDX> Time &required(IDX n)       { return _required[n]; }
-
-    template<Indexable IDX> float  num_est_ref(IDX n) const { return _est_ref[n]; }
-    template<Indexable IDX> float &num_est_ref(IDX n)       { return _est_ref[n]; }
-    template<Indexable IDX> uint   num_ref(IDX n)     const { return _int_ref[n]; }
-    template<Indexable IDX> uint  &num_ref(IDX n)           { return _int_ref[n]; }
+    template<Indexable IDX> Area  &area       (IDX n) { return _area[n];     }
+    template<Indexable IDX> Edge  &edge       (IDX n) { return _edge[n];     }
+    template<Indexable IDX> Time  &arrival    (IDX n) { return _arrival[n];  }
+    template<Indexable IDX> Time  &required   (IDX n) { return _required[n]; }
+    template<Indexable IDX> float &num_est_ref(IDX n) { return _est_ref[n];  }
+    template<Indexable IDX> uint  &num_ref    (IDX n) { return _int_ref[n];  }
 
     template<Indexable IDX> Cut *&best_cut(IDX n) { return _best_cut[n]; }
 
     graph_t *run_lut_mapping(const Config &cfg);
 
     graph_t *create_mapped_graph();
+
+    void free_cuts() {
+        ForEachGraphLogicNode(*this) {
+            for (Cut *cut : _cuts[idx]) {
+                deallocate(cut);
+            }
+            _cuts[idx].clear();
+        }
+    }
+
+    void print_node(uint id);
 };
 
 
@@ -350,6 +335,16 @@ struct CutCost {
     Time arr  {123456};
     uint size {0};
     uint idx  {0};
+
+    std::string operator*() const {
+        std::string str;
+        str += "Area " + std::to_string(area) + ", ";
+        str += "Edge " + std::to_string(edge) + ", ";
+        str += "Arr " + std::to_string(arr) + ", ";
+        str += "Size " + std::to_string(size) + ", ";
+        str += "Index " + std::to_string(idx);
+        return str;
+    }
 
     static rank_fn GetRankFn(int mode) {
         auto rank_fn_area_edge = [](const CutCost &lhs, const CutCost &rhs, float epsilon) -> auto {
@@ -428,11 +423,10 @@ template <CutCostAlgo algo>
 class CutEnumerator {
 public:
     static void run(mapper &mgr, uint id) {
-        const auto &node = mgr[id];
-        if (!node.is_logic()) [[unlikely]]
-            return;
-
         const Config &cfg = mgr.config();
+
+        const auto &node = mgr[id];
+        assert(node.is_logic());
 
         Lit f0 = node[0];
         Lit f1 = node[1];
@@ -449,10 +443,6 @@ public:
         // int merge_idx = -1;
         // int num_valid = 0;
 
-        // static_assert(Cut::R); Cut t0(f0.id()); Cut t1(f1.id());
-        Cut *t0 = allocate<Cut>(1, f0.id());
-        Cut *t1 = allocate<Cut>(1, f1.id());
-
         std::vector<Cut *>   gen_cuts;
         std::vector<CutCost> gen_costs;
     
@@ -461,8 +451,8 @@ public:
 
         uint buffer[Cut::MAX_CUT_SIZE << 1] {0};
 
-        for (int i0 = -1; i0 != cuts0.size(); ++i0) { Cut *c0 = i0 < 0 ? t0 : cuts0[i0];
-        for (int i1 = -1; i1 != cuts1.size(); ++i1) { Cut *c1 = i1 < 0 ? t1 : cuts1[i1];
+        for (int i0 = 0; i0 != cuts0.size(); ++i0) { Cut *c0 = cuts0[i0];
+        for (int i1 = 0; i1 != cuts1.size(); ++i1) { Cut *c1 = cuts1[i1];
             // ++merge_idx;
             if (c0->size + c1->size > cfg.cut_size && __builtin_popcount(c0->sign | c1->sign) > cfg.cut_size)
                 continue;
@@ -476,7 +466,7 @@ public:
             const int size = end - buffer;
             if (size > cfg.cut_size)
                 continue;
-            Cut *cut = allocate<Cut>(size, buffer, end);
+            Cut *cut = allocate<Cut>(size, (uint *)buffer, end, c0->sign | c1->sign);
             gen_cuts.push_back(cut);
             // compute cut cost according to the algo
             CutCost cost;
@@ -489,6 +479,9 @@ public:
                     cost.area += mgr.area(leaf);
                     cost.edge += mgr.edge(leaf);
                 }
+                // TODO: using cost library
+                cost.area += 1.0;
+                cost.edge += cut->size;
             } else if constexpr (algo == CutCostAlgo::EXACT) {
                 assert(0);
             } else if constexpr (algo == CutCostAlgo::PRAETOR) {
@@ -498,9 +491,6 @@ public:
             }
             gen_costs.push_back(cost);
         }} // end merge cuts
-
-        deallocate(t0);
-        deallocate(t1);
 
         float epsilon = cfg.epsilon;
         CutCost::rank_fn fn = CutCost::GetRankFn(0);
@@ -528,8 +518,16 @@ public:
         }
         mgr.best_cut(id) = cuts.front()->clone();
         // Set the node area/edge/arr info
-        mgr.area(id) = gen_costs.front().area / mgr.num_est_ref(id);
-        mgr.edge(id) = gen_costs.front().edge / mgr.num_est_ref(id);
+        const float ratio = 1.0 / std::max(1.0f, float(mgr.num_est_ref(id)));
+        mgr.area(id) = gen_costs.front().area * ratio;
+        mgr.edge(id) = gen_costs.front().edge * ratio;
+
+        // create trivial cut
+        Cut *triv_cut = allocate<Cut>(1, id);
+        if constexpr (algo == CutCostAlgo::PRAETOR) {
+
+        }
+        cuts.push_back(triv_cut);
     }
 };
 
@@ -548,7 +546,7 @@ public:
     ForwardFlow(mapper &mgr) : Forward(mgr) {}
 
     virtual void impl() {
-        ForEachGraphNode(_mgr) {
+        ForEachGraphLogicNode(_mgr) {
             CutEnumerator<CutCostAlgo::FLOW>::run(_mgr, idx);
         }
     }
@@ -559,7 +557,7 @@ public:
     ForwardExact(mapper &mgr) : Forward(mgr) {}
 
     virtual void impl() {
-        ForEachGraphNode(_mgr) {
+        ForEachGraphLogicNode(_mgr) {
             CutEnumerator<CutCostAlgo::EXACT>::run(_mgr, idx);
         }
     }
@@ -590,8 +588,7 @@ protected:
             Cut *cut = _mgr.best_cut(idx);
             assert(cut);
             for (int i = 0; i != cut->size; ++i) {
-                uint leaf_id = cut->leaves[i];
-                ++_mgr.num_est_ref(leaf_id);
+                ++_mgr.num_est_ref(cut->leaves[i]);
             }
             _num_lut  += 1;
             _num_edge += cut->size;
@@ -615,6 +612,9 @@ public:
         if (_mgr.config().delay_mode()) {
             propagate_required();
         }
+
+        // Free cuts
+        _mgr.free_cuts();
     }
 
     void report(std::ostream &os) {
@@ -647,7 +647,6 @@ public:
         _backword->impl();
 
         if (mgr.config().verbose) {
-            mgr.report(std::cout);
             _backword->report(std::cout);
         }
     }

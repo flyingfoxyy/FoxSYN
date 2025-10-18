@@ -4,6 +4,9 @@ add_library(fox
     node.cpp
 )
 
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 add_compile_options(-fexceptions)
 
 target_link_libraries(fox PRIVATE libabc)

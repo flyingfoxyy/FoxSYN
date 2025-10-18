@@ -6,9 +6,30 @@
 #include "basic.hpp"
 #include "map.hpp"
 
-using namespace abc;
+// using namespace abc;
 
 namespace fox::supper {
+std::string
+Cut::to_str() const
+{
+    std::string res = "{ ";
+    for (int i = 0; i != size; ++i) {
+        res += std::to_string(leaves[i]) + " ";
+    }
+    res += "}";
+    return res;
+}
+
+void
+graph_t::report(std::ostream &os)
+{
+    os << "graph stats: ";
+    os << "PI "    << num_pi()    << "\t";
+    os << "PO "    << num_po()    << "\t";
+    os << "LOGIC " << num_logic() << "\t";
+    os << "\n";
+}
+
 Abc_Ntk_t *
 graph_t::to_ntk()
 {
@@ -19,11 +40,26 @@ graph_t::to_ntk()
     return pNtk;
 }
 
+void
+mapper::print_node(uint id)
+{
+    std::cout << "node id : " << id << "\n";
+    std::cout << " type " << (uint)_nodes[id].type() << "\n";
+    std::cout << " size " << _nodes[id].size() << "\n";
+    for (int i = 0; i != _nodes[id].size(); ++i) {
+        std::cout << "  fanin " << i << " : " << _nodes[id][i].val() << "\n";
+    }
+    std::cout << " cuts\n";
+    for (const auto &cut : _cuts[id]) {
+        std::cout << "  cut " << cut->to_str() << "\n";
+    }
+}
+
 mapper *
 mapper::create_from_aig(void *ntk)
 {
     Abc_Ntk_t *pNtk = static_cast<Abc_Ntk_t *>(ntk);
-    if (pNtk->ntkFunc != abc::ABC_FUNC_AIG || pNtk->ntkType != abc::ABC_NTK_STRASH) {
+    if (pNtk->ntkFunc != ABC_FUNC_AIG || pNtk->ntkType != ABC_NTK_STRASH) {
         std::cout << "unsupported ntk type\n";
         return nullptr;
     }
@@ -33,26 +69,28 @@ mapper::create_from_aig(void *ntk)
     for (int n = 0; n != pNtk->vObjs->nSize; ++n) {
         Abc_Obj_t *pObj = Abc_NtkObj(pNtk, n);
         if (!pObj) [[unlikely]] {
-            mgr->add_node(graph_t::node_type_t::NONE);
+            mgr->_nodes.emplace_back(graph_t::node_type_t::NONE);
             continue;
         }
         switch (pObj->Type) {
             case ABC_OBJ_CONST1:
-                mgr->add_node(graph_t::node_type_t::ONE);
+                mgr->_nodes.emplace_back(graph_t::node_type_t::ONE);
                 break;
             case ABC_OBJ_PI:
-                mgr->add_node(graph_t::node_type_t::PI);
+                mgr->_nodes.emplace_back(graph_t::node_type_t::PI);
+                mgr->_pi.push_back(mgr->_nodes.size() - 1);
                 break;
             case ABC_OBJ_PO:
-                mgr->add_node(graph_t::node_type_t::PO, Lit(Abc_ObjFaninId0(pObj), pObj->fCompl0));
+                mgr->_nodes.emplace_back(graph_t::node_type_t::PO, Lit(Abc_ObjFaninId0(pObj), pObj->fCompl0));
+                mgr->_po.push_back(mgr->_nodes.size() - 1);
                 break;
             case ABC_OBJ_NODE: [[likely]]
-                mgr->add_node(graph_t::node_type_t::LOGIC,
+                mgr->_nodes.emplace_back(graph_t::node_type_t::LOGIC,
                     Lit(Abc_ObjFaninId0(pObj), pObj->fCompl0), Lit(Abc_ObjFaninId1(pObj), pObj->fCompl1));
                 break;
             default:
                 assert(0 && "unknown abc object type");
-                mgr->add_node(graph_t::node_type_t::NONE);
+                mgr->_nodes.emplace_back(graph_t::node_type_t::NONE);
                 break;
         }
     }
@@ -69,11 +107,19 @@ mapper::initialize()
     for (int i = 0; i != num_nodes(); ++i) {
         const node_t &n = _nodes[i];
         for (int k = 0; k != n.size(); ++k)
-            ++_int_ref[n[k].id()];
+            ++_int_ref[n[k]];
     }
 
     for (int i = 0; i != _est_ref.size(); ++i)
         _est_ref[i] = _int_ref[i];
+}
+
+graph_t *
+mapper::create_mapped_graph()
+{
+    graph_t *mapped = nullptr;
+
+    return mapped;
 }
 
 graph_t *
@@ -107,9 +153,13 @@ Abc_Ntk_t *PerformSupperMap(Abc_Ntk_t *pNtk, const Config &cfg)
 {
 auto t0 = std::clock();
     mapper *mgr = mapper::create_from_aig(static_cast<void *>(pNtk));
-auto t1 = std::clock();
     if (!mgr)
         return nullptr;
+    if (cfg.verbose) {
+        std::cout << "created mapping graph with " << mgr->num_nodes() << " nodes. (PI = "
+                  << mgr->num_pi() << ", PO = " << mgr->num_po() << ", LOGIC = " << mgr->num_logic() << ")\n";
+    }
+auto t1 = std::clock();
     graph_t *mapped_graph = mgr->run_lut_mapping(cfg);
 auto t2 = std::clock();
     Abc_Ntk_t *pNtkMapped = mapped_graph->to_ntk();
