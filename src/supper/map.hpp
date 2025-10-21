@@ -1,50 +1,10 @@
-// #pragma once
+#pragma once
 
-// #include <sys/types.h>
-// #include <vector>
-// #include <cstdint>
-// #include <cassert>
-
-// namespace praetor {
-
-// // template <typename T>
-// // class Cut {
-// //     uint size;
-// //     uint sign;
-// //     uint leaves[0];
-// // };
-
-// template <typename N>
-// concept Ntk = requires(N ntk, uint id, uint idx) {
-//     // 要求有类型别名 node_t
-//     typename N::node_t;
-
-//     // 要求有 num_nodes()，返回值可转换为 size_t
-//     { ntk.num_nodes() } -> std::convertible_to<uint>;
-//     { ntk.num_pi() }    -> std::convertible_to<uint>;
-//     { ntk.num_po() }    -> std::convertible_to<uint>;
-
-//     { ntk.get_node(id) } -> std::convertible_to<typename N::node_t>;
-//     { ntk.is_pi(id) }    -> std::convertible_to<bool>;
-//     { ntk.is_po(id) }    -> std::convertible_to<bool>;
-//     { ntk.is_logic(id) } -> std::convertible_to<bool>;
-//     { ntk.null(id) }     -> std::convertible_to<bool>;
-
-//     { ntk.fanin0(id, idx) }  -> std::convertible_to<uint>;
-//     { ntk.fanin1(id, idx) }  -> std::convertible_to<uint>;
-//     { ntk.fanin0_inv(id) }   -> std::convertible_to<bool>;
-
-// };
-
-// template<typename Ntk>
-// class Praetor : public Ntk {
-// };
-
-// }
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <ctime>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -54,6 +14,7 @@
 #include <cassert>
 #include <functional>
 #include <deque>
+#include <chrono>
 
 #include "basic.hpp"
 
@@ -91,10 +52,14 @@ public:
 
     Cut(uint id) : size(1), sign(SIGNATURE(id, BIT_NUM_SIGN)) { leaves[0] = id; }
 
-    // uint size() const { return _size; }
-    // uint sign() const { return _sign; }
+    Cut &operator=(const Cut &cut) {
+        std::memcpy(this, &cut, sizeof(uint) * (cut.size + sizeof(Cut)));
+        return *this;
+    }
 
-    // uint operator[](uint i) const { assert(i < _size); return leaves[i]; }
+    std::string operator*() const {
+        return to_str();
+    }
 
     Cut *next() const {
         if constexpr (R != 0) {
@@ -114,6 +79,8 @@ public:
 
     std::string to_str() const;
 };
+
+#define ForEachCutLeaf(C) for (uint leaf = 0, uint i = 0; i != (C)->size && (leaf = (C)->leaves[i]); ++i)
 
 class function_db {
     std::vector<word> _truth_tables;
@@ -222,7 +189,6 @@ public:
         AREA,
         DELAY,
         EDGE
-        // EDGEArea
     };
 
     enum class map_impl_t : uint32_t {
@@ -248,9 +214,52 @@ public:
     // bool edge_mode()  const { return opt_target == target_t::EDGE;  }
 };
 
+struct CutCost {
+    enum class cmp_res {
+        LWIN = 0,
+        RWIN = 1,
+        SAME = 2
+    };
+    using rank_fn = std::function<cmp_res(const CutCost &, const CutCost &, float)>;
+
+    Area area {0};
+    Edge edge {0};
+    Time arr  {kMaxTime};
+    uint size {0};
+    uint idx  {0};
+
+    CutCost() = default;
+    CutCost(Area a, Edge e, Time t = kMaxTime) : area(a), edge(e), arr(t), size(0), idx(0) {}
+
+    std::string operator*() const {
+        std::string str;
+        str += "Area " + std::to_string(area) + ", ";
+        str += "Edge " + std::to_string(edge) + ", ";
+        str += "Arr " + std::to_string(arr) + ", ";
+        str += "Size " + std::to_string(size) + ", ";
+        str += "Index " + std::to_string(idx);
+        return str;
+    }
+
+    static rank_fn GetRankFn(int mode) {
+        auto rank_fn_area_edge = [](const CutCost &lhs, const CutCost &rhs, float epsilon) -> auto {
+            if (lhs.area + epsilon < rhs.area)  return cmp_res::LWIN;
+            if (lhs.area - epsilon > rhs.area)  return cmp_res::RWIN;
+            if (lhs.edge + epsilon < rhs.edge)  return cmp_res::LWIN;
+            if (lhs.edge - epsilon > rhs.edge)  return cmp_res::RWIN;
+            if (lhs.size < rhs.size)    return cmp_res::LWIN;
+            if (lhs.size > rhs.size)    return cmp_res::RWIN;
+            return cmp_res::SAME;
+        };
+        if (mode == 0) // area
+            return rank_fn_area_edge;
+        return rank_fn_area_edge;
+    }
+};
+
+
 class mapper : public graph_t {
     Config        _cfg{};
-
     SigMap<uint>  _int_ref;
     SigMap<float> _est_ref;
     SigMap<Area>  _area;
@@ -260,6 +269,12 @@ class mapper : public graph_t {
     SigMap<Cut *> _best_cut;
 
     SigMap<std::vector<Cut *>> _cuts; // TODO: Using a pointer
+
+    CutCost::rank_fn _rank_fn;
+
+    uint _num_area {0};
+    uint _num_edge {0};
+    uint _num_delay{0};
 
 public:
     friend class enumerate_cut;
@@ -305,9 +320,20 @@ public:
 
     template<Indexable IDX> Cut *&best_cut(IDX n) { return _best_cut[n]; }
 
+    uint &num_area()  { return _num_area;  }
+    uint &num_edge()  { return _num_edge;  }
+    uint &num_delay() { return _num_delay; }
+
+    CutCost::cmp_res compare(const CutCost &lhs, const CutCost &rhs) {
+        return _rank_fn(lhs, rhs, _cfg.epsilon);
+    }
+
     graph_t *run_lut_mapping(const Config &cfg);
 
     graph_t *create_mapped_graph();
+
+    Area ref_mffc(Cut *cut);
+    Edge rip_mffc(Cut *cut);
 
     void free_cuts() {
         ForEachGraphLogicNode(*this) {
@@ -320,96 +346,6 @@ public:
 
     void print_node(uint id);
 };
-
-
-struct CutCost {
-    enum class cmp_res {
-        LWIN = 0,
-        RWIN = 1,
-        SAME = 2
-    };
-    using rank_fn = std::function<cmp_res(const CutCost &, const CutCost &, float)>;
-
-    Area area {0};
-    Edge edge {0};
-    Time arr  {123456};
-    uint size {0};
-    uint idx  {0};
-
-    std::string operator*() const {
-        std::string str;
-        str += "Area " + std::to_string(area) + ", ";
-        str += "Edge " + std::to_string(edge) + ", ";
-        str += "Arr " + std::to_string(arr) + ", ";
-        str += "Size " + std::to_string(size) + ", ";
-        str += "Index " + std::to_string(idx);
-        return str;
-    }
-
-    static rank_fn GetRankFn(int mode) {
-        auto rank_fn_area_edge = [](const CutCost &lhs, const CutCost &rhs, float epsilon) -> auto {
-            if (lhs.area + epsilon < rhs.area)  return cmp_res::LWIN;
-            if (lhs.area - epsilon > rhs.area)  return cmp_res::RWIN;
-            if (lhs.edge + epsilon < rhs.edge)  return cmp_res::LWIN;
-            if (lhs.edge - epsilon > rhs.edge)  return cmp_res::RWIN;
-            if (lhs.size < rhs.size)    return cmp_res::LWIN;
-            if (lhs.size > rhs.size)    return cmp_res::RWIN;
-            return cmp_res::SAME;
-        };
-        if (mode == 0) // area
-            return rank_fn_area_edge;
-        return rank_fn_area_edge;
-    }
-
-};
-
-/*
-template <typename T>
-class CutList {
-    std::deque<CutCost>  _cost;
-    CutCost::rank_fn     _fn;
-    uint                 _cap;
-public:
-    CutList(uint max_num) : _cap(max_num) {
-        // _cost.reserve(max_num);
-    }
-
-    void add(CutCost cost) {
-        if (_cost.size() == _cap) {
-            // compare with the last one first
-            if (_fn(cost, _cost.back()) != CutCost::cmp_res::LWIN) {
-                // same or worse than the last one, discard at once
-                // deallocate(cut);
-                return;
-            } else {
-                // cut could be saved
-                // check if cut can be the best one
-                auto res = _fn(cost, _cost.front());
-                if (res == CutCost::cmp_res::SAME) [[unlikely]] {
-                    return;
-                } else
-                if (res == CutCost::cmp_res::LWIN) { // better than the current best one
-                    _cost.push_front(cost);
-                    _cost.pop_back();
-                    return;
-                }
-                // cost is better than last one, worse than best one 
-
-
-
-            }
-        } else {
-            _cost.push_back(cost);
-            if (_cost.size() == _cap) {
-                std::sort(_cost.begin(), _cost.end(), _fn);
-            }
-        }
-        assert(_cost.size() <= _cap);
-    }
-
-    // std::vector<Cut *> &get() { return _list; }
-};
-*/
 
 enum class CutCostAlgo {
     PRAETOR,
@@ -451,6 +387,8 @@ public:
 
         uint buffer[Cut::MAX_CUT_SIZE << 1] {0};
 
+        Area min_area = 1000000.0;
+
         for (int i0 = 0; i0 != cuts0.size(); ++i0) { Cut *c0 = cuts0[i0];
         for (int i1 = 0; i1 != cuts1.size(); ++i1) { Cut *c1 = cuts1[i1];
             // ++merge_idx;
@@ -490,6 +428,7 @@ public:
                 static_assert(0);
             }
             gen_costs.push_back(cost);
+            min_area = std::min(min_area, cost.area);
         }} // end merge cuts
 
         float epsilon = cfg.epsilon;
@@ -497,6 +436,14 @@ public:
         auto fn_wrap = [epsilon, fn](const CutCost &lhs, const CutCost &rhs) -> bool {
             return fn(lhs, rhs, epsilon) == CutCost::cmp_res::LWIN;
         };
+
+        std::vector<CutCost> new_costs;
+        for (auto cost : gen_costs) {
+            if (cost.area <= min_area + 1.0) {
+                new_costs.push_back(cost);
+            }
+        }
+        std::swap(new_costs, gen_costs);
 
         if (sort) {
             std::sort(gen_costs.begin(), gen_costs.end(), fn_wrap);
@@ -569,11 +516,6 @@ class Backword {
 protected:
     mapper &_mgr;
 
-    uint _num_area;
-    uint _num_lut;
-    uint _num_edge;
-    uint _num_delay;
-
     virtual void reference_best_cuts() {
         ForEachGraphPo(_mgr) {
             const auto &po = _mgr.po(idx);
@@ -582,7 +524,7 @@ protected:
             }
         }
 
-        ForEachGraphLogicNodeRev(_mgr) {
+        ForEachGraphLogicNodeRev(_mgr) { 
             if (_mgr.num_est_ref(idx) == 0)
                 continue;
             Cut *cut = _mgr.best_cut(idx);
@@ -590,15 +532,15 @@ protected:
             for (int i = 0; i != cut->size; ++i) {
                 ++_mgr.num_est_ref(cut->leaves[i]);
             }
-            _num_lut  += 1;
-            _num_edge += cut->size;
+            _mgr.num_area() ++;
+            _mgr.num_edge() += cut->size;
         }
     }
 
     void propagate_required() {}
 
 public:
-    Backword(mapper &mgr) : _mgr(mgr), _num_area(0), _num_lut(0), _num_edge(0), _num_delay(0) {}
+    Backword(mapper &mgr) : _mgr(mgr) {}
     virtual ~Backword() = default;
 
     virtual void impl() {
@@ -616,21 +558,63 @@ public:
         // Free cuts
         _mgr.free_cuts();
     }
-
-    void report(std::ostream &os) {
-        os << "mapping stats: ";
-        os << "LUT "   << _num_lut  << "\t";
-        os << "EDGE "  << _num_edge << "\t";
-        os << "\n";
-    }
 };
 
 class MappingPass {
     std::unique_ptr<Forward>  _forward;
     std::unique_ptr<Backword> _backword;
 
+    void improve_mapping_exactly(mapper &mgr)
+    {
+        auto start = clock();
+
+        ForEachGraphLogicNode(mgr)
+        {
+            Cut *best_cut = mgr.best_cut(idx);
+            if (mgr.num_est_ref(idx))
+                mgr.rip_mffc(best_cut);
+            CutCost best_cost(mgr.ref_mffc(best_cut), mgr.rip_mffc(best_cut));
+            auto cut_set = mgr.cut_set(idx);
+            for (int k = 0; k != cut_set.size() - 1; ++k)
+            {
+                Cut *cut = cut_set[k];
+                CutCost cost(mgr.ref_mffc(cut), mgr.rip_mffc(cut));
+                if (mgr.compare(best_cost, cost) == CutCost::cmp_res::RWIN)
+                {
+                    best_cut = cut;
+                    best_cost = cost;
+                }
+            }
+
+            if (mgr.num_est_ref(idx))
+                mgr.ref_mffc(best_cut);
+
+            if (best_cut != mgr.best_cut(idx)) {
+                *mgr.best_cut(idx) = *best_cut;
+            }
+        }
+
+        mgr.num_area() = 0;
+        mgr.num_edge() = 0;
+        ForEachGraphLogicNode(mgr) {
+            if (mgr.num_est_ref(idx)) {
+                mgr.num_area() ++;
+                mgr.num_edge() += mgr.best_cut(idx)->size;
+            }
+        }
+
+        auto   stop = std::clock();
+        double cpu_time = double(stop - start) / CLOCKS_PER_SEC;
+
+        std::cout << "-- LUT " << mgr.num_area() << "\t" << "Edge " << mgr.num_edge() << "\t";
+        
+    }
+
 public:
-    MappingPass(CutCostAlgo algo, mapper &mgr) {
+    MappingPass(CutCostAlgo algo, mapper &mgr, int pass) {
+        auto cpu_start  = std::clock();
+        auto wall_start = std::chrono::high_resolution_clock::now();
+
         if (algo == CutCostAlgo::FLOW)
             _forward = std::make_unique<ForwardFlow> (mgr);
         else if (algo == CutCostAlgo::EXACT)
@@ -643,11 +627,26 @@ public:
             // update the estimated reference number
             // do nothing, using previous pass's reference count for next cost compute
         }
+
         _forward ->impl();
         _backword->impl();
 
         if (mgr.config().verbose) {
-            _backword->report(std::cout);
+            std::cout << "P" << pass << ": " << "LUT " << mgr.num_area() << "\t" << "Edge " << mgr.num_edge() << "\t";
+        }
+
+        improve_mapping_exactly(mgr);
+
+        auto cpu_end  = std::clock();
+        auto wall_end = std::chrono::high_resolution_clock::now();
+
+        if (mgr.config().verbose) {
+            double cpu_time  = double(cpu_end  - cpu_start ) / CLOCKS_PER_SEC;
+            double wall_time = std::chrono::duration<double>(wall_end - wall_start).count();
+            if (cpu_time > 1.0)
+                std::cout << " cpu time : " << cpu_time << " s, " << "wall time : " << wall_time << " s.\n";
+            else
+                std::cout << " cpu time : " << cpu_time * 1000.0 << " ms, " << "wall time : " << wall_time * 1000.0 << " ms.\n";
         }
     }
 

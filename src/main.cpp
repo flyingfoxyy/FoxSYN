@@ -193,7 +193,7 @@ int Suppermap_Command(Abc_Frame_t *pAbc, int argc, char **argv)
         return 1;
     }
 
-    Abc_FrameReplaceCurrentNetwork( pAbc, pMapped );
+    // Abc_FrameReplaceCurrentNetwork( pAbc, pMapped );
 
     return 0;
 

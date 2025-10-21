@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <format>
 #include <type_traits>
 #include <memory>
 #include <cstdlib>
@@ -111,6 +112,15 @@ macro void deallocate(T* item) noexcept {
         item->~T();
         std::free(item);
     }
+}
+
+static std::string format_time(double time, const int width) {
+    std::string str = std::format("{:{}.3f} ", time, width - 4);
+    if (time >= 1.0)
+        str += "s";
+    else
+        str += "ms";
+    return str;
 }
 
 }

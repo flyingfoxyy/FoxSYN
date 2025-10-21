@@ -114,6 +114,35 @@ mapper::initialize()
         _est_ref[i] = _int_ref[i];
 }
 
+Area
+mapper::ref_mffc(Cut *cut)
+{
+    Area area = 1.0;
+    for (int i = 0; i != cut->size; ++i)
+    {
+        const uint id = cut->leaves[i];
+        if (num_est_ref(id)++ > 0 || !_nodes[id].is_logic())
+            continue;
+        area += rip_mffc(best_cut(id));
+    }
+    return area;
+}
+
+Edge
+mapper::rip_mffc(Cut *cut)
+{
+    Edge edge = cut->size;
+    for (int i = 0; i != cut->size; ++i)
+    {
+        const uint id = cut->leaves[i];
+        assert(num_est_ref(id) > 0);
+        if (--num_est_ref(id) > 0 || !_nodes[id].is_logic())
+            continue;
+        edge += rip_mffc(best_cut(id));
+    }
+    return edge;
+}
+
 graph_t *
 mapper::create_mapped_graph()
 {
@@ -138,12 +167,12 @@ mapper::run_lut_mapping(const Config &cfg)
     int num_pass_exact = 1;
 
     for (int i = 0; i != num_pass_flow; ++i) {
-        MappingPass pass(CutCostAlgo::FLOW, *this);
+        MappingPass(CutCostAlgo::FLOW, *this, i);
     }
 
-    for (int i = 0; i != num_pass_exact; ++i) {
-        MappingPass pass(CutCostAlgo::EXACT, *this);
-    }
+    // for (int i = 0; i != num_pass_exact; ++i) {
+    //     MappingPass(CutCostAlgo::EXACT, *this, i);
+    // }
 
     return create_mapped_graph();
 }
