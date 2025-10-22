@@ -101,9 +101,7 @@ macro T compl_cond(T var, uint cond) {
 
 template <typename T, typename... Args>
 macro T* allocate(uint size, Args&&... args) {
-    constexpr uint preserved_size = T::R;
-    const     uint extra_size     = preserved_size >= size ? 0 : (size - preserved_size);
-    return new (std::malloc(sizeof(T) + sizeof(typename T::elem_type) * extra_size)) T(std::forward<Args>(args)...);
+    return new (std::malloc(sizeof(T) + sizeof(typename T::elem_type) * size)) T(std::forward<Args>(args)...);
 }
 
 template <typename T>

@@ -10,7 +10,7 @@
 
 namespace fox::supper {
 std::string
-Cut::to_str() const
+Cut::operator*() const
 {
     std::string res = "{ ";
     for (int i = 0; i != size; ++i) {
@@ -41,6 +41,50 @@ graph_t::to_ntk()
 }
 
 void
+MappingPass::improve_mapping_exactly(mapper &mgr)
+{
+    auto start = clock();
+    ForEachGraphLogicNode(mgr)
+    {
+        Cut *best_cut = mgr.best_cut(idx);
+        if (mgr.num_est_ref(idx))
+            mgr.rip_mffc(best_cut);
+        CutCost best_cost(mgr.rip_mffc(best_cut), mgr.ref_mffc(best_cut));
+        auto cut_set = mgr.cut_set(idx);
+        for (int k = 0; k != cut_set.size() - 1; ++k)
+        {
+            Cut *cut = cut_set[k];
+            CutCost cost(mgr.rip_mffc(cut), mgr.ref_mffc(cut));
+            if (mgr.compare(best_cost, cost) == CutCost::cmp_res::RWIN)
+            {
+                best_cut = cut;
+                best_cost = cost;
+            }
+        }
+
+        if (mgr.num_est_ref(idx))
+            mgr.ref_mffc(best_cut);
+
+        if (best_cut != mgr.best_cut(idx)) {
+            *mgr.best_cut(idx) = *best_cut;
+        }
+    }
+
+    mgr.num_area() = 0;
+    mgr.num_edge() = 0;
+    ForEachGraphLogicNode(mgr) {
+        if (mgr.num_est_ref(idx)) {
+            mgr.num_area() ++;
+            mgr.num_edge() += mgr.best_cut(idx)->size;
+        }
+    }
+
+    auto   stop = std::clock();
+    double cpu_time = double(stop - start) / CLOCKS_PER_SEC;
+    std::cout << "-- LUT " << mgr.num_area() << "\t" << "Edge " << mgr.num_edge() << "\n";
+}
+
+void
 mapper::print_node(uint id)
 {
     std::cout << "node id : " << id << "\n";
@@ -51,7 +95,7 @@ mapper::print_node(uint id)
     }
     std::cout << " cuts\n";
     for (const auto &cut : _cuts[id]) {
-        std::cout << "  cut " << cut->to_str() << "\n";
+        std::cout << "  cut " << **cut << "\n";
     }
 }
 
@@ -123,7 +167,7 @@ mapper::ref_mffc(Cut *cut)
         const uint id = cut->leaves[i];
         if (num_est_ref(id)++ > 0 || !_nodes[id].is_logic())
             continue;
-        area += rip_mffc(best_cut(id));
+        area += ref_mffc(best_cut(id));
     }
     return area;
 }
@@ -155,6 +199,8 @@ graph_t *
 mapper::run_lut_mapping(const Config &cfg)
 {
     _cfg = cfg;
+
+    _rank_fn = CutCost::GetRankFn(0);
 
     // Setup PI cuts
     ForEachGraphPi(*this) {

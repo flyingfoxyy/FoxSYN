@@ -32,16 +32,15 @@ public:
     static constexpr uint BIT_NUM_SIGN = std::numeric_limits<uint>::digits - BIT_NUM_SIZE;
     static constexpr uint MAX_CUT_SIZE = (1 << BIT_NUM_SIZE) - 1;
     static constexpr uint SIGN_MASK    = BIT_NUM_SIGN - 1;
-    static constexpr uint R            = 0;
 
     using elem_type = uint;
 
-// protected:
     uint size : BIT_NUM_SIZE;
     uint sign : BIT_NUM_SIGN;
-    uint leaves[R];
+    uint leaves[0];
 
-// public:
+    std::size_t num_byte() const { return sizeof(Cut) + sizeof(uint) * size; }
+
     Cut(uint *begin, uint *end, Sign s) : size(end - begin), sign(s) {
         std::memcpy(leaves, begin, sizeof(uint) * size);
     }
@@ -53,31 +52,19 @@ public:
     Cut(uint id) : size(1), sign(SIGNATURE(id, BIT_NUM_SIGN)) { leaves[0] = id; }
 
     Cut &operator=(const Cut &cut) {
-        std::memcpy(this, &cut, sizeof(uint) * (cut.size + sizeof(Cut)));
+        if (&cut == this)
+            return *this;
+        std::memcpy(this, &cut, cut.num_byte());
         return *this;
     }
 
-    std::string operator*() const {
-        return to_str();
-    }
+    std::string operator*() const;
 
     Cut *next() const {
-        if constexpr (R != 0) {
-            const int extra_size = R >= size ? 0 : (size - R);
-            assert(extra_size >= 0);
-            return reinterpret_cast<Cut *>(
-                reinterpret_cast<uintptr_t>(this) + sizeof(Cut) + sizeof(uint) * extra_size
-            );
-        } else {
-            return reinterpret_cast<Cut *>(
-                reinterpret_cast<uintptr_t>(this) + sizeof(Cut) + sizeof(uint) * size
-            );
-        }
+        return reinterpret_cast<Cut *>(reinterpret_cast<uintptr_t>(this) + sizeof(Cut) + sizeof(uint) * size);
     }
 
-    Cut *clone() const { return allocate<Cut>(size, *this); }
-
-    std::string to_str() const;
+    Cut *clone(uint S = 0) const { return S ? allocate<Cut>(S, *this) : allocate<Cut>(size, *this); }
 };
 
 #define ForEachCutLeaf(C) for (uint leaf = 0, uint i = 0; i != (C)->size && (leaf = (C)->leaves[i]); ++i)
@@ -229,7 +216,7 @@ struct CutCost {
     uint idx  {0};
 
     CutCost() = default;
-    CutCost(Area a, Edge e, Time t = kMaxTime) : area(a), edge(e), arr(t), size(0), idx(0) {}
+    CutCost(Edge e, Area a, Time t = kMaxTime) : area(a), edge(e), arr(t), size(0), idx(0) {}
 
     std::string operator*() const {
         std::string str;
@@ -463,7 +450,7 @@ public:
         for (Cut *cut : gen_cuts) {
             deallocate(cut);
         }
-        mgr.best_cut(id) = cuts.front()->clone();
+        mgr.best_cut(id) = cuts.front()->clone(cfg.cut_size);
         // Set the node area/edge/arr info
         const float ratio = 1.0 / std::max(1.0f, float(mgr.num_est_ref(id)));
         mgr.area(id) = gen_costs.front().area * ratio;
@@ -554,9 +541,6 @@ public:
         if (_mgr.config().delay_mode()) {
             propagate_required();
         }
-
-        // Free cuts
-        _mgr.free_cuts();
     }
 };
 
@@ -564,51 +548,7 @@ class MappingPass {
     std::unique_ptr<Forward>  _forward;
     std::unique_ptr<Backword> _backword;
 
-    void improve_mapping_exactly(mapper &mgr)
-    {
-        auto start = clock();
-
-        ForEachGraphLogicNode(mgr)
-        {
-            Cut *best_cut = mgr.best_cut(idx);
-            if (mgr.num_est_ref(idx))
-                mgr.rip_mffc(best_cut);
-            CutCost best_cost(mgr.ref_mffc(best_cut), mgr.rip_mffc(best_cut));
-            auto cut_set = mgr.cut_set(idx);
-            for (int k = 0; k != cut_set.size() - 1; ++k)
-            {
-                Cut *cut = cut_set[k];
-                CutCost cost(mgr.ref_mffc(cut), mgr.rip_mffc(cut));
-                if (mgr.compare(best_cost, cost) == CutCost::cmp_res::RWIN)
-                {
-                    best_cut = cut;
-                    best_cost = cost;
-                }
-            }
-
-            if (mgr.num_est_ref(idx))
-                mgr.ref_mffc(best_cut);
-
-            if (best_cut != mgr.best_cut(idx)) {
-                *mgr.best_cut(idx) = *best_cut;
-            }
-        }
-
-        mgr.num_area() = 0;
-        mgr.num_edge() = 0;
-        ForEachGraphLogicNode(mgr) {
-            if (mgr.num_est_ref(idx)) {
-                mgr.num_area() ++;
-                mgr.num_edge() += mgr.best_cut(idx)->size;
-            }
-        }
-
-        auto   stop = std::clock();
-        double cpu_time = double(stop - start) / CLOCKS_PER_SEC;
-
-        std::cout << "-- LUT " << mgr.num_area() << "\t" << "Edge " << mgr.num_edge() << "\t";
-        
-    }
+    void improve_mapping_exactly(mapper &mgr);
 
 public:
     MappingPass(CutCostAlgo algo, mapper &mgr, int pass) {
@@ -632,10 +572,8 @@ public:
         _backword->impl();
 
         if (mgr.config().verbose) {
-            std::cout << "P" << pass << ": " << "LUT " << mgr.num_area() << "\t" << "Edge " << mgr.num_edge() << "\t";
+            std::cout << "P" << pass << " LUT " << mgr.num_area() << "\t" << "Edge " << mgr.num_edge() << "\t";
         }
-
-        improve_mapping_exactly(mgr);
 
         auto cpu_end  = std::clock();
         auto wall_end = std::chrono::high_resolution_clock::now();
@@ -648,6 +586,10 @@ public:
             else
                 std::cout << " cpu time : " << cpu_time * 1000.0 << " ms, " << "wall time : " << wall_time * 1000.0 << " ms.\n";
         }
+
+        improve_mapping_exactly(mgr);
+
+        mgr.free_cuts();
     }
 
     ~MappingPass() = default;
