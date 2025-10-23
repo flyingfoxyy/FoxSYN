@@ -1,23 +1,40 @@
+#include <limits>
 #include <vector>
 #include <ctime>
+#include <print>
+#include <map>
 
 #include "base/abc/abc.h"
 
 #include "basic.hpp"
 #include "map.hpp"
 
-// using namespace abc;
+using namespace abc;
 
 namespace fox::supper {
 std::string
 Cut::operator*() const
 {
-    std::string res = "{ ";
+    std::string res; res.reserve(20);
+    res = "{ ";
     for (int i = 0; i != size; ++i) {
         res += std::to_string(leaves[i]) + " ";
     }
     res += "}";
     return res;
+}
+
+bool
+graph_t::is_topologically_sorted() const
+{
+    // For a logic node, all of its fanins should be stored before it.
+    ForEachGraphLogicNode(*this) {
+        const auto &node = _nodes[idx];
+        for (int i = 0; i != node.size(); ++i)
+            if (node[i].id() > idx)
+                return false;
+    }
+    return true;
 }
 
 void
@@ -30,14 +47,14 @@ graph_t::report(std::ostream &os)
     os << "\n";
 }
 
-Abc_Ntk_t *
-graph_t::to_ntk()
+void *
+graph_t::to_abc_ntk()
 {
     Abc_Ntk_t *pNtk = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
     if (!pNtk)
         return nullptr;
 
-    return pNtk;
+    return static_cast<void *>(pNtk);
 }
 
 void
@@ -97,6 +114,7 @@ mapper::print_node(uint id)
     for (const auto &cut : _cuts[id]) {
         std::cout << "  cut " << **cut << "\n";
     }
+    std::cout << " best cut " << **_best_cut[id] << "\n";
 }
 
 mapper *
@@ -158,6 +176,58 @@ mapper::initialize()
         _est_ref[i] = _int_ref[i];
 }
 
+word
+mapper::compute_truth(Cut *cut, uint root) const
+{
+    static constexpr word initTable[6] = {
+        0xAAAAAAAAAAAAAAAA,
+        0xCCCCCCCCCCCCCCCC,
+        0xF0F0F0F0F0F0F0F0,
+        0xFF00FF00FF00FF00,
+        0xFFFF0000FFFF0000,
+        0xFFFFFFFF00000000
+    };
+
+    if (cut->size == 2) {
+        word t0 = initTable[0];
+        word t1 = initTable[1];
+        if (_nodes[root][0].sign())
+            t0 = ~t0;
+        if (_nodes[root][1].sign())
+            t1 = ~t1;
+        return t0 & t1;
+    }
+
+    uint min_id = std::numeric_limits<uint>::max();
+    ForEachCutLeaf(cut) {
+        min_id = std::min(min_id, leaf);
+    }
+    std::vector<word> cache(root - min_id + 1, 0);
+    ForEachCutLeaf(cut) {
+        cache[leaf - min_id] = initTable[i];
+    }
+
+    std::function<void(uint)> fn = [&](uint n) {
+        if (cache[n - min_id])
+            return;
+        const auto &node = _nodes[n];
+        assert(node.size() == 2);
+        fn(node[0].id());
+        fn(node[1].id());
+        word t0 = cache[node[0].id() - min_id];
+        word t1 = cache[node[1].id() - min_id];
+        if (node[0].sign())
+            t0 = ~t0;
+        if (node[1].sign())
+            t1 = ~t1;
+        cache[n - min_id] = t0 & t1;
+    };
+
+    fn(root);
+
+    return cache[root - min_id];
+}
+
 Area
 mapper::ref_mffc(Cut *cut)
 {
@@ -193,6 +263,26 @@ mapper::create_mapped_graph()
     graph_t *mapped = nullptr;
 
     return mapped;
+}
+
+void *
+mapper::create_abc_ntk_from_mapping(bool use_truth_table)
+{
+    Abc_Ntk_t *ntk = use_truth_table ? Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1) : Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_AIG, 1);
+    ForEachGraphPi(*this) {
+        auto pi = Abc_NtkCreatePi(ntk);
+        Abc_ObjAssignName(pi, const_cast<char *>(get_pi_name(idx).c_str()), nullptr);
+    }
+    ForEachGraphPo(*this) {
+        auto po = Abc_NtkCreatePo(ntk);
+        Abc_ObjAssignName(po, const_cast<char *>(get_po_name(idx).c_str()), nullptr);
+    }
+    if (use_truth_table) {
+        
+    } else {
+
+    }
+    return static_cast<void *>(ntk);
 }
 
 graph_t *
@@ -237,7 +327,7 @@ auto t0 = std::clock();
 auto t1 = std::clock();
     graph_t *mapped_graph = mgr->run_lut_mapping(cfg);
 auto t2 = std::clock();
-    Abc_Ntk_t *pNtkMapped = mapped_graph->to_ntk();
+    Abc_Ntk_t *pNtkMapped = static_cast<Abc_Ntk_t *>(mapped_graph->to_abc_ntk());
 auto t3 = std::clock();
     delete mapped_graph;
     delete mgr;

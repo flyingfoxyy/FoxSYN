@@ -16,6 +16,7 @@
 #include <deque>
 #include <chrono>
 
+#include "macros.hpp"
 #include "basic.hpp"
 
 namespace abc {
@@ -23,9 +24,6 @@ namespace abc {
 }
 
 namespace fox::supper {
-
-#define SIGNATURE(x, BITNUM) (1 << ((x) % ((BITNUM) - 1)))
-
 class Cut {
 public:
     static constexpr uint BIT_NUM_SIZE = 7;
@@ -67,7 +65,7 @@ public:
     Cut *clone(uint S = 0) const { return S ? allocate<Cut>(S, *this) : allocate<Cut>(size, *this); }
 };
 
-#define ForEachCutLeaf(C) for (uint leaf = 0, uint i = 0; i != (C)->size && (leaf = (C)->leaves[i]); ++i)
+#define ForEachCutLeaf(C) for (uint leaf = 0, i = 0; i != (C)->size && (leaf = (C)->leaves[i]); ++i)
 
 class function_db {
     std::vector<word> _truth_tables;
@@ -146,7 +144,9 @@ public:
 
     void report(std::ostream &os);
 
-    abc::Abc_Ntk_t *to_ntk();
+    bool is_topologically_sorted() const;
+
+    void *to_abc_ntk();
 };
 
 #define ForEachGraphNode(mgr)                                  \
@@ -259,6 +259,12 @@ class mapper : public graph_t {
 
     CutCost::rank_fn _rank_fn;
 
+    std::vector<std::string> _pi_names;
+    std::vector<std::string> _po_names;
+
+    // cache
+    std::vector<uint64_t> _cache;
+
     uint _num_area {0};
     uint _num_edge {0};
     uint _num_delay{0};
@@ -274,6 +280,7 @@ public:
             std::cout << "Node number exceeds maximum limit " << kMax << ", quit.\n";
             std::exit(1);
         }
+        _cache   .resize(100,          0);
         _int_ref .resize(max_node_num, 0);
         _est_ref .resize(max_node_num, 0);
         _area    .resize(max_node_num, 0);
@@ -294,7 +301,9 @@ public:
     void reset_required() { std::fill(_required.begin(), _required.end(), kMaxTime); }
 
     // creators
-    static mapper *create_from_aig(void *ntk);
+    static mapper *create_from_aig (void       *ntk );
+    static mapper *create_from_gia (void       *gia );
+    static mapper *create_from_blif(const char *blif);
 
     template<Indexable IDX> std::vector<Cut *> &cut_set(IDX n) { return _cuts[n]; }
 
@@ -311,6 +320,9 @@ public:
     uint &num_edge()  { return _num_edge;  }
     uint &num_delay() { return _num_delay; }
 
+    const std::string &get_pi_name(uint idx) const { return _pi_names[idx]; }
+    const std::string &get_po_name(uint idx) const { return _po_names[idx]; }
+
     CutCost::cmp_res compare(const CutCost &lhs, const CutCost &rhs) {
         return _rank_fn(lhs, rhs, _cfg.epsilon);
     }
@@ -318,6 +330,10 @@ public:
     graph_t *run_lut_mapping(const Config &cfg);
 
     graph_t *create_mapped_graph();
+
+    void *create_abc_ntk_from_mapping(bool use_truth_table = false);
+
+    Time calculate_delay();
 
     Area ref_mffc(Cut *cut);
     Edge rip_mffc(Cut *cut);
@@ -330,6 +346,8 @@ public:
             _cuts[idx].clear();
         }
     }
+
+    word compute_truth(Cut *cut, uint root) const;
 
     void print_node(uint id);
 };
@@ -532,6 +550,7 @@ public:
 
     virtual void impl() {
         _mgr.reset_est_ref();
+
         if (_mgr.config().delay_mode()) {
             _mgr.reset_required();
         }
@@ -545,16 +564,15 @@ public:
 };
 
 class MappingPass {
+    mapper &_mgr;
     std::unique_ptr<Forward>  _forward;
     std::unique_ptr<Backword> _backword;
 
     void improve_mapping_exactly(mapper &mgr);
 
 public:
-    MappingPass(CutCostAlgo algo, mapper &mgr, int pass) {
-        auto cpu_start  = std::clock();
-        auto wall_start = std::chrono::high_resolution_clock::now();
-
+    MappingPass(CutCostAlgo algo, mapper &mgr, int pass) : _mgr(mgr) {
+        TIME_BEGIN(T)
         if (algo == CutCostAlgo::FLOW)
             _forward = std::make_unique<ForwardFlow> (mgr);
         else if (algo == CutCostAlgo::EXACT)
@@ -575,24 +593,18 @@ public:
             std::cout << "P" << pass << " LUT " << mgr.num_area() << "\t" << "Edge " << mgr.num_edge() << "\t";
         }
 
-        auto cpu_end  = std::clock();
-        auto wall_end = std::chrono::high_resolution_clock::now();
-
         if (mgr.config().verbose) {
-            double cpu_time  = double(cpu_end  - cpu_start ) / CLOCKS_PER_SEC;
-            double wall_time = std::chrono::duration<double>(wall_end - wall_start).count();
-            if (cpu_time > 1.0)
-                std::cout << " cpu time : " << cpu_time << " s, " << "wall time : " << wall_time << " s.\n";
-            else
-                std::cout << " cpu time : " << cpu_time * 1000.0 << " ms, " << "wall time : " << wall_time * 1000.0 << " ms.\n";
+            TIME_END(T)
         }
 
         improve_mapping_exactly(mgr);
-
-        mgr.free_cuts();
     }
 
-    ~MappingPass() = default;
+    ~MappingPass() {
+        _mgr.free_cuts();
+        _mgr.num_area() = 0;
+        _mgr.num_edge() = 0;
+    }
 };
 
 }
