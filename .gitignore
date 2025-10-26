@@ -62,3 +62,4 @@ regression/src/__pycache__/
 regression/rundir
 .cache
 compile_commands.json
+regression/*.v

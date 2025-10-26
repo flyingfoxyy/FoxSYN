@@ -604,11 +604,8 @@ public:
         _backword->impl();
 
         if (mgr.config().verbose) {
-            std::cout << "P" << pass << " LUT " << mgr.num_area() << "\t" << "Edge " << mgr.num_edge() << "\t";
-        }
-
-        if (mgr.config().verbose) {
             TIME_END(T)
+            std::println(std::cout, "P{} LUT {}\tEdge {}\t Time {}", pass, mgr.num_area(), mgr.num_edge(), formatted_time(cpu_T, 5));
         }
 
         improve_mapping_exactly(mgr);

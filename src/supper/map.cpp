@@ -61,7 +61,7 @@ graph_t::to_abc_ntk()
 void
 MappingPass::improve_mapping_exactly(mapper &mgr)
 {
-    TIME_BEGIN(T0)
+    TIME_BEGIN(T)
     ForEachGraphLogicNode(mgr)
     {
         Cut *best_cut = mgr.best_cut(idx);
@@ -97,10 +97,9 @@ MappingPass::improve_mapping_exactly(mapper &mgr)
         }
     }
 
-    TIME_END(T0)
     if (mgr.config().verbose) {
-        std::cout << "-> LUT " << mgr.num_area() << "\t" << "Edge " << mgr.num_edge()
-                  << " CPU " << format_time(cpu_T0, 5) << "\n";
+        TIME_END(T)
+        std::println(std::cout, "Ex LUT {}\tEdge {}\t Time {}", mgr.num_area(), mgr.num_edge(), formatted_time(cpu_T, 5));
     }
 }
 
@@ -193,7 +192,7 @@ mapper::compute_truth(Cut *cut, uint root) const
         0xFFFFFFFF00000000
     };
 
-    if (cut->size == 2) {
+    if (cut->size == 2 && _nodes[root][0].id() == cut->leaves[0] && _nodes[root][1].id() == cut->leaves[1]) {
         word t0 = initTable[0];
         word t1 = initTable[1];
         if (_nodes[root][0].sign())
@@ -203,10 +202,7 @@ mapper::compute_truth(Cut *cut, uint root) const
         return t0 & t1;
     }
 
-    uint min_id = std::numeric_limits<uint>::max();
-    ForEachCutLeaf(cut) {
-        min_id = std::min(min_id, leaf);
-    }
+    const uint min_id = cut->leaves[0];
     std::vector<word> cache(root - min_id + 1, 0);
     ForEachCutLeaf(cut) {
         cache[leaf - min_id] = initTable[i];

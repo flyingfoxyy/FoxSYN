@@ -112,13 +112,30 @@ macro void deallocate(T* item) noexcept {
     }
 }
 
-static std::string format_time(double time, const int width) {
-    std::string str = std::format("{:{}.3f} ", time, width - 4);
-    if (time >= 1.0)
-        str += "s";
-    else
-        str += "ms";
-    return str;
+static std::string formatted_time(double time_sec, int w, int precision = 1, char alignment = 'r') {
+    std::string unit = " s";
+    if (time_sec < 1.0) {
+        time_sec  = time_sec * 1000.0;
+        precision = 2;
+        unit      = " ms";
+    }
+    std::string formatted;
+    switch (alignment) {
+    case 'l':
+        formatted = std::format("{:<{}.{}f}", time_sec, w, precision);
+        break;
+    case 'c':
+        formatted = std::format("{:^{}.{}f}", time_sec, w, precision);
+        break;
+    case 'r':
+    default:
+        formatted = std::format("{:>{}.{}f}", time_sec, w, precision);
+        break;
+    }
+    if (formatted.length() > static_cast<size_t>(w)) {
+        formatted = formatted.substr(0, w);
+    }
+    return formatted + unit;
 }
 
 }
