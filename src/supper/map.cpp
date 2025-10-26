@@ -1,4 +1,5 @@
 #include <cstddef>
+#include <iostream>
 #include <limits>
 #include <vector>
 #include <ctime>
@@ -99,7 +100,7 @@ MappingPass::improve_mapping_exactly(mapper &mgr)
 
     if (mgr.config().verbose) {
         TIME_END(T)
-        std::println(std::cout, "Ex LUT {}\tEdge {}\t Time {}", mgr.num_area(), mgr.num_edge(), formatted_time(cpu_T, 5));
+        std::println(std::cout, "Ex LUT {}\tEdge {}\t Time {}", mgr.num_area(), mgr.num_edge(), Timer::formatted_time(cpu_T, 5));
     }
 }
 
@@ -138,6 +139,7 @@ mapper::create_from_aig(void *ntk)
         }
         switch (pObj->Type) {
             case ABC_OBJ_CONST1:
+                assert(mgr->_nodes.size() == 0);
                 mgr->_nodes.emplace_back(graph_t::node_type_t::ONE);
                 break;
             case ABC_OBJ_PI:
@@ -305,6 +307,8 @@ mapper::create_abc_ntk_from_mapping(bool use_truth_table)
 
     if (use_truth_table) {
         Abc_Obj_t *pConst1 = Abc_NtkCreateNodeConst1(ntk);
+        // Hook the pwr
+        idx2obj[pwr()] = pConst1;
 
         ForEachGraphLut(*this) {
             idx2obj[idx] = create_sop_node(idx, pConst1);
@@ -360,25 +364,35 @@ mapper::run_lut_mapping(const Config &cfg)
 
 Abc_Ntk_t *PerformSupperMap(Abc_Ntk_t *pNtk, const Config &cfg)
 {
-auto t0 = std::clock();
+    TIME_BEGIN(supermap);
+    TIME_BEGIN(create_mapper);
     mapper *mgr = mapper::create_from_aig(static_cast<void *>(pNtk));
-    if (!mgr)
+    if (!mgr) [[unlikely]]
         return nullptr;
     if (cfg.verbose) {
         std::cout << "created mapping graph with " << mgr->num_nodes() << " nodes. (PI = "
                   << mgr->num_pi() << ", PO = " << mgr->num_po() << ", LOGIC = " << mgr->num_logic() << ")\n";
     }
-auto t1 = std::clock();
+    TIME_END(create_mapper)
+    TIME_BEGIN(mapping)
     graph_t *mapped_graph = mgr->run_lut_mapping(cfg);
-auto t2 = std::clock();
     Abc_Ntk_t *abc_mapped = nullptr;
     if (mapped_graph)
         abc_mapped = static_cast<Abc_Ntk_t *>(mapped_graph->to_abc_ntk());
     else
         abc_mapped = static_cast<Abc_Ntk_t *>(mgr->create_abc_ntk_from_mapping());
-auto t3 = std::clock();
+    TIME_END(mapping)
+    TIME_END(supermap);
+
     delete mapped_graph;
     delete mgr;
+
+    if (cfg.verbose) {
+        std::print(std::cout, ">>> Runtime Report\n");
+        std::print(std::cout, "  Total CPU  Time {}\n", Timer::formatted_time(cpu_supermap,  5));
+        std::print(std::cout, "  Total Wall Time {}\n", Timer::formatted_time(wall_supermap, 5));
+    }
+
     return abc_mapped;
 }
 

@@ -128,15 +128,21 @@ public:
 
     ~graph_t() = default;
 
+    uint pwr()       const { return 0;             }
     uint num_nodes() const { return _nodes.size(); }
     uint num_po()    const { return _po.size();    }
     uint num_pi()    const { return _pi.size();    }
     uint num_logic() const { return num_nodes() - num_po() - num_pi() - 1; }
 
-    int begin()  const { return 0;                  }
-    int end()    const { return _nodes.size();      }
-    int rbegin() const { return _nodes.size() - 1;  }
-    int rend()   const { return -1;                 }
+    int begin()        const { return 0;                  }
+    int end()          const { return _nodes.size();      }
+    int rbegin()       const { return _nodes.size() - 1;  }
+    int rend()         const { return -1;                 }
+
+    int logic_begin()  const { return 1 + num_po() + num_pi(); }
+    int logic_end()    const { return end();                   }
+    int logic_rbegin() const { return _nodes.size() - 1;       }
+    int logic_rend()   const { return num_po() + num_pi();     }
 
     const node_t &operator[](uint i) const { return _nodes[i];        }
     const node_t &get_pi(uint idx)   const { return _nodes[_pi[idx]]; }
@@ -160,7 +166,7 @@ public:
     for (int idx = (mgr).begin(); idx != (mgr).end(); ++idx)   \
         if (!(mgr)[idx].is_logic()) [[unlikely]] {} else
 
-#define ForEachGraphLut(mgr)                             \
+#define ForEachGraphLut(mgr)                                   \
     for (int idx = (mgr).begin(); idx != (mgr).end(); ++idx)   \
         if ((mgr)[idx].is_logic() && (mgr).num_est_ref(idx))
 
@@ -227,11 +233,11 @@ struct CutCost {
     CutCost(Edge e, Area a, Time t = kMaxTime) : area(a), edge(e), arr(t), size(0), idx(0) {}
 
     std::string operator*() const {
-        std::string str;
-        str += "Area " + std::to_string(area) + ", ";
-        str += "Edge " + std::to_string(edge) + ", ";
-        str += "Arr " + std::to_string(arr) + ", ";
-        str += "Size " + std::to_string(size) + ", ";
+        std::string str; str.reserve(64);
+        str += "Area "  + std::to_string(area) + ", ";
+        str += "Edge "  + std::to_string(edge) + ", ";
+        str += "Arr "   + std::to_string(arr)  + ", ";
+        str += "Size "  + std::to_string(size) + ", ";
         str += "Index " + std::to_string(idx);
         return str;
     }
@@ -313,16 +319,16 @@ public:
     static mapper *create_from_gia (void       *gia );
     static mapper *create_from_blif(const char *blif);
 
-    template<Indexable IDX> std::vector<Cut *> &cut_set(IDX n) { return _cuts[n]; }
+    template<Indexable T> std::vector<Cut *> &cut_set(T n) { return _cuts[n]; }
 
-    template<Indexable IDX> Area  &area       (IDX n) { return _area[n];     }
-    template<Indexable IDX> Edge  &edge       (IDX n) { return _edge[n];     }
-    template<Indexable IDX> Time  &arrival    (IDX n) { return _arrival[n];  }
-    template<Indexable IDX> Time  &required   (IDX n) { return _required[n]; }
-    template<Indexable IDX> float &num_est_ref(IDX n) { return _est_ref[n];  }
-    template<Indexable IDX> uint  &num_ref    (IDX n) { return _int_ref[n];  }
+    template<Indexable T> Area  &area       (T n) { return _area[n];     }
+    template<Indexable T> Edge  &edge       (T n) { return _edge[n];     }
+    template<Indexable T> Time  &arrival    (T n) { return _arrival[n];  }
+    template<Indexable T> Time  &required   (T n) { return _required[n]; }
+    template<Indexable T> float &num_est_ref(T n) { return _est_ref[n];  }
+    template<Indexable T> uint  &num_ref    (T n) { return _int_ref[n];  }
 
-    template<Indexable IDX> Cut *&best_cut(IDX n) { return _best_cut[n]; }
+    template<Indexable T> Cut *&best_cut(T n) { return _best_cut[n]; }
 
     uint &num_area()  { return _num_area;  }
     uint &num_edge()  { return _num_edge;  }
@@ -605,7 +611,7 @@ public:
 
         if (mgr.config().verbose) {
             TIME_END(T)
-            std::println(std::cout, "P{} LUT {}\tEdge {}\t Time {}", pass, mgr.num_area(), mgr.num_edge(), formatted_time(cpu_T, 5));
+            std::println(std::cout, "P{} LUT {}\tEdge {}\t Time {}", pass, mgr.num_area(), mgr.num_edge(), Timer::formatted_time(cpu_T, 5));
         }
 
         improve_mapping_exactly(mgr);
