@@ -139,8 +139,11 @@ public:
     int rend()   const { return -1;                 }
 
     const node_t &operator[](uint i) const { return _nodes[i];        }
-    const node_t &pi(uint idx)       const { return _nodes[_pi[idx]]; }
-    const node_t &po(uint idx)       const { return _nodes[_po[idx]]; }
+    const node_t &get_pi(uint idx)   const { return _nodes[_pi[idx]]; }
+    const node_t &get_po(uint idx)   const { return _nodes[_po[idx]]; }
+
+    uint po_id(uint idx) const { return _po[idx]; }
+    uint pi_id(uint idx) const { return _pi[idx]; }
 
     void report(std::ostream &os);
 
@@ -157,6 +160,10 @@ public:
     for (int idx = (mgr).begin(); idx != (mgr).end(); ++idx)   \
         if (!(mgr)[idx].is_logic()) [[unlikely]] {} else
 
+#define ForEachGraphLut(mgr)                             \
+    for (int idx = (mgr).begin(); idx != (mgr).end(); ++idx)   \
+        if ((mgr)[idx].is_logic() && (mgr).num_est_ref(idx))
+
 #define ForEachGraphNodeRev(mgr)                               \
     for (int idx = (mgr).rbegin(); idx != (mgr).rend(); --idx) \
         if ((mgr)[idx].null()) [[unlikely]] {} else
@@ -165,8 +172,9 @@ public:
     for (int idx = (mgr).rbegin(); idx != (mgr).rend(); --idx) \
         if (!(mgr)[idx].is_logic()) [[unlikely]] {} else
 
-#define ForEachGraphPi(mgr) for (int idx = 0; idx != (mgr).num_pi(); ++idx)
-#define ForEachGraphPo(mgr) for (int idx = 0; idx != (mgr).num_po(); ++idx)
+#define ForEachGraphPi(mgr)  for (int idx = 0; idx != (mgr).num_pi(); ++idx)
+#define ForEachGraphPo(mgr)  for (int idx = 0; idx != (mgr).num_po(); ++idx)
+#define ForEachGraphPoV(mgr) for (int idx = 0; idx != (mgr).num_po(); ++idx) if ((mgr).get_po(idx).size())
 
 // class enumerate_cut;
 
@@ -331,7 +339,7 @@ public:
 
     graph_t *create_mapped_graph();
 
-    void *create_abc_ntk_from_mapping(bool use_truth_table = false);
+    void *create_abc_ntk_from_mapping(bool use_truth_table = true);
 
     Time calculate_delay();
 
@@ -358,6 +366,11 @@ enum class CutCostAlgo {
     EXACT
 };
 
+enum class heristic_t {
+    PRAETOR,
+    FLOW,
+    EXACT
+};
 
 // normal enumerate cut way
 template <CutCostAlgo algo>
@@ -521,12 +534,13 @@ class Backword {
 protected:
     mapper &_mgr;
 
+    virtual Cut *get_best_cut(uint idx) {
+        return _mgr.best_cut(idx);
+    }
+
     virtual void reference_best_cuts() {
-        ForEachGraphPo(_mgr) {
-            const auto &po = _mgr.po(idx);
-            if (po.size()) [[likely]] {
-                ++_mgr.num_est_ref(po[0]);
-            }
+        ForEachGraphPoV(_mgr) {
+            ++_mgr.num_est_ref(_mgr.get_po(idx)[0]);
         }
 
         ForEachGraphLogicNodeRev(_mgr) { 

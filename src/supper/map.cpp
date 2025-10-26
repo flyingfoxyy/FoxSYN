@@ -1,3 +1,4 @@
+#include <cstddef>
 #include <limits>
 #include <vector>
 #include <ctime>
@@ -9,7 +10,7 @@
 #include "basic.hpp"
 #include "map.hpp"
 
-using namespace abc;
+// using namespace abc;
 
 namespace fox::supper {
 std::string
@@ -60,7 +61,7 @@ graph_t::to_abc_ntk()
 void
 MappingPass::improve_mapping_exactly(mapper &mgr)
 {
-    auto start = clock();
+    TIME_BEGIN(T0)
     ForEachGraphLogicNode(mgr)
     {
         Cut *best_cut = mgr.best_cut(idx);
@@ -96,9 +97,11 @@ MappingPass::improve_mapping_exactly(mapper &mgr)
         }
     }
 
-    auto   stop = std::clock();
-    double cpu_time = double(stop - start) / CLOCKS_PER_SEC;
-    std::cout << "-- LUT " << mgr.num_area() << "\t" << "Edge " << mgr.num_edge() << "\n";
+    TIME_END(T0)
+    if (mgr.config().verbose) {
+        std::cout << "-> LUT " << mgr.num_area() << "\t" << "Edge " << mgr.num_edge()
+                  << " CPU " << format_time(cpu_T0, 5) << "\n";
+    }
 }
 
 void
@@ -141,10 +144,12 @@ mapper::create_from_aig(void *ntk)
             case ABC_OBJ_PI:
                 mgr->_nodes.emplace_back(graph_t::node_type_t::PI);
                 mgr->_pi.push_back(mgr->_nodes.size() - 1);
+                mgr->_pi_names.push_back(Abc_ObjName(pObj));
                 break;
             case ABC_OBJ_PO:
                 mgr->_nodes.emplace_back(graph_t::node_type_t::PO, Lit(Abc_ObjFaninId0(pObj), pObj->fCompl0));
                 mgr->_po.push_back(mgr->_nodes.size() - 1);
+                mgr->_po_names.push_back(Abc_ObjName(pObj));
                 break;
             case ABC_OBJ_NODE: [[likely]]
                 mgr->_nodes.emplace_back(graph_t::node_type_t::LOGIC,
@@ -208,12 +213,13 @@ mapper::compute_truth(Cut *cut, uint root) const
     }
 
     std::function<void(uint)> fn = [&](uint n) {
-        if (cache[n - min_id])
-            return;
         const auto &node = _nodes[n];
+        assert(cache[n - min_id] == 0);
         assert(node.size() == 2);
-        fn(node[0].id());
-        fn(node[1].id());
+        if (cache[node[0].id() - min_id] == 0)
+            fn(node[0].id());
+        if (cache[node[1].id() - min_id] == 0)
+            fn(node[1].id());
         word t0 = cache[node[0].id() - min_id];
         word t1 = cache[node[1].id() - min_id];
         if (node[0].sign())
@@ -269,16 +275,58 @@ void *
 mapper::create_abc_ntk_from_mapping(bool use_truth_table)
 {
     Abc_Ntk_t *ntk = use_truth_table ? Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1) : Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_AIG, 1);
+    std::vector<Abc_Obj_t *> idx2obj(num_nodes(), nullptr);
+    
     ForEachGraphPi(*this) {
         auto pi = Abc_NtkCreatePi(ntk);
         Abc_ObjAssignName(pi, const_cast<char *>(get_pi_name(idx).c_str()), nullptr);
+        idx2obj[_pi[idx]] = pi;
     }
     ForEachGraphPo(*this) {
         auto po = Abc_NtkCreatePo(ntk);
         Abc_ObjAssignName(po, const_cast<char *>(get_po_name(idx).c_str()), nullptr);
+        idx2obj[_po[idx]] = po;
     }
+
+    auto create_sop_node = [&](uint idx, Abc_Obj_t *pConst1) {
+        Cut *cut = best_cut(idx);
+        word truth = compute_truth(cut, idx);
+        Abc_Obj_t *pLut = Abc_NtkCreateObj(ntk, ABC_OBJ_NODE);
+        if (truth == 0ul || truth == ~0ul) [[unlikely]] {
+            Abc_ObjAddFanin(pLut, pConst1);
+            if (truth == 0ul)
+                pLut->pData = Abc_SopCreateBuf((Mem_Flex_t *)ntk->pManFunc);
+            else
+                pLut->pData = Abc_SopCreateInv((Mem_Flex_t *)ntk->pManFunc);
+        } else {
+            pLut->pData = Abc_SopRegister((Mem_Flex_t*)ntk->pManFunc, Abc_SopCreateFromTruth((Mem_Flex_t *)ntk->pManFunc,
+                cut->size, (unsigned *)&truth));
+            for (int m = 0; m != cut->size; ++m)
+                Abc_ObjAddFanin(pLut, idx2obj[cut->leaves[m]]);
+        }
+        return pLut;
+    };
+
     if (use_truth_table) {
-        
+        Abc_Obj_t *pConst1 = Abc_NtkCreateNodeConst1(ntk);
+
+        ForEachGraphLut(*this) {
+            idx2obj[idx] = create_sop_node(idx, pConst1);
+        }
+
+        ForEachGraphPoV(*this) {
+            const node_t &po = get_po(idx);
+            if (po[0].sign()) {
+                Abc_Obj_t *pInv = Abc_NtkCreateNodeInv(ntk, idx2obj[po[0].id()]);
+                Abc_ObjAddFanin(idx2obj[po_id(idx)], pInv);
+            } else {
+                Abc_ObjAddFanin(idx2obj[po_id(idx)], idx2obj[po[0].id()]);
+            }
+        }
+
+        // remove it if not used
+        if (Abc_ObjFanoutNum(pConst1) == 0)
+            Abc_NtkDeleteObj(pConst1);
     } else {
 
     }
@@ -327,11 +375,15 @@ auto t0 = std::clock();
 auto t1 = std::clock();
     graph_t *mapped_graph = mgr->run_lut_mapping(cfg);
 auto t2 = std::clock();
-    Abc_Ntk_t *pNtkMapped = static_cast<Abc_Ntk_t *>(mapped_graph->to_abc_ntk());
+    Abc_Ntk_t *abc_mapped = nullptr;
+    if (mapped_graph)
+        abc_mapped = static_cast<Abc_Ntk_t *>(mapped_graph->to_abc_ntk());
+    else
+        abc_mapped = static_cast<Abc_Ntk_t *>(mgr->create_abc_ntk_from_mapping());
 auto t3 = std::clock();
     delete mapped_graph;
     delete mgr;
-    return pNtkMapped;
+    return abc_mapped;
 }
 
 }

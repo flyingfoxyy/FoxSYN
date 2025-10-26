@@ -29,19 +29,19 @@ public:
 
     ~Lit() = default;
 
-    [[always_inline]] bool operator==(const Lit &b) const { return _val == b._val; }
-    [[always_inline]] bool operator!=(const Lit &b) const { return _val != b._val; }
-    [[always_inline]] bool operator< (const Lit &b) const { return _val <  b._val; }
-    [[always_inline]] bool operator<=(const Lit &b) const { return _val <= b._val; }
-    [[always_inline]] bool operator> (const Lit &b) const { return _val >  b._val; }
-    [[always_inline]] bool operator>=(const Lit &b) const { return _val >= b._val; }
+    bool operator==(const Lit &b) const { return _val == b._val; }
+    bool operator!=(const Lit &b) const { return _val != b._val; }
+    bool operator< (const Lit &b) const { return _val <  b._val; }
+    bool operator<=(const Lit &b) const { return _val <= b._val; }
+    bool operator> (const Lit &b) const { return _val >  b._val; }
+    bool operator>=(const Lit &b) const { return _val >= b._val; }
 
-    [[always_inline]] Lit operator~() const { return Lit(id(), !is_complement()); }
+    Lit  operator~() const { return Lit(id(), !sign()); }
     Lit &operator=(const Lit &b) = default;
 
-    [[always_inline]] bool is_complement() const { return _val & 1;  }
-    [[always_inline]] uint id()            const { return _val >> 1; }
-    [[always_inline]] uint val()           const { return _val;      }
+    bool sign() const { return _val & 1;  }
+    uint id  () const { return _val >> 1; }
+    uint val () const { return _val;      }
 };
 
 template<typename T>
