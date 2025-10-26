@@ -49,7 +49,7 @@ public:
 
     Cut(uint id) : size(1), sign(SIGNATURE(id, BIT_NUM_SIGN)) { leaves[0] = id; }
 
-    Cut &operator=(const Cut &cut) {
+    Inline Cut &operator=(const Cut &cut) {
         if (&cut == this)
             return *this;
         std::memcpy(this, &cut, cut.num_byte());
@@ -58,11 +58,11 @@ public:
 
     std::string operator*() const;
 
-    Cut *next() const {
+    Inline Cut *next() const {
         return reinterpret_cast<Cut *>(reinterpret_cast<uintptr_t>(this) + sizeof(Cut) + sizeof(uint) * size);
     }
 
-    Cut *clone(uint S = 0) const { return S ? allocate<Cut>(S, *this) : allocate<Cut>(size, *this); }
+    Inline Cut *clone(uint S = 0) const { return S ? allocate<Cut>(S, *this) : allocate<Cut>(size, *this); }
 };
 
 #define ForEachCutLeaf(C) for (uint leaf = 0, i = 0; i != (C)->size && (leaf = (C)->leaves[i]); ++i)
@@ -101,14 +101,14 @@ public:
         node_t(node_type_t type, Lit f0, Lit f1) : _size(2), _type(type), _fanins{f0, f1}        {}
        ~node_t() = default;
 
-        uint        size()     const { return _size;      }
-        node_type_t type()     const { return _type;      }
-        Lit operator[](uint i) const { return _fanins[i]; }
+        Inline uint        size()     const { return _size;      }
+        Inline node_type_t type()     const { return _type;      }
+        Inline Lit operator[](uint i) const { return _fanins[i]; }
 
-        bool null    () const { return _type == node_type_t::NONE;  }
-        bool is_logic() const { return _type == node_type_t::LOGIC; }
-        bool is_pi   () const { return _type == node_type_t::PI;    }
-        bool is_po   () const { return _type == node_type_t::PO;    }
+        Inline bool null    () const { return _type == node_type_t::NONE;  }
+        Inline bool is_logic() const { return _type == node_type_t::LOGIC; }
+        Inline bool is_pi   () const { return _type == node_type_t::PI;    }
+        Inline bool is_po   () const { return _type == node_type_t::PO;    }
 
        friend class graph_t;
     };
@@ -128,28 +128,28 @@ public:
 
     ~graph_t() = default;
 
-    uint pwr()       const { return 0;             }
-    uint num_nodes() const { return _nodes.size(); }
-    uint num_po()    const { return _po.size();    }
-    uint num_pi()    const { return _pi.size();    }
-    uint num_logic() const { return num_nodes() - num_po() - num_pi() - 1; }
+    Inline uint pwr()       const { return 0;             }
+    Inline uint num_nodes() const { return _nodes.size(); }
+    Inline uint num_po()    const { return _po.size();    }
+    Inline uint num_pi()    const { return _pi.size();    }
+    Inline uint num_logic() const { return num_nodes() - num_po() - num_pi() - 1; }
 
-    int begin()        const { return 0;                  }
-    int end()          const { return _nodes.size();      }
-    int rbegin()       const { return _nodes.size() - 1;  }
-    int rend()         const { return -1;                 }
+    Inline int begin()        const { return 0;                  }
+    Inline int end()          const { return _nodes.size();      }
+    Inline int rbegin()       const { return _nodes.size() - 1;  }
+    Inline int rend()         const { return -1;                 }
 
-    int logic_begin()  const { return 1 + num_po() + num_pi(); }
-    int logic_end()    const { return end();                   }
-    int logic_rbegin() const { return _nodes.size() - 1;       }
-    int logic_rend()   const { return num_po() + num_pi();     }
+    Inline int logic_begin()  const { return 1 + num_po() + num_pi(); }
+    Inline int logic_end()    const { return end();                   }
+    Inline int logic_rbegin() const { return _nodes.size() - 1;       }
+    Inline int logic_rend()   const { return num_po() + num_pi();     }
 
-    const node_t &operator[](uint i) const { return _nodes[i];        }
-    const node_t &get_pi(uint idx)   const { return _nodes[_pi[idx]]; }
-    const node_t &get_po(uint idx)   const { return _nodes[_po[idx]]; }
+    Inline const node_t &operator[](uint i) const { return _nodes[i];        }
+    Inline const node_t &get_pi(uint idx)   const { return _nodes[_pi[idx]]; }
+    Inline const node_t &get_po(uint idx)   const { return _nodes[_po[idx]]; }
 
-    uint po_id(uint idx) const { return _po[idx]; }
-    uint pi_id(uint idx) const { return _pi[idx]; }
+    Inline uint po_id(uint idx) const { return _po[idx]; }
+    Inline uint pi_id(uint idx) const { return _pi[idx]; }
 
     void report(std::ostream &os);
 
@@ -158,24 +158,24 @@ public:
     void *to_abc_ntk();
 };
 
-#define ForEachGraphNode(mgr)                                  \
-    for (int idx = (mgr).begin(); idx != (mgr).end(); ++idx)   \
+#define ForEachGraphNode(mgr)                                              \
+    for (int idx = (mgr).begin(); idx != (mgr).end(); ++idx)               \
         if ((mgr)[idx].null()) [[unlikely]] {} else
 
-#define ForEachGraphLogicNode(mgr)                             \
-    for (int idx = (mgr).begin(); idx != (mgr).end(); ++idx)   \
+#define ForEachGraphLogicNode(mgr)                                         \
+    for (int idx = (mgr).logic_begin(); idx != (mgr).logic_end(); ++idx)   \
         if (!(mgr)[idx].is_logic()) [[unlikely]] {} else
 
-#define ForEachGraphLut(mgr)                                   \
-    for (int idx = (mgr).begin(); idx != (mgr).end(); ++idx)   \
-        if ((mgr)[idx].is_logic() && (mgr).num_est_ref(idx))
+#define ForEachGraphLut(mgr)                                               \
+    for (int idx = (mgr).logic_begin(); idx != (mgr).logic_end(); ++idx)   \
+        if ((mgr).num_est_ref(idx))
 
-#define ForEachGraphNodeRev(mgr)                               \
-    for (int idx = (mgr).rbegin(); idx != (mgr).rend(); --idx) \
+#define ForEachGraphNodeRev(mgr)                                           \
+    for (int idx = (mgr).rbegin(); idx != (mgr).rend(); --idx)             \
         if ((mgr)[idx].null()) [[unlikely]] {} else
 
-#define ForEachGraphLogicNodeRev(mgr)                          \
-    for (int idx = (mgr).rbegin(); idx != (mgr).rend(); --idx) \
+#define ForEachGraphLogicNodeRev(mgr)                                      \
+    for (int idx = (mgr).logic_rbegin(); idx != (mgr).logic_rend(); --idx) \
         if (!(mgr)[idx].is_logic()) [[unlikely]] {} else
 
 #define ForEachGraphPi(mgr)  for (int idx = 0; idx != (mgr).num_pi(); ++idx)
@@ -311,31 +311,31 @@ public:
     void initialize();
 
     // reset flags
-    void reset_est_ref () { std::fill(_est_ref .begin(), _est_ref .end(), 0       ); }
-    void reset_required() { std::fill(_required.begin(), _required.end(), kMaxTime); }
+    Inline void reset_est_ref () { std::fill(_est_ref .begin(), _est_ref .end(), 0       ); }
+    Inline void reset_required() { std::fill(_required.begin(), _required.end(), kMaxTime); }
 
     // creators
     static mapper *create_from_aig (void       *ntk );
     static mapper *create_from_gia (void       *gia );
     static mapper *create_from_blif(const char *blif);
 
-    template<Indexable T> std::vector<Cut *> &cut_set(T n) { return _cuts[n]; }
+    template<Indexable T> Inline std::vector<Cut *> &cut_set(T n) { return _cuts[n]; }
 
-    template<Indexable T> Area  &area       (T n) { return _area[n];     }
-    template<Indexable T> Edge  &edge       (T n) { return _edge[n];     }
-    template<Indexable T> Time  &arrival    (T n) { return _arrival[n];  }
-    template<Indexable T> Time  &required   (T n) { return _required[n]; }
-    template<Indexable T> float &num_est_ref(T n) { return _est_ref[n];  }
-    template<Indexable T> uint  &num_ref    (T n) { return _int_ref[n];  }
+    template<Indexable T> Inline Area  &area       (T n) { return _area[n];     }
+    template<Indexable T> Inline Edge  &edge       (T n) { return _edge[n];     }
+    template<Indexable T> Inline Time  &arrival    (T n) { return _arrival[n];  }
+    template<Indexable T> Inline Time  &required   (T n) { return _required[n]; }
+    template<Indexable T> Inline float &num_est_ref(T n) { return _est_ref[n];  }
+    template<Indexable T> Inline uint  &num_ref    (T n) { return _int_ref[n];  }
 
-    template<Indexable T> Cut *&best_cut(T n) { return _best_cut[n]; }
+    template<Indexable T> Inline Cut *&best_cut(T n) { return _best_cut[n]; }
 
-    uint &num_area()  { return _num_area;  }
-    uint &num_edge()  { return _num_edge;  }
-    uint &num_delay() { return _num_delay; }
+    Inline uint &num_area()  { return _num_area;  }
+    Inline uint &num_edge()  { return _num_edge;  }
+    Inline uint &num_delay() { return _num_delay; }
 
-    const std::string &get_pi_name(uint idx) const { return _pi_names[idx]; }
-    const std::string &get_po_name(uint idx) const { return _po_names[idx]; }
+    Inline const std::string &get_pi_name(uint idx) const { return _pi_names[idx]; }
+    Inline const std::string &get_po_name(uint idx) const { return _po_names[idx]; }
 
     CutCost::cmp_res compare(const CutCost &lhs, const CutCost &rhs) {
         return _rank_fn(lhs, rhs, _cfg.epsilon);

@@ -34,3 +34,12 @@
 #define SIGNATURE(x, BITNUM) (1 << ((x) % ((BITNUM) - 1)))
 
 #define MAX_NODE_SIZE 16
+
+// --> Compiler related
+#ifdef __GNUC__
+#define Inline [[gnu::always_inline]]
+#elif __clang__
+#define Inline [[clang::always_inline]]
+#else
+#define Inline inline
+#endif
