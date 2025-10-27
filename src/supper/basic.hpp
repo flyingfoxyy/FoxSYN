@@ -218,9 +218,9 @@ public:
 
     void report(std::ostream &os) const {
         const double cpu_time = double(std::clock() - _cpu_start) / CLOCKS_PER_SEC;
-        os << std::format("  {:<20} {:>15} {:>15} {:>12}\n", "Action", "CPU Time", "Wall Time", "Ratio");
+        os << std::format(" {:<20} {:>15} {:>15} {:>12}\n", "Action", "CPU Time", "Wall Time", "Ratio");
         #define PRINT_TIME(Stage)                                     \
-        os << std::format("  {:<20} {:>15} {:>15} {:>10.1f} %\n", Stage,   \
+        os << std::format(" {:<20} {:>15} {:>15} {:>10.1f} %\n", Stage,   \
             Timer::formatted_time(_cpu_durations. at(Stage), _width), \
             Timer::formatted_time(_wall_durations.at(Stage), _width), \
             _cpu_durations. at(Stage) * 100.0 / cpu_time              \
