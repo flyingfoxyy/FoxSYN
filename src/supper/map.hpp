@@ -277,7 +277,7 @@ class mapper : public graph_t {
     std::vector<std::string> _pi_names;
     std::vector<std::string> _po_names;
 
-    Timer _timer;
+    mutable Timer _timer;
 
     uint _num_area {0};
     uint _num_edge {0};
@@ -518,9 +518,11 @@ public:
     ForwardFlow(mapper &mgr) : Forward(mgr) {}
 
     virtual void impl() {
+        _mgr.timer().start("cut_enum");
         ForEachGraphLogicNode(_mgr) {
             CutEnumerator<CutCostAlgo::FLOW>::run(_mgr, idx);
         }
+        _mgr.timer().stop ("cut_enum");
     }
 };
 

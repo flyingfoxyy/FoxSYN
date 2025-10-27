@@ -1,6 +1,7 @@
 #include <cstddef>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <vector>
 #include <ctime>
 #include <print>
@@ -189,7 +190,7 @@ mapper::initialize()
 word
 mapper::compute_truth(Cut *cut, uint root) const
 {
-    static constexpr word initTable[6] = {
+    static constexpr word init_val[6] = {
         0xAAAAAAAAAAAAAAAA,
         0xCCCCCCCCCCCCCCCC,
         0xF0F0F0F0F0F0F0F0,
@@ -198,9 +199,11 @@ mapper::compute_truth(Cut *cut, uint root) const
         0xFFFFFFFF00000000
     };
 
+    _timer.start("compute_truth");
+
     if (cut->size == 2 && _nodes[root][0].id() == cut->leaves[0] && _nodes[root][1].id() == cut->leaves[1]) {
-        word t0 = initTable[0];
-        word t1 = initTable[1];
+        word t0 = init_val[0];
+        word t1 = init_val[1];
         if (_nodes[root][0].sign())
             t0 = ~t0;
         if (_nodes[root][1].sign())
@@ -212,7 +215,7 @@ mapper::compute_truth(Cut *cut, uint root) const
 
     const uint min_id = cut->leaves[0];
     ForEachCutLeaf(cut) {
-        cache[leaf - min_id] = initTable[i];
+        cache[leaf - min_id] = init_val[i];
     }
 
     std::function<void(uint)> fn = [&](uint n) {
@@ -233,6 +236,8 @@ mapper::compute_truth(Cut *cut, uint root) const
     };
 
     fn(root);
+
+    _timer.stop("compute_truth");
 
     return cache[root - min_id];
 }
@@ -279,7 +284,7 @@ mapper::create_abc_ntk_from_mapping(bool use_truth_table)
 {
     Abc_Ntk_t *ntk = use_truth_table ? Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1) : Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_AIG, 1);
     std::vector<Abc_Obj_t *> idx2obj(num_nodes(), nullptr);
-    
+
     ForEachGraphPi(*this) {
         auto pi = Abc_NtkCreatePi(ntk);
         Abc_ObjAssignName(pi, const_cast<char *>(get_pi_name(idx).c_str()), nullptr);
@@ -335,6 +340,7 @@ mapper::create_abc_ntk_from_mapping(bool use_truth_table)
     } else {
 
     }
+
     return static_cast<void *>(ntk);
 }
 
@@ -370,7 +376,11 @@ mapper::run_lut_mapping(const Config &cfg)
 Abc_Ntk_t *PerformSupperMap(Abc_Ntk_t *pNtk, const Config &cfg)
 {
     TIME_START(ALL);
+
+    ///////////////////////////////////////
     mapper *mgr = mapper::create_from_aig(static_cast<void *>(pNtk));
+    ///////////////////////////////////////
+
     if (!mgr) [[unlikely]] {
         std::println(std::cout, "SuperMap: failed to create mapper.");
         return nullptr;
@@ -381,27 +391,31 @@ Abc_Ntk_t *PerformSupperMap(Abc_Ntk_t *pNtk, const Config &cfg)
         std::println(std::cout, "    graph info: PI = {}, PO = {}, LOGIC = {}", mgr->num_pi(), mgr->num_po(), mgr->num_logic());
     }
 
-    mgr->timer().start("mapping");
+    mgr->timer().start("lut_mapping");
+    ///////////////////////////////////////
     graph_t *g = mgr->run_lut_mapping(cfg);
-    mgr->timer().stop("mapping");
+    ///////////////////////////////////////
+    mgr->timer().stop ("lut_mapping");
 
-    mgr->timer().start("create_ntk");
-    Abc_Ntk_t *res_ntk = nullptr;
-    if (g)
-        res_ntk = static_cast<Abc_Ntk_t *>(g->to_abc_ntk());
-    else
-        res_ntk = static_cast<Abc_Ntk_t *>(mgr->create_abc_ntk_from_mapping());
-    mgr->timer().stop("create_ntk");
-
-    delete g;
-    delete mgr;
+    mgr->timer().start("create_abc_ntk");
+    ///////////////////////////////////////
+    Abc_Ntk_t *res_ntk = static_cast<Abc_Ntk_t *>(g ? g->to_abc_ntk() : mgr->create_abc_ntk_from_mapping());
+    ///////////////////////////////////////
+    mgr->timer().stop ("create_abc_ntk");
 
     TIME_STOP(ALL);
+
     if (cfg.verbose) {
-        std::print(std::cout, ">>> Runtime Report\n");
-        std::print(std::cout, "  Total CPU  Time {}\n", Timer::formatted_time(cpu_ALL,  5));
-        std::print(std::cout, "  Total Wall Time {}\n", Timer::formatted_time(wall_ALL, 5));
+        std::println(std::cout, ">>> Runtime Report");
+        std::println(std::cout, "  Total CPU  Time {}  ", Timer::formatted_time(cpu_ALL,  5));
+        std::println(std::cout, "  Total Wall Time {}\n", Timer::formatted_time(wall_ALL, 5));
+        mgr->timer().report(std::cout);
     }
+
+    ///////////////////////////////////////
+    delete g;
+    delete mgr;
+    ///////////////////////////////////////
 
     return res_ntk;
 }

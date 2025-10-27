@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <ctime>
 #include <format>
 #include <type_traits>
 #include <memory>
@@ -133,9 +134,12 @@ class Timer {
     uint  _precision {1};
     char  _alignment {'r'};
 
+    std::clock_t _cpu_start;
 public:
-     Timer() = default;
-    ~Timer() = default;
+
+    Timer() {
+        _cpu_start = std::clock();
+    }
 
     static std::string formatted_time(double time_sec, int width, int precision = 1, char alignment = 'r') {
         std::string unit = " s";
@@ -166,6 +170,7 @@ public:
     void start(const std::string &name) {
         _cpu_points[name]  = std::clock();
         _wall_points[name] = std::chrono::high_resolution_clock::now();
+        _names.insert(name);
     }
 
     void stop(const std::string &name) {
@@ -191,7 +196,6 @@ public:
             }
             return Timer::formatted_time(total, _width, _precision, _alignment);
         }
-
         if (_cpu_durations.find(name) == _cpu_durations.end())
             return "None";
         return Timer::formatted_time(_cpu_durations.at(name), _width, _precision, _alignment);
@@ -210,6 +214,21 @@ public:
         if (_wall_durations.find(name) == _wall_durations.end())
             return "None";
         return Timer::formatted_time(_wall_durations.at(name), _width, _precision, _alignment);
+    }
+
+    void report(std::ostream &os) const {
+        const double cpu_time = double(std::clock() - _cpu_start) / CLOCKS_PER_SEC;
+        os << std::format("  {:<20} {:>15} {:>15} {:>12}\n", "Action", "CPU Time", "Wall Time", "Ratio");
+        #define PRINT_TIME(Stage)                                     \
+        os << std::format("  {:<20} {:>15} {:>15} {:>10.1f} %\n", Stage,   \
+            Timer::formatted_time(_cpu_durations. at(Stage), _width), \
+            Timer::formatted_time(_wall_durations.at(Stage), _width), \
+            _cpu_durations. at(Stage) * 100.0 / cpu_time              \
+        );
+        PRINT_TIME("create_graph"  )
+        PRINT_TIME("lut_mapping"   )
+        PRINT_TIME("cut_enum"      )
+        PRINT_TIME("create_abc_ntk")
     }
 };
 
