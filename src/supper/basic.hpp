@@ -232,4 +232,69 @@ public:
     }
 };
 
+// ====================================================================
+// Cut related utility functions
+// ====================================================================
+static Inline uint *set_union(uint *dest,
+                              const uint *begin1, const uint *end1,
+                              const uint *begin2, const uint *end2,
+                              uint max_size)
+{
+  int size1 = end1 - begin1;
+  int size2 = end2 - begin2;
+  int nLimit = max_size;
+  int i, k, c, s;
+
+  // both cuts are the largest
+  if (size1 == nLimit && size2 == nLimit) [[unlikely]] {
+    for (i = 0; i < size1; i++) {
+      if (begin1[i] != begin2[i])
+        return nullptr;
+      dest[i] = begin1[i];
+    }
+    return dest + max_size;
+  }
+
+  // compare two cuts with different numbers
+  i = k = c = s = 0;
+//   if (size1 == 0)
+//     goto FlushCut1;
+//   if (size2 == 0)
+//     goto FlushCut0;
+  while (1) {
+    if (c == nLimit)
+      return nullptr;
+    if (begin1[i] < begin2[k]) {
+      dest[c++] = begin1[i++];
+      if (i == size1)
+        goto FlushCut1;
+    } else if (begin1[i] > begin2[k]) {
+      dest[c++] = begin2[k++];
+      if (k == size2)
+        goto FlushCut0;
+    } else {
+      dest[c++] = begin1[i++];
+      k++;
+      if (i == size1)
+        goto FlushCut1;
+      if (k == size2)
+        goto FlushCut0;
+    }
+  }
+
+FlushCut0:
+  if (c + size1 > nLimit + i)
+    return nullptr;
+  while (i < size1)
+    dest[c++] = begin1[i++];
+  return dest + c;
+
+FlushCut1:
+  if (c + size2 > nLimit + k)
+    return nullptr;
+  while (k < size2)
+    dest[c++] = begin2[k++];
+  return dest + c;
+}
+
 } // namespace fox::supper

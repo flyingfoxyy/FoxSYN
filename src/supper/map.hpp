@@ -410,7 +410,8 @@ public:
         gen_cuts .reserve(merge_num_upper / 1.5);
         gen_costs.reserve(merge_num_upper / 1.5);
 
-        uint buffer[Cut::MAX_CUT_SIZE << 1] {0};
+        uint  buffer[Cut::MAX_CUT_SIZE << 1] {0};
+        uint *end;
 
         Area min_area = 1000000.0;
 
@@ -421,14 +422,10 @@ public:
                 continue;
             std::memset(buffer, 0, sizeof(uint) * (cfg.cut_size * 2));
             // TODO: using optimized merge
-            uint *end = std::set_union(
-                c0->leaves, c0->leaves + c0->size,
-                c1->leaves, c1->leaves + c1->size,
-                buffer
-            );
-            const int size = end - buffer;
-            if (size > cfg.cut_size)
+            if (end = set_union(buffer, c0->leaves, c0->leaves + c0->size, c1->leaves, c1->leaves + c1->size, cfg.cut_size); !end)
                 continue;
+            const int size = end - buffer;
+            assert (size <= cfg.cut_size);
             Cut *cut = allocate<Cut>(size, (uint *)buffer, end, c0->sign | c1->sign);
             gen_cuts.push_back(cut);
             // compute cut cost according to the algo
