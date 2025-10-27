@@ -11,7 +11,7 @@
 #include "basic.hpp"
 #include "map.hpp"
 
-// using namespace abc;
+using namespace abc;
 
 namespace fox::supper {
 std::string
@@ -62,7 +62,7 @@ graph_t::to_abc_ntk()
 void
 MappingPass::improve_mapping_exactly(mapper &mgr)
 {
-    TIME_BEGIN(T)
+    TIME_START(T)
     ForEachGraphLogicNode(mgr)
     {
         Cut *best_cut = mgr.best_cut(idx);
@@ -99,7 +99,7 @@ MappingPass::improve_mapping_exactly(mapper &mgr)
     }
 
     if (mgr.config().verbose) {
-        TIME_END(T)
+        TIME_STOP(T)
         std::println(std::cout, "Ex LUT {}\tEdge {}\t Time {}", mgr.num_area(), mgr.num_edge(), Timer::formatted_time(cpu_T, 5));
     }
 }
@@ -130,6 +130,8 @@ mapper::create_from_aig(void *ntk)
     }
 
     mapper *mgr = new mapper(Abc_NtkObjNumMax(pNtk), Abc_NtkPiNum(pNtk), Abc_NtkPoNum(pNtk));
+
+    mgr->timer().start("create_graph");
 
     for (int n = 0; n != pNtk->vObjs->nSize; ++n) {
         Abc_Obj_t *pObj = Abc_NtkObj(pNtk, n);
@@ -164,6 +166,8 @@ mapper::create_from_aig(void *ntk)
     }
 
     mgr->initialize();
+
+    mgr->timer().stop("create_graph");
 
     return mgr;
 }
@@ -204,8 +208,9 @@ mapper::compute_truth(Cut *cut, uint root) const
         return t0 & t1;
     }
 
+    std::map<uint, word> cache;
+
     const uint min_id = cut->leaves[0];
-    std::vector<word> cache(root - min_id + 1, 0);
     ForEachCutLeaf(cut) {
         cache[leaf - min_id] = initTable[i];
     }
@@ -364,36 +369,41 @@ mapper::run_lut_mapping(const Config &cfg)
 
 Abc_Ntk_t *PerformSupperMap(Abc_Ntk_t *pNtk, const Config &cfg)
 {
-    TIME_BEGIN(supermap);
-    TIME_BEGIN(create_mapper);
+    TIME_START(ALL);
     mapper *mgr = mapper::create_from_aig(static_cast<void *>(pNtk));
-    if (!mgr) [[unlikely]]
+    if (!mgr) [[unlikely]] {
+        std::println(std::cout, "SuperMap: failed to create mapper.");
         return nullptr;
-    if (cfg.verbose) {
-        std::cout << "created mapping graph with " << mgr->num_nodes() << " nodes. (PI = "
-                  << mgr->num_pi() << ", PO = " << mgr->num_po() << ", LOGIC = " << mgr->num_logic() << ")\n";
     }
-    TIME_END(create_mapper)
-    TIME_BEGIN(mapping)
-    graph_t *mapped_graph = mgr->run_lut_mapping(cfg);
-    Abc_Ntk_t *abc_mapped = nullptr;
-    if (mapped_graph)
-        abc_mapped = static_cast<Abc_Ntk_t *>(mapped_graph->to_abc_ntk());
-    else
-        abc_mapped = static_cast<Abc_Ntk_t *>(mgr->create_abc_ntk_from_mapping());
-    TIME_END(mapping)
-    TIME_END(supermap);
 
-    delete mapped_graph;
+    if (cfg.verbose) {
+        std::println(std::cout, ">>> SuperMap Started");
+        std::println(std::cout, "    graph info: PI = {}, PO = {}, LOGIC = {}", mgr->num_pi(), mgr->num_po(), mgr->num_logic());
+    }
+
+    mgr->timer().start("mapping");
+    graph_t *g = mgr->run_lut_mapping(cfg);
+    mgr->timer().stop("mapping");
+
+    mgr->timer().start("create_ntk");
+    Abc_Ntk_t *res_ntk = nullptr;
+    if (g)
+        res_ntk = static_cast<Abc_Ntk_t *>(g->to_abc_ntk());
+    else
+        res_ntk = static_cast<Abc_Ntk_t *>(mgr->create_abc_ntk_from_mapping());
+    mgr->timer().stop("create_ntk");
+
+    delete g;
     delete mgr;
 
+    TIME_STOP(ALL);
     if (cfg.verbose) {
         std::print(std::cout, ">>> Runtime Report\n");
-        std::print(std::cout, "  Total CPU  Time {}\n", Timer::formatted_time(cpu_supermap,  5));
-        std::print(std::cout, "  Total Wall Time {}\n", Timer::formatted_time(wall_supermap, 5));
+        std::print(std::cout, "  Total CPU  Time {}\n", Timer::formatted_time(cpu_ALL,  5));
+        std::print(std::cout, "  Total Wall Time {}\n", Timer::formatted_time(wall_ALL, 5));
     }
 
-    return abc_mapped;
+    return res_ntk;
 }
 
 }

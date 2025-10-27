@@ -15,6 +15,7 @@
 #include <functional>
 #include <deque>
 #include <chrono>
+#include <print>
 
 #include "macros.hpp"
 #include "basic.hpp"
@@ -276,8 +277,7 @@ class mapper : public graph_t {
     std::vector<std::string> _pi_names;
     std::vector<std::string> _po_names;
 
-    // cache
-    std::vector<uint64_t> _cache;
+    Timer _timer;
 
     uint _num_area {0};
     uint _num_edge {0};
@@ -294,7 +294,6 @@ public:
             std::cout << "Node number exceeds maximum limit " << kMax << ", quit.\n";
             std::exit(1);
         }
-        _cache   .resize(100,          0);
         _int_ref .resize(max_node_num, 0);
         _est_ref .resize(max_node_num, 0);
         _area    .resize(max_node_num, 0);
@@ -341,6 +340,8 @@ public:
         return _rank_fn(lhs, rhs, _cfg.epsilon);
     }
 
+    Timer &timer() { return _timer; }
+
     graph_t *run_lut_mapping(const Config &cfg);
 
     graph_t *create_mapped_graph();
@@ -372,7 +373,7 @@ enum class CutCostAlgo {
     EXACT
 };
 
-enum class heristic_t {
+enum class heuristic_t {
     PRAETOR,
     FLOW,
     EXACT
@@ -592,7 +593,7 @@ class MappingPass {
 
 public:
     MappingPass(CutCostAlgo algo, mapper &mgr, int pass) : _mgr(mgr) {
-        TIME_BEGIN(T)
+        TIME_START(T)
         if (algo == CutCostAlgo::FLOW)
             _forward = std::make_unique<ForwardFlow> (mgr);
         else if (algo == CutCostAlgo::EXACT)
@@ -610,7 +611,7 @@ public:
         _backword->impl();
 
         if (mgr.config().verbose) {
-            TIME_END(T)
+            TIME_STOP(T)
             std::println(std::cout, "P{} LUT {}\tEdge {}\t Time {}", pass, mgr.num_area(), mgr.num_edge(), Timer::formatted_time(cpu_T, 5));
         }
 
