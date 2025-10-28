@@ -1,5 +1,6 @@
 #pragma once
 
+#include <bit>
 #include <cstdint>
 #include <ctime>
 #include <format>
@@ -61,7 +62,7 @@ class SigMap : public std::vector<T> {
 public:
     enum class flag_t : uint8_t {
         RESERVE,
-        ALLOCATE
+        ALLOC
     };
 
     template <typename... Args>
@@ -186,7 +187,7 @@ public:
         _wall_durations[name] += wall_duration;
     }
 
-    std::string time_duration_cpu (const std::string &name, bool fuzzy = false) const {
+    std::string time_duration_cpu(const std::string &name, bool fuzzy = false) const {
         if (fuzzy) {
             double total = 0.0;
             for (const auto &[key, duration] : _cpu_durations) {
@@ -242,11 +243,10 @@ static Inline uint *set_union(uint *dest,
 {
   int size1 = end1 - begin1;
   int size2 = end2 - begin2;
-  int nLimit = max_size;
   int i, k, c, s;
 
   // both cuts are the largest
-  if (size1 == nLimit && size2 == nLimit) [[unlikely]] {
+  if (size1 == max_size && size2 == max_size) [[unlikely]] {
     for (i = 0; i < size1; i++) {
       if (begin1[i] != begin2[i])
         return nullptr;
@@ -257,12 +257,8 @@ static Inline uint *set_union(uint *dest,
 
   // compare two cuts with different numbers
   i = k = c = s = 0;
-//   if (size1 == 0)
-//     goto FlushCut1;
-//   if (size2 == 0)
-//     goto FlushCut0;
   while (1) {
-    if (c == nLimit)
+    if (c == max_size)
       return nullptr;
     if (begin1[i] < begin2[k]) {
       dest[c++] = begin1[i++];
@@ -283,18 +279,27 @@ static Inline uint *set_union(uint *dest,
   }
 
 FlushCut0:
-  if (c + size1 > nLimit + i)
+  if (c + size1 > max_size + i)
     return nullptr;
   while (i < size1)
     dest[c++] = begin1[i++];
   return dest + c;
 
 FlushCut1:
-  if (c + size2 > nLimit + k)
+  if (c + size2 > max_size + k)
     return nullptr;
   while (k < size2)
     dest[c++] = begin2[k++];
   return dest + c;
+}
+
+// ====================================================================
+// Pointer manipulation
+// ====================================================================
+template <typename T>
+static Inline int popcount(T var) {
+    static_assert(std::is_integral_v<T>);
+    return std::popcount(var);
 }
 
 } // namespace fox::supper

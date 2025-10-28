@@ -349,7 +349,7 @@ mapper::run_lut_mapping(const Config &cfg)
 {
     _cfg = cfg;
 
-    _rank_fn = CutCost::GetRankFn(0);
+    _rank_fn = CutCost::GetRankFn(_cfg.opt_target);
 
     // Setup PI cuts
     ForEachGraphPi(*this) {

@@ -195,7 +195,6 @@ public:
 
     enum class map_impl_t : uint32_t {
         PRIORITY_CUTS = 0x1,
-        PRAETOR       = 0x2,
         AGDMAP        = 0x4,
         ACDMAP        = 0x8
     };
@@ -243,7 +242,7 @@ struct CutCost {
         return str;
     }
 
-    static rank_fn GetRankFn(int mode) {
+    static rank_fn GetRankFn(Config::target_t mode) {
         auto rank_fn_area_edge = [](const CutCost &lhs, const CutCost &rhs, float epsilon) -> auto {
             if (lhs.area + epsilon < rhs.area)  return cmp_res::LWIN;
             if (lhs.area - epsilon > rhs.area)  return cmp_res::RWIN;
@@ -253,9 +252,21 @@ struct CutCost {
             if (lhs.size > rhs.size)    return cmp_res::RWIN;
             return cmp_res::SAME;
         };
-        if (mode == 0) // area
+        auto rank_fn_delay_size_area_edge = [](const CutCost &lhs, const CutCost &rhs, float epsilon) -> auto {
+            if (lhs.arr < rhs.arr)    return cmp_res::LWIN;
+            if (lhs.arr > rhs.arr)    return cmp_res::RWIN;
+            if (lhs.size < rhs.size)  return cmp_res::LWIN;
+            if (lhs.size > rhs.size)  return cmp_res::RWIN;
+            if (lhs.area + epsilon < rhs.area)  return cmp_res::LWIN;
+            if (lhs.area - epsilon > rhs.area)  return cmp_res::RWIN;
+            if (lhs.edge + epsilon < rhs.edge)  return cmp_res::LWIN;
+            if (lhs.edge - epsilon > rhs.edge)  return cmp_res::RWIN;
+            return cmp_res::SAME;
+        };
+        if (mode == Config::target_t::AREA) // area
             return rank_fn_area_edge;
-        return rank_fn_area_edge;
+        else
+            return rank_fn_delay_size_area_edge; // delay
     }
 };
 
@@ -399,21 +410,15 @@ public:
         // If num_c0 * num_c1 > max_cut_num, we need to prune the cuts, i.e., full cut ranking is needed
         // However, if num_c0 * num_c1 <= max_cut_num, we only need to merge the cuts and find the best one
         // Complexity reduced from O(nlogn) to O(n)
-        const bool sort = merge_num_upper > cfg.max_cut_num;
+        // const bool sort = merge_num_upper > cfg.max_cut_num;
 
         // int merge_idx = -1;
         // int num_valid = 0;
 
-        std::vector<Cut *>   gen_cuts;
-        std::vector<CutCost> gen_costs;
-    
-        gen_cuts .reserve(merge_num_upper / 1.5);
-        gen_costs.reserve(merge_num_upper / 1.5);
+        std::vector<Cut *> cuts; cuts.reserve(merge_num_upper + 1);
 
         uint  buffer[Cut::MAX_CUT_SIZE << 1] {0};
         uint *end;
-
-        Area min_area = 1000000.0;
 
         for (int i0 = 0; i0 != cuts0.size(); ++i0) { Cut *c0 = cuts0[i0];
         for (int i1 = 0; i1 != cuts1.size(); ++i1) { Cut *c1 = cuts1[i1];
@@ -427,12 +432,26 @@ public:
             const int size = end - buffer;
             assert (size <= cfg.cut_size);
             Cut *cut = allocate<Cut>(size, (uint *)buffer, end, c0->sign | c1->sign);
-            gen_cuts.push_back(cut);
+            cuts.push_back(cut);
+        }} // end merge cuts
+
+
+        // Restore the best cut from previous pass
+        if (Cut *best = mgr.best_cut(id); best) {
+            cuts.push_back(best->clone());
+        }
+
+        // compute cut costs
+        std::vector<CutCost> costs; costs.reserve(cuts.size());
+        Area min_area = 100000.0;
+        for (int i = 0; i != cuts.size(); ++i) {
+            Cut *cut = cuts[i];
             // compute cut cost according to the algo
             CutCost cost;
-            if constexpr (algo == CutCostAlgo::FLOW) {
+            switch (algo) {
+            case CutCostAlgo::FLOW: {
                 cost.size = cut->size;
-                cost.idx  = gen_cuts.size() - 1;
+                cost.idx  = i;
                 // area-flow/edge-flow
                 for (int i = 0; i != cut->size; ++i) {
                     uint leaf = cut->leaves[i];
@@ -442,61 +461,73 @@ public:
                 // TODO: using cost library
                 cost.area += 1.0;
                 cost.edge += cut->size;
-            } else if constexpr (algo == CutCostAlgo::EXACT) {
-                assert(0);
-            } else if constexpr (algo == CutCostAlgo::PRAETOR) {
-                assert(0);
-            } else {
-                static_assert(0);
+                break;
             }
-            gen_costs.push_back(cost);
+            case CutCostAlgo::EXACT: {
+                break;
+            }
+            case CutCostAlgo::PRAETOR: {
+                break;
+            }
+            default:
+                break;
+            }
+            if (cost.area > min_area + 1.0) {
+                deallocate(cut);
+                continue;
+            }
+            costs.push_back(cost);
             min_area = std::min(min_area, cost.area);
-        }} // end merge cuts
+        }
 
         float epsilon = cfg.epsilon;
-        CutCost::rank_fn fn = CutCost::GetRankFn(0);
+        CutCost::rank_fn fn = CutCost::GetRankFn(mgr.config().opt_target);
         auto fn_wrap = [epsilon, fn](const CutCost &lhs, const CutCost &rhs) -> bool {
             return fn(lhs, rhs, epsilon) == CutCost::cmp_res::LWIN;
         };
 
-        std::vector<CutCost> new_costs;
-        for (auto cost : gen_costs) {
-            if (cost.area <= min_area + 1.0) {
-                new_costs.push_back(cost);
-            }
-        }
-        std::swap(new_costs, gen_costs);
+        // std::vector<CutCost> new_costs;
+        // for (auto cost : costs) {
+        //     if (cost.area <= min_area + 1.0) {
+        //         new_costs.push_back(cost);
+        //     }
+        // }
+        // std::swap(new_costs, costs);
 
-        if (sort) {
-            std::sort(gen_costs.begin(), gen_costs.end(), fn_wrap);
+        std::cout << costs.size() << "\n";
+
+        if (costs.size() > cfg.max_cut_num) {
+            std::sort(costs.begin(), costs.end(), fn_wrap);
         } else {
-            auto best_itr = std::min_element(gen_costs.begin(), gen_costs.end(), fn_wrap);
-            assert(best_itr != gen_costs.end());
-            std::iter_swap(gen_costs.begin(), best_itr);
+            auto best_itr = std::min_element(costs.begin(), costs.end(), fn_wrap);
+            std::iter_swap(costs.begin(), best_itr);
         }
 
         // mapping cost ranking back to cuts
-        std::vector<Cut *> &cuts = mgr.cut_set(id);
-        for (int i = 0; i != gen_costs.size() && i != cfg.max_cut_num; ++i) {
-            Cut *&cut = gen_cuts[gen_costs[i].idx];
-            cuts.push_back(cut);
+        std::vector<Cut *> &cut_set = mgr.cut_set(id);
+        for (int i = 0; i != costs.size() && i != cfg.max_cut_num; ++i) {
+            Cut *&cut = cuts[costs[i].idx];
+            cut_set.push_back(cut);
             cut = nullptr;
         }
-        for (Cut *cut : gen_cuts) {
+        for (Cut *cut : cuts) {
             deallocate(cut);
         }
-        mgr.best_cut(id) = cuts.front()->clone(cfg.cut_size);
+
+        // Save the best cut
+        mgr.best_cut(id) = cut_set.front()->clone(cfg.cut_size);
+
         // Set the node area/edge/arr info
         const float ratio = 1.0 / std::max(1.0f, float(mgr.num_est_ref(id)));
-        mgr.area(id) = gen_costs.front().area * ratio;
-        mgr.edge(id) = gen_costs.front().edge * ratio;
+        mgr.area(id) = costs.front().area * ratio;
+        mgr.edge(id) = costs.front().edge * ratio;
 
         // create trivial cut
         Cut *triv_cut = allocate<Cut>(1, id);
         if constexpr (algo == CutCostAlgo::PRAETOR) {
 
         }
-        cuts.push_back(triv_cut);
+        cut_set.push_back(triv_cut);
     }
 };
 
