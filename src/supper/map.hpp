@@ -393,57 +393,8 @@ enum class heuristic_t {
 // normal enumerate cut way
 template <CutCostAlgo algo>
 class CutEnumerator {
-public:
-    static void run(mapper &mgr, uint id) {
-        const Config &cfg = mgr.config();
-
-        const auto &node = mgr[id];
-        assert(node.is_logic());
-
-        Lit f0 = node[0];
-        Lit f1 = node[1];
-
-        const std::vector<Cut *> &cuts0 = mgr.cut_set(f0);
-        const std::vector<Cut *> &cuts1 = mgr.cut_set(f1);
-
-        const uint merge_num_upper = (cuts0.size() + 1) * (cuts1.size() + 1);
-        // If num_c0 * num_c1 > max_cut_num, we need to prune the cuts, i.e., full cut ranking is needed
-        // However, if num_c0 * num_c1 <= max_cut_num, we only need to merge the cuts and find the best one
-        // Complexity reduced from O(nlogn) to O(n)
-        // const bool sort = merge_num_upper > cfg.max_cut_num;
-
-        // int merge_idx = -1;
-        // int num_valid = 0;
-
-        std::vector<Cut *> cuts; cuts.reserve(merge_num_upper + 1);
-
-        uint  buffer[Cut::MAX_CUT_SIZE << 1] {0};
-        uint *end;
-
-        for (int i0 = 0; i0 != cuts0.size(); ++i0) { Cut *c0 = cuts0[i0];
-        for (int i1 = 0; i1 != cuts1.size(); ++i1) { Cut *c1 = cuts1[i1];
-            // ++merge_idx;
-            if (c0->size + c1->size > cfg.cut_size && __builtin_popcount(c0->sign | c1->sign) > cfg.cut_size)
-                continue;
-            std::memset(buffer, 0, sizeof(uint) * (cfg.cut_size * 2));
-            // TODO: using optimized merge
-            if (end = set_union(buffer, c0->leaves, c0->leaves + c0->size, c1->leaves, c1->leaves + c1->size, cfg.cut_size); !end)
-                continue;
-            const int size = end - buffer;
-            assert (size <= cfg.cut_size);
-            Cut *cut = allocate<Cut>(size, (uint *)buffer, end, c0->sign | c1->sign);
-            cuts.push_back(cut);
-        }} // end merge cuts
-
-
-        // Restore the best cut from previous pass
-        if (Cut *best = mgr.best_cut(id); best) {
-            cuts.push_back(best->clone());
-        }
-
-        // compute cut costs
+    static std::vector<CutCost> compute_cut_cost(mapper &mgr, std::vector<Cut *> &cuts) {
         std::vector<CutCost> costs; costs.reserve(cuts.size());
-        Area min_area = 100000.0;
         for (int i = 0; i != cuts.size(); ++i) {
             Cut *cut = cuts[i];
             // compute cut cost according to the algo
@@ -472,13 +423,53 @@ public:
             default:
                 break;
             }
-            if (cost.area > min_area + 1.0) {
-                deallocate(cut);
-                continue;
-            }
             costs.push_back(cost);
-            min_area = std::min(min_area, cost.area);
         }
+        return costs;
+    }
+
+public:
+    static void run(mapper &mgr, uint id) {
+        const Config &cfg = mgr.config();
+
+        Lit f0 = mgr[id][0];
+        Lit f1 = mgr[id][1];
+
+        const std::vector<Cut *> &cuts0 = mgr.cut_set(f0);
+        const std::vector<Cut *> &cuts1 = mgr.cut_set(f1);
+
+        uint  merge_num_upper = cuts0.size() * cuts1.size();
+        uint  buffer[Cut::MAX_CUT_SIZE << 1] {0};
+        uint *end;
+
+        std::vector<Cut *> cuts; cuts.reserve(merge_num_upper + 1);
+
+        for (int i0 = 0; i0 != cuts0.size(); ++i0) { Cut *c0 = cuts0[i0];
+        for (int i1 = 0; i1 != cuts1.size(); ++i1) { Cut *c1 = cuts1[i1];
+            // ++merge_idx;
+            if (c0->size + c1->size > cfg.cut_size && __builtin_popcount(c0->sign | c1->sign) > cfg.cut_size)
+                continue;
+            std::memset(buffer, 0, sizeof(uint) * (cfg.cut_size * 2));
+            // TODO: using optimized merge
+            if (end = set_union(buffer, c0->leaves, c0->leaves + c0->size, c1->leaves, c1->leaves + c1->size, cfg.cut_size); !end)
+                continue;
+            const int size = end - buffer;
+            assert (size <= cfg.cut_size);
+            Cut *cut = allocate<Cut>(size, (uint *)buffer, end, c0->sign | c1->sign);
+            cuts.push_back(cut);
+        }} // end merge cuts
+
+        // Structure-based pruning
+
+        // Restore the best cut from previous pass
+        // if (Cut *best = mgr.best_cut(id); best) {
+        //     cuts.push_back(best->clone());
+        // }
+
+        // Calculate the cut cost
+        std::vector<CutCost> costs = compute_cut_cost(mgr, cuts);
+
+        // Cost-based cut pruning
 
         float epsilon = cfg.epsilon;
         CutCost::rank_fn fn = CutCost::GetRankFn(mgr.config().opt_target);
@@ -486,19 +477,9 @@ public:
             return fn(lhs, rhs, epsilon) == CutCost::cmp_res::LWIN;
         };
 
-        // std::vector<CutCost> new_costs;
-        // for (auto cost : costs) {
-        //     if (cost.area <= min_area + 1.0) {
-        //         new_costs.push_back(cost);
-        //     }
-        // }
-        // std::swap(new_costs, costs);
-
-        std::cout << costs.size() << "\n";
-
-        if (costs.size() > cfg.max_cut_num) {
+        if (costs.size() > cfg.max_cut_num){
             std::sort(costs.begin(), costs.end(), fn_wrap);
-        } else {
+        } else{
             auto best_itr = std::min_element(costs.begin(), costs.end(), fn_wrap);
             std::iter_swap(costs.begin(), best_itr);
         }
@@ -524,9 +505,7 @@ public:
 
         // create trivial cut
         Cut *triv_cut = allocate<Cut>(1, id);
-        if constexpr (algo == CutCostAlgo::PRAETOR) {
-
-        }
+        if constexpr (algo == CutCostAlgo::PRAETOR) {}
         cut_set.push_back(triv_cut);
     }
 };
