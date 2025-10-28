@@ -294,6 +294,8 @@ class mapper : public graph_t {
     uint _num_edge {0};
     uint _num_delay{0};
 
+    uint64_t _stat_cut[3]{0}; // merged; k-cut; final
+
 public:
     friend class enumerate_cut;
 
@@ -346,6 +348,8 @@ public:
 
     Inline const std::string &get_pi_name(uint idx) const { return _pi_names[idx]; }
     Inline const std::string &get_po_name(uint idx) const { return _po_names[idx]; }
+
+    uint64_t *get_stat_cut() { return _stat_cut; }
 
     CutCost::cmp_res compare(const CutCost &lhs, const CutCost &rhs) {
         return _rank_fn(lhs, rhs, _cfg.epsilon);
@@ -442,6 +446,8 @@ public:
         uint  buffer[Cut::MAX_CUT_SIZE << 1] {0};
         uint *end;
 
+        mgr.get_stat_cut()[0] += merge_num_upper;
+
         std::vector<Cut *> cuts; cuts.reserve(merge_num_upper + 1);
 
         for (int i0 = 0; i0 != cuts0.size(); ++i0) { Cut *c0 = cuts0[i0];
@@ -458,6 +464,8 @@ public:
             Cut *cut = allocate<Cut>(size, (uint *)buffer, end, c0->sign | c1->sign);
             cuts.push_back(cut);
         }} // end merge cuts
+
+        mgr.get_stat_cut()[1] += cuts.size();
 
         // Structure-based pruning
 
@@ -502,6 +510,9 @@ public:
         const float ratio = 1.0 / std::max(1.0f, float(mgr.num_est_ref(id)));
         mgr.area(id) = costs.front().area * ratio;
         mgr.edge(id) = costs.front().edge * ratio;
+
+        // Statics
+        mgr.get_stat_cut()[2] += cut_set.size();
 
         // create trivial cut
         Cut *triv_cut = allocate<Cut>(1, id);
@@ -621,7 +632,8 @@ public:
 
         if (mgr.config().verbose) {
             TIME_STOP(T)
-            std::println(std::cout, "P{} LUT {}\tEdge {}\t Time {}", pass, mgr.num_area(), mgr.num_edge(), Timer::formatted_time(cpu_T, 5));
+            std::println(std::cout, "P{} LUT {} Edge {} Cut {} {} {} Time {}", pass, mgr.num_area(), mgr.num_edge(),
+                _mgr.get_stat_cut()[0], _mgr.get_stat_cut()[1], _mgr.get_stat_cut()[2], Timer::formatted_time(cpu_T, 5));
         }
 
         improve_mapping_exactly(mgr);
@@ -631,6 +643,10 @@ public:
         _mgr.free_cuts();
         _mgr.num_area() = 0;
         _mgr.num_edge() = 0;
+        uint64_t *cut_stat = _mgr.get_stat_cut();
+        cut_stat[0] = 0;
+        cut_stat[1] = 0;
+        cut_stat[2] = 0;
     }
 };
 

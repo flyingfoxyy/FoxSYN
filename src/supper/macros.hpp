@@ -33,3 +33,7 @@
 #else
     #define Inline
 #endif
+
+#define INFO1 "P{} LUT {:>6} Edge {:>6} Cut {} {} {} Time {}"
+#define INFO2 "P{} LUT {:>6} Edge {:>6} Cut {} {} {} Time {}"
+
