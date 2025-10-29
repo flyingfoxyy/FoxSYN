@@ -34,6 +34,7 @@
     #define Inline
 #endif
 
-#define INFO1 "P{} LUT {:>6} Edge {:>6} Cut {} {} {} Time {}"
-#define INFO2 "P{} LUT {:>6} Edge {:>6} Cut {} {} {} Time {}"
+#define INFO1 "P{} LUT {:>6}   Edge {:>6}   Time {}   Cut {:>6} {:>6} {:>6}"
+#define INFO2 "P{} LUT {:>6}   Edge {:>6}   Time {}"
+#define INFO3 "Ex LUT {:>6}   Edge {:>6}   Time {}"
 

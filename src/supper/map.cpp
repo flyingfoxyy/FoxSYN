@@ -101,7 +101,7 @@ MappingPass::improve_mapping_exactly(mapper &mgr)
 
     if (mgr.config().verbose) {
         TIME_STOP(T)
-        std::println(std::cout, "Ex LUT {}\tEdge {}\t Time {}", mgr.num_area(), mgr.num_edge(), Timer::formatted_time(cpu_T, 5));
+        std::println(std::cout, INFO3, mgr.num_area(), mgr.num_edge(), Timer::formatted_time(cpu_T, 5));
     }
 }
 

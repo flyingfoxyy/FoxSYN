@@ -349,7 +349,10 @@ public:
     Inline const std::string &get_pi_name(uint idx) const { return _pi_names[idx]; }
     Inline const std::string &get_po_name(uint idx) const { return _po_names[idx]; }
 
-    uint64_t *get_stat_cut() { return _stat_cut; }
+    // uint64_t *get_stat_cut() { return _stat_cut; }
+    uint64_t &num_merged    () { return _stat_cut[0]; }
+    uint64_t &num_k_feasible() { return _stat_cut[1]; }
+    uint64_t &num_stored    () { return _stat_cut[2]; }
 
     CutCost::cmp_res compare(const CutCost &lhs, const CutCost &rhs) {
         return _rank_fn(lhs, rhs, _cfg.epsilon);
@@ -446,7 +449,7 @@ public:
         uint  buffer[Cut::MAX_CUT_SIZE << 1] {0};
         uint *end;
 
-        mgr.get_stat_cut()[0] += merge_num_upper;
+        mgr.num_merged() += merge_num_upper;
 
         std::vector<Cut *> cuts; cuts.reserve(merge_num_upper + 1);
 
@@ -465,7 +468,7 @@ public:
             cuts.push_back(cut);
         }} // end merge cuts
 
-        mgr.get_stat_cut()[1] += cuts.size();
+        mgr.num_k_feasible() += cuts.size();
 
         // Structure-based pruning
 
@@ -512,7 +515,7 @@ public:
         mgr.edge(id) = costs.front().edge * ratio;
 
         // Statics
-        mgr.get_stat_cut()[2] += cut_set.size();
+        mgr.num_stored() += cut_set.size();
 
         // create trivial cut
         Cut *triv_cut = allocate<Cut>(1, id);
@@ -535,12 +538,10 @@ class ForwardFlow : public Forward {
 public:
     ForwardFlow(mapper &mgr) : Forward(mgr) {}
 
-    virtual void impl() {
-        _mgr.timer().start("cut_enum");
+    virtual void impl() {        
         ForEachGraphLogicNode(_mgr) {
             CutEnumerator<CutCostAlgo::FLOW>::run(_mgr, idx);
         }
-        _mgr.timer().stop ("cut_enum");
     }
 };
 
@@ -627,26 +628,36 @@ public:
             // do nothing, using previous pass's reference count for next cost compute
         }
 
+        _mgr.timer().start("forward");
+        ///////////////////////////////////////
         _forward ->impl();
+        ///////////////////////////////////////
+        _mgr.timer().stop ("forward");
+
+        _mgr.timer().start("backword");
+        ///////////////////////////////////////
         _backword->impl();
+        ///////////////////////////////////////
+        _mgr.timer().stop("backword");
 
         if (mgr.config().verbose) {
             TIME_STOP(T)
-            std::println(std::cout, "P{} LUT {} Edge {} Cut {} {} {} Time {}", pass, mgr.num_area(), mgr.num_edge(),
-                _mgr.get_stat_cut()[0], _mgr.get_stat_cut()[1], _mgr.get_stat_cut()[2], Timer::formatted_time(cpu_T, 5));
+            std::println(std::cout, INFO1, pass, mgr.num_area(), mgr.num_edge(), Timer::formatted_time(cpu_T, 5),
+                _mgr.num_merged(), _mgr.num_k_feasible(), _mgr.num_stored());
         }
 
+        ///////////////////////////////////////
         improve_mapping_exactly(mgr);
+        ///////////////////////////////////////
     }
 
     ~MappingPass() {
         _mgr.free_cuts();
-        _mgr.num_area() = 0;
-        _mgr.num_edge() = 0;
-        uint64_t *cut_stat = _mgr.get_stat_cut();
-        cut_stat[0] = 0;
-        cut_stat[1] = 0;
-        cut_stat[2] = 0;
+        _mgr.num_area()       = 0;
+        _mgr.num_edge()       = 0;
+        _mgr.num_merged()     = 0;
+        _mgr.num_k_feasible() = 0;
+        _mgr.num_stored()     = 0;
     }
 };
 
