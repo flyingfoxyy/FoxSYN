@@ -294,12 +294,40 @@ FlushCut1:
 }
 
 // ====================================================================
-// Pointer manipulation
+// popcount
 // ====================================================================
 template <typename T>
 static Inline int popcount(T var) {
     static_assert(std::is_integral_v<T>);
     return std::popcount(var);
 }
+
+// ====================================================================
+// Literals
+// ====================================================================
+template <typename T>
+class Array {
+    T       *_data;
+    uint     _size;
+
+public:
+    Array(uint size) : _size(size) {
+        _data = new T[size];
+    }
+
+    ~Array() {
+        delete[] _data;
+    }
+
+    T &operator[](uint index) {
+        assert(index < _size);
+        return _data[index];
+    }
+
+    uint size() const {
+        return _size;
+    }
+};
+
 
 } // namespace fox::supper

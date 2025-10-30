@@ -19,6 +19,7 @@
 
 #include "macros.hpp"
 #include "basic.hpp"
+#include "simple_gate.hpp"
 
 namespace abc {
     typedef struct Abc_Ntk_t_ Abc_Ntk_t;
@@ -146,6 +147,7 @@ public:
     Inline int logic_rend()   const { return num_po() + num_pi();     }
 
     Inline const node_t &operator[](uint i) const { return _nodes[i];        }
+    Inline const node_t &operator[](Lit  i) const { return _nodes[i.id()];   }
     Inline const node_t &get_pi(uint idx)   const { return _nodes[_pi[idx]]; }
     Inline const node_t &get_po(uint idx)   const { return _nodes[_po[idx]]; }
 
@@ -179,21 +181,30 @@ public:
     for (int idx = (mgr).logic_rbegin(); idx != (mgr).logic_rend(); --idx) \
         if (!(mgr)[idx].is_logic()) [[unlikely]] {} else
 
-#define ForEachGraphPi(mgr)  for (int idx = 0; idx != (mgr).num_pi(); ++idx)
-#define ForEachGraphPo(mgr)  for (int idx = 0; idx != (mgr).num_po(); ++idx)
-#define ForEachGraphPoV(mgr) for (int idx = 0; idx != (mgr).num_po(); ++idx) if ((mgr).get_po(idx).size())
+#define ForEachGraphPi(mgr)                       \
+    for (int idx = 0; idx != (mgr).num_pi(); ++idx)
 
-// class enumerate_cut;
+#define ForEachGraphPo(mgr)                       \
+    for (int idx = 0; idx != (mgr).num_po(); ++idx)
+
+#define ForEachGraphPoV(mgr)                                        \
+    for (int idx = 0; idx != (mgr).num_po(); ++idx)                 \
+        if (auto &n = (mgr).get_po(idx); n.size() && (mgr)[n[0]].is_logic())
+
 
 class Config {
+    bool setup() {
+        return true;
+    }
+
 public:
-    enum class target_t : uint8_t {
+    enum target_t : uint8_t {
         AREA,
         DELAY,
         EDGE
     };
 
-    enum class map_impl_t : uint32_t {
+    enum map_impl_t : uint32_t {
         PRIORITY_CUTS = 0x1,
         AGDMAP        = 0x4,
         ACDMAP        = 0x8
@@ -204,6 +215,7 @@ public:
     uint         map_impl    {(uint)map_impl_t::PRIORITY_CUTS};
     uint         cut_size    {6};
     uint         lut_size    {6};
+    uint         gate_size   {8};
     uint         max_cut_num {8};
     bool         verbose     {true };
     // internal
@@ -288,13 +300,16 @@ class mapper : public graph_t {
     std::vector<std::string> _pi_names;
     std::vector<std::string> _po_names;
 
+    // -- Agdmap related
+    SigMap<Gate *> _gates; // Simple gates
+
     mutable Timer _timer;
 
     uint _num_area {0};
     uint _num_edge {0};
     uint _num_delay{0};
 
-    uint64_t _stat_cut[3]{0}; // merged; k-cut; final
+    uint64_t _stat_cut[3]{0};
 
 public:
     friend class enumerate_cut;
@@ -357,6 +372,8 @@ public:
     CutCost::cmp_res compare(const CutCost &lhs, const CutCost &rhs) {
         return _rank_fn(lhs, rhs, _cfg.epsilon);
     }
+
+    void create_simple_gates(uint max_size);
 
     Timer &timer() { return _timer; }
 

@@ -344,6 +344,38 @@ mapper::create_abc_ntk_from_mapping(bool use_truth_table)
     return static_cast<void *>(ntk);
 }
 
+void
+mapper::create_simple_gates(uint max_size)
+{
+    _gates.resize(num_nodes(), nullptr);
+
+    auto find_gate = [&](uint idx, uint max_size) -> std::vector<Lit> {
+        std::vector<Lit> cover;
+        const node_t &node = _nodes[idx];
+        if (node.size() > max_size)
+            return cover;
+        cover.push_back(Lit(node[0].id(), node[0].sign()));
+        cover.push_back(Lit(node[1].id(), node[1].sign()));
+        return cover;
+    };
+
+    ForEachGraphPoV(*this) {
+        _gates[n[0]] = (Gate *)01;
+    }
+
+
+    ForEachGraphLogicNodeRev(*this) {
+        if (_gates[idx] == (Gate *)01) {
+            std::vector<Lit> cover = find_gate(idx, max_size);
+            for (Lit i : cover) {
+                _gates[i] = (Gate *)01;
+            }
+            Gate *gate = new Gate(std::move(cover));
+            _gates[idx] = gate;
+        }
+    }
+}
+
 graph_t *
 mapper::run_lut_mapping(const Config &cfg)
 {

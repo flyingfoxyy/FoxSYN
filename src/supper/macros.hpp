@@ -5,6 +5,11 @@
 // --> Toggle debug info
 #define DEBUG_INFO 1
 
+// ====================================================================
+// Max simple gate size for AGDMap
+// ====================================================================
+#define MAX_GATE_SIZE 16
+
 // --> Time measurement macros
 #define TIME_START(name)                                        \
     std::clock_t cpu_time_begin_##name = std::clock();          \
