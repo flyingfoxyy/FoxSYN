@@ -347,32 +347,68 @@ mapper::create_abc_ntk_from_mapping(bool use_truth_table)
 void
 mapper::create_simple_gates(uint max_size)
 {
+    mapper &mgr = *this;
     _gates.resize(num_nodes(), nullptr);
 
-    auto find_gate = [&](uint idx, uint max_size) -> std::vector<Lit> {
-        std::vector<Lit> cover;
-        const node_t &node = _nodes[idx];
-        if (node.size() > max_size)
-            return cover;
-        cover.push_back(Lit(node[0].id(), node[0].sign()));
-        cover.push_back(Lit(node[1].id(), node[1].sign()));
-        return cover;
-    };
-
-    ForEachGraphPoV(*this) {
+    // find the gate roots at first
+    std::fill(_gates.begin(), _gates.begin() + mgr.num_pi() + 1, (Gate *)01);
+    ForEachGraphPoV(mgr) {
         _gates[n[0]] = (Gate *)01;
     }
+    ForEachGraphLogicNodeRev(mgr) {
+        if (_gates[idx] != nullptr)
+            continue;
+        if (mgr.num_ref(idx) > 1) {
+            _gates[idx] = (Gate *)01;
+            continue;
+        }
+        const auto &n = mgr[idx];
+        for (int i = 0; i != n.size(); ++i) {
+            if (n[i].sign()) {
+                _gates[idx] = (Gate *)01;
+                break;
+            }
+        }
+    }
 
+    std::function<void(Lit, Array<Lit> &)> fn = [&](Lit id, Array<Lit> &inputs) {
+        if (_gates[id]) {
+            inputs.push_unique(id);
+        } else {
+            for (int i = 0; i != mgr[id].size(); ++i) {
+                if (inputs.size() >= max_size)
+                    break;
+                fn(mgr[id][i], inputs);
+            }
+        }
+    };
 
+    // create simple gates
     ForEachGraphLogicNodeRev(*this) {
         if (_gates[idx] == (Gate *)01) {
-            std::vector<Lit> cover = find_gate(idx, max_size);
-            for (Lit i : cover) {
-                _gates[i] = (Gate *)01;
+            Array<Lit> inputs; inputs.reserve(max_size);
+            for (int i = 0; i != mgr[idx].size(); ++i) {
+                fn(mgr[idx][i], inputs);
             }
-            Gate *gate = new Gate(std::move(cover));
+            for (Lit i : inputs) {
+                assert(_gates[i] == (Gate *)01);
+            }
+            Gate *gate = new Gate(std::move(inputs));
             _gates[idx] = gate;
         }
+    }
+
+    int num_gate = 0;
+    std::map<int, int> size2num;
+    for (Gate *gate : _gates) {
+        if (gate && gate != (Gate *)01) {
+            ++num_gate;
+            ++size2num[gate->size()];
+        }
+    }
+
+    for (CREF [size, number] : size2num) {
+        LOG(std::cout, "  gate size {} : {}", size, number);
     }
 }
 
@@ -380,6 +416,8 @@ graph_t *
 mapper::run_lut_mapping(const Config &cfg)
 {
     _cfg = cfg;
+
+    create_simple_gates(8);
 
     _rank_fn = CutCost::GetRankFn(_cfg.opt_target);
 

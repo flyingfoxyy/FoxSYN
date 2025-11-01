@@ -136,7 +136,7 @@ public:
     Inline uint num_pi()    const { return _pi.size();    }
     Inline uint num_logic() const { return num_nodes() - num_po() - num_pi() - 1; }
 
-    Inline int begin()        const { return 0;                  }
+    Inline int begin()        const { return 1;                  }
     Inline int end()          const { return _nodes.size();      }
     Inline int rbegin()       const { return _nodes.size() - 1;  }
     Inline int rend()         const { return -1;                 }
@@ -284,24 +284,21 @@ struct CutCost {
 
 
 class mapper : public graph_t {
-    Config        _cfg{};
-    SigMap<uint>  _int_ref;
-    SigMap<float> _est_ref;
-    SigMap<Area>  _area;
-    SigMap<Edge>  _edge;
-    SigMap<Time>  _arrival;
-    SigMap<Time>  _required;
-    SigMap<Cut *> _best_cut;
-
-    SigMap<std::vector<Cut *>> _cuts; // TODO: Using a pointer
-
-    CutCost::rank_fn _rank_fn;
-
-    std::vector<std::string> _pi_names;
-    std::vector<std::string> _po_names;
+    Config                    _cfg     ;
+    Array<uint>               _int_ref ;
+    Array<float>              _est_ref ;
+    Array<Area>               _area    ;
+    Array<Edge>               _edge    ;
+    Array<Time>               _arrival ;
+    Array<Time>               _required;
+    Array<Cut *>              _best_cut;
+    Array<std::vector<Cut *>> _cuts; // TODO: Using a pointer
+    CutCost::rank_fn          _rank_fn;
+    std::vector<std::string>  _pi_names;
+    std::vector<std::string>  _po_names;
 
     // -- Agdmap related
-    SigMap<Gate *> _gates; // Simple gates
+    Array<Gate *> _gates; // Simple gates
 
     mutable Timer _timer;
 
