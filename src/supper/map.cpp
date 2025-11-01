@@ -406,10 +406,10 @@ mapper::create_simple_gates(uint max_size)
 {
     mapper &mgr = *this;
 
-    mgr.to_dot("graph.dot");
-    std::system("dot -Tpdf graph.dot -o graph.pdf");
-    std::system("cp graph.pdf /mnt/c/Users/chang/Desktop/");
-    std::system("rm graph.dot");
+    // mgr.to_dot("graph.dot");
+    // std::system("dot -Tpdf graph.dot -o graph.pdf");
+    // std::system("cp graph.pdf /mnt/c/Users/chang/Desktop/");
+    // std::system("rm graph.dot");
 
     _timer.start("create_gate");
     _gates.resize(num_nodes(), nullptr);
@@ -420,17 +420,14 @@ mapper::create_simple_gates(uint max_size)
         _gates[n[0]] = (Gate *)01;
     }
     ForEachGraphLogicNodeRev(mgr) {
-        if (_gates[idx] != nullptr)
-            continue;
         if (mgr.num_ref(idx) > 1) {
             _gates[idx] = (Gate *)01;
-            continue;
         }
         const auto &n = mgr[idx];
         for (int i = 0; i != n.size(); ++i) {
             if (n[i].sign()) {
                 _gates[n[i]] = (Gate *)01;
-                break;
+                std::cout << "heloo " << n[i] << "\n";
             }
         }
     }
@@ -464,11 +461,14 @@ mapper::create_simple_gates(uint max_size)
 
     int num_gate = 0;
     std::map<int, int> size2num;
+    // int id = 0;
     for (Gate *gate : _gates) {
         if (gate && gate != (Gate *)01) {
             ++num_gate;
             ++size2num[gate->size()];
+            // std::cout << id << "\n";
         }
+        // ++id;
     }
 
     for (CREF [size, number] : size2num) {
