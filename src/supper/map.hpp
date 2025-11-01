@@ -19,7 +19,7 @@
 
 #include "macros.hpp"
 #include "basic.hpp"
-#include "simple_gate.hpp"
+#include "agdmap.hpp"
 
 namespace abc {
     typedef struct Abc_Ntk_t_ Abc_Ntk_t;
@@ -284,18 +284,18 @@ struct CutCost {
 
 
 class mapper : public graph_t {
-    Config                    _cfg     ;
-    Array<uint>               _int_ref ;
-    Array<float>              _est_ref ;
-    Array<Area>               _area    ;
-    Array<Edge>               _edge    ;
-    Array<Time>               _arrival ;
-    Array<Time>               _required;
-    Array<Cut *>              _best_cut;
-    Array<std::vector<Cut *>> _cuts; // TODO: Using a pointer
-    CutCost::rank_fn          _rank_fn;
-    std::vector<std::string>  _pi_names;
-    std::vector<std::string>  _po_names;
+    Config                      _cfg     ;
+    Array<uint>                 _int_ref ;
+    Array<float>                _est_ref ;
+    Array<Area>                 _area    ;
+    Array<Edge>                 _edge    ;
+    Array<Time>                 _arrival ;
+    Array<Time>                 _required;
+    Array<Cut *>                _best_cut;
+    Array<std::vector<Cut *>>   _cuts    ; // TODO: Using a pointer
+    CutCost::rank_fn            _rank_fn ;
+    std::vector<std::string>    _pi_names;
+    std::vector<std::string>    _po_names;
 
     // -- Agdmap related
     Array<Gate *> _gates; // Simple gates
@@ -660,9 +660,11 @@ public:
                 _mgr.num_merged(), _mgr.num_k_feasible(), _mgr.num_stored());
         }
 
+        _mgr.timer().start("exact_imp");
         ///////////////////////////////////////
         improve_mapping_exactly(mgr);
         ///////////////////////////////////////
+        _mgr.timer().stop("exact_imp");
     }
 
     ~MappingPass() {

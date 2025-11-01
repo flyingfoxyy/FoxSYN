@@ -63,3 +63,4 @@ regression/rundir
 .cache
 compile_commands.json
 regression/*.v
+regression/*

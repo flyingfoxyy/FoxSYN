@@ -348,6 +348,8 @@ void
 mapper::create_simple_gates(uint max_size)
 {
     mapper &mgr = *this;
+
+    _timer.start("create_gate");
     _gates.resize(num_nodes(), nullptr);
 
     // find the gate roots at first
@@ -365,7 +367,7 @@ mapper::create_simple_gates(uint max_size)
         const auto &n = mgr[idx];
         for (int i = 0; i != n.size(); ++i) {
             if (n[i].sign()) {
-                _gates[idx] = (Gate *)01;
+                _gates[n[i]] = (Gate *)01;
                 break;
             }
         }
@@ -410,6 +412,8 @@ mapper::create_simple_gates(uint max_size)
     for (CREF [size, number] : size2num) {
         LOG(std::cout, "  gate size {} : {}", size, number);
     }
+
+    _timer.stop("create_gate");
 }
 
 graph_t *

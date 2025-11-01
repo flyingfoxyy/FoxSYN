@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <ctime>
 #include <format>
+#include <ostream>
 #include <type_traits>
 #include <memory>
 #include <cstdlib>
@@ -55,6 +56,10 @@ public:
     Inline bool sign() const { return _val & 1;  }
     Inline uint id  () const { return _val >> 1; }
     Inline uint val () const { return _val;      }
+
+    Inline friend std::ostream &operator<<(std::ostream &os, Lit l) {
+        return os << l.sign() << "," << l.id();
+    }
 };
 
 template<typename T>
@@ -234,8 +239,10 @@ public:
         );
         PRINT_TIME("create_graph"  )
         PRINT_TIME("lut_mapping"   )
+        PRINT_TIME("create_gate"   )
         PRINT_TIME("forward"       )
         PRINT_TIME("backward"      )
+        PRINT_TIME("exact_imp"     )
         PRINT_TIME("create_abc_ntk")
     }
 };
