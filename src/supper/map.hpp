@@ -167,6 +167,14 @@ public:
      * @return true if the file was successfully written, false otherwise
      */
     bool to_dot(const std::string &path) const;
+
+    /**
+     * @brief Convert the graph structure to Verilog netlist
+     * 
+     * @param path The path where the Verilog file will be written
+     * @return true if the file was successfully written, false otherwise
+     */
+    bool write_to_verilog(const std::string &path) const;
 };
 
 #define ForEachGraphNode(mgr)                                              \

@@ -30,3 +30,9 @@ add_executable(test_dot "test_dot.cpp")
 target_link_libraries(test_dot PRIVATE
     supper
 )
+
+# Add test_verilog executable to demonstrate the Verilog netlist generation
+add_executable(test_verilog "test_verilog.cpp")
+target_link_libraries(test_verilog PRIVATE
+    supper
+)
