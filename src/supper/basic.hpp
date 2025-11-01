@@ -58,7 +58,7 @@ public:
 };
 
 template<typename T>
-class SigMap : public std::vector<T> {
+class Array : public std::vector<T> {
 public:
     enum class flag_t : uint8_t {
         RESERVE,
@@ -66,15 +66,21 @@ public:
     };
 
     template <typename... Args>
-    SigMap(Args&&... args) : std::vector<T>(std::forward<Args>(args)...) {}
+    Array(Args&&... args) : std::vector<T>(std::forward<Args>(args)...) {}
 
-    ~SigMap() = default;
+    ~Array() = default;
 
     Inline const T &operator[](Lit lit)           const { return std::vector<T>::operator[](lit.id()); }
     Inline const T &operator[](std::size_t index) const { return std::vector<T>::operator[](index);    }
 
     Inline T &operator[](Lit lit)           { return std::vector<T>::operator[](lit.id()); }
     Inline T &operator[](std::size_t index) { return std::vector<T>::operator[](index);    }
+
+    void push_unique(const T &item) {
+        if (std::find(this->begin(), this->end(), item) == this->end()) {
+            this->push_back(item);
+        }
+    }
 };
 
 // ====================================================================
@@ -220,15 +226,16 @@ public:
     void report(std::ostream &os) const {
         const double cpu_time = double(std::clock() - _cpu_start) / CLOCKS_PER_SEC;
         os << std::format(" {:<20} {:>15} {:>15} {:>12}\n", "Action", "CPU Time", "Wall Time", "Ratio");
-        #define PRINT_TIME(Stage)                                     \
+        #define PRINT_TIME(Stage)                                         \
         os << std::format(" {:<20} {:>15} {:>15} {:>10.1f} %\n", Stage,   \
-            Timer::formatted_time(_cpu_durations. at(Stage), _width), \
-            Timer::formatted_time(_wall_durations.at(Stage), _width), \
-            _cpu_durations. at(Stage) * 100.0 / cpu_time              \
+            time_duration_cpu(Stage),                                     \
+            time_duration_wall(Stage),                                    \
+            _cpu_durations. at(Stage) * 100.0 / cpu_time                  \
         );
         PRINT_TIME("create_graph"  )
         PRINT_TIME("lut_mapping"   )
-        PRINT_TIME("cut_enum"      )
+        PRINT_TIME("forward"       )
+        PRINT_TIME("backward"      )
         PRINT_TIME("create_abc_ntk")
     }
 };
@@ -301,33 +308,5 @@ static Inline int popcount(T var) {
     static_assert(std::is_integral_v<T>);
     return std::popcount(var);
 }
-
-// ====================================================================
-// Literals
-// ====================================================================
-template <typename T>
-class Array {
-    T       *_data;
-    uint     _size;
-
-public:
-    Array(uint size) : _size(size) {
-        _data = new T[size];
-    }
-
-    ~Array() {
-        delete[] _data;
-    }
-
-    T &operator[](uint index) {
-        assert(index < _size);
-        return _data[index];
-    }
-
-    uint size() const {
-        return _size;
-    }
-};
-
 
 } // namespace fox::supper

@@ -648,11 +648,11 @@ public:
         ///////////////////////////////////////
         _mgr.timer().stop ("forward");
 
-        _mgr.timer().start("backword");
+        _mgr.timer().start("backward");
         ///////////////////////////////////////
         _backword->impl();
         ///////////////////////////////////////
-        _mgr.timer().stop("backword");
+        _mgr.timer().stop("backward");
 
         if (mgr.config().verbose) {
             TIME_STOP(T)
