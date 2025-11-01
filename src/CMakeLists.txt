@@ -24,3 +24,9 @@ target_link_libraries(FoxSYN PRIVATE
     fox
     supper
 )
+
+# Add test_dot executable to demonstrate the DOT file generation
+add_executable(test_dot "test_dot.cpp")
+target_link_libraries(test_dot PRIVATE
+    supper
+)

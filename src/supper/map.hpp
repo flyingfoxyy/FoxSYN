@@ -159,6 +159,14 @@ public:
     bool is_topologically_sorted() const;
 
     void *to_abc_ntk();
+
+    /**
+     * @brief Convert the graph structure to DOT format
+     * 
+     * @param path The path where the DOT file will be written
+     * @return true if the file was successfully written, false otherwise
+     */
+    bool to_dot(const std::string &path) const;
 };
 
 #define ForEachGraphNode(mgr)                                              \

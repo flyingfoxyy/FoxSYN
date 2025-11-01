@@ -1,4 +1,5 @@
 #include <cstddef>
+#include <cstdlib>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -58,6 +59,62 @@ graph_t::to_abc_ntk()
         return nullptr;
 
     return static_cast<void *>(pNtk);
+}
+
+bool
+graph_t::to_dot(const std::string &path) const
+{
+    // Open file for writing
+    FILE *fp = fopen(path.c_str(), "w");
+    if (!fp) {
+        std::cerr << "Failed to open file: " << path << std::endl;
+        return false;
+    }
+
+    // Write DOT file header
+    fprintf(fp, "digraph G {\n");
+    
+    // Set up graph properties
+    fprintf(fp, "  graph [rankdir=TB];\n");
+    fprintf(fp, "  node [shape=ellipse, style=filled, fillcolor=lightgrey];\n");
+    
+    // Define nodes
+    for (int idx = begin(); idx != end(); ++idx) {
+        const auto &node = _nodes[idx];
+        if (node.null()) continue;
+        
+        if (node.is_pi()) {
+            // PI nodes as downward triangles
+            fprintf(fp, "  n%d [shape=invtriangle, fillcolor=lightblue, label=\"PI %d\"];\n", idx, idx);
+        } else if (node.is_po()) {
+            // PO nodes as upward triangles
+            fprintf(fp, "  n%d [shape=triangle, fillcolor=lightgreen, label=\"PO %d\"];\n", idx, idx);
+        } else if (node.is_logic()) {
+            // Logic nodes as ellipses with IDs
+            fprintf(fp, "  n%d [shape=ellipse, fillcolor=white, label=\"%d\"];\n", idx, idx);
+        }
+    }
+    
+    // Define edges
+    for (int idx = begin(); idx != end(); ++idx) {
+        const auto &node = _nodes[idx];
+        if (node.null()) continue;
+        
+        for (uint i = 0; i < node.size(); ++i) {
+            Lit fanin = node[i];
+            // If sign is true (inverted input), use dashed line, otherwise solid
+            const char* style = fanin.sign() ? "dashed" : "solid";
+            fprintf(fp, "  n%d -> n%d [style=%s];\n", fanin.id(), idx, style);
+        }
+    }
+    
+    // Close the graph
+    fprintf(fp, "}\n");
+    
+    // Close the file
+    fclose(fp);
+    
+    return true;
 }
 
 void
@@ -348,6 +405,11 @@ void
 mapper::create_simple_gates(uint max_size)
 {
     mapper &mgr = *this;
+
+    mgr.to_dot("graph.dot");
+    std::system("dot -Tpdf graph.dot -o graph.pdf");
+    std::system("cp graph.pdf /mnt/c/Users/chang/Desktop/");
+    std::system("rm graph.dot");
 
     _timer.start("create_gate");
     _gates.resize(num_nodes(), nullptr);

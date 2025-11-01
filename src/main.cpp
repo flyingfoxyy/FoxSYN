@@ -150,10 +150,18 @@ int Suppermap_Command(Abc_Frame_t *pAbc, int argc, char **argv)
 {
     using namespace fox::supper;
     Config cfg;
-
+    std::string dot_file; // Path to output DOT file
     Abc_Ntk_t *pMapped = nullptr;
     Abc_Ntk_t *pAig = nullptr;
+    mapper *mgr = nullptr;
 
+    // Print usage if requested
+    if (argc > 1 && !strcmp(argv[1], "-h"))
+    {
+        goto usage;
+    }
+        
+    // Parse command line arguments
     for (int i = 1; i != argc; ++i)
     {
         const char arg = *(argv[i] + 1);
@@ -162,17 +170,26 @@ int Suppermap_Command(Abc_Frame_t *pAbc, int argc, char **argv)
         case 'a':
             cfg.opt_target = Config::target_t::AREA;
             break;
-        case 'h':
-            goto usage;
+        case 'd':
+            // Export graph to DOT format
+            if (i + 1 < argc)
+            {
+                dot_file = argv[++i];
+            }
+            else
+            {
+                printf("Error: -d requires a file path\n");
+                return 1;
+            }
+            break;
         default:
             std::cout << "foxmap: unknown argument -" << arg << "\n";
             goto usage;
-            break;
         }
     }
 
+    // Get the current network
     pAig = Abc_FrameReadNtk(pAbc);
-
     if (!pAig)
     {
         printf("foxmap: current network is empty\n");
@@ -185,26 +202,52 @@ int Suppermap_Command(Abc_Frame_t *pAbc, int argc, char **argv)
         return 1;
     }
 
+    // Create mapper
+    mgr = mapper::create_from_aig(static_cast<void *>(pAig));
+    if (!mgr)
+    {
+        printf("foxmap: failed to create mapper\n");
+        return 1;
+    }
+    
+    // If dot_file is provided, export the graph to DOT format
+    if (!dot_file.empty())
+    {
+        printf("Exporting graph to DOT file: %s\n", dot_file.c_str());
+        if (mgr->to_dot(dot_file))
+        {
+            printf("Successfully wrote DOT file\n");
+        }
+        else
+        {
+            printf("Failed to write DOT file\n");
+            delete mgr;
+            return 1;
+        }
+    }
+    
+    // Perform mapping
     pMapped = PerformSupperMap(pAig, cfg);
-
     if (!pMapped)
     {
         printf("foxmap: technology mapping failed\n");
+        delete mgr;
         return 1;
     }
-
-    Abc_FrameReplaceCurrentNetwork( pAbc, pMapped );
-
+    
+    // Clean up and return
+    if (mgr) delete mgr;
+    Abc_FrameReplaceCurrentNetwork(pAbc, pMapped);
     return 0;
 
 usage:
-    Abc_Print(-2, "usage: super [-kEFA num] [-av]\n");
+    Abc_Print(-2, "usage: super [-kEFA num] [-av] [-d dot_file]\n");
     Abc_Print(-2, "\t           performs FPGA technology mapping of the network\n");
     // Abc_Print(-2, "\t-k num   : the number of LUT inputs (2 < num < %d) [default = %d]\n", kMaxLutSize + 1, kMaxLutSize);
     Abc_Print(-2, "\t-a       : toggles area-oriented technology mapping\n");
     Abc_Print(-2, "\t-v       : toggles verbose log print\n");
+    Abc_Print(-2, "\t-d file  : exports the graph structure to DOT file\n");
     Abc_Print(-2, "\n");
-
     return 1;
 }
 
