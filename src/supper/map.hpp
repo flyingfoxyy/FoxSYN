@@ -130,11 +130,37 @@ public:
 template <typename  T>
 class Prune {
     std::vector<std::vector<T>> _cuts_by_size;
+    std::function<bool(T, T)>   _cmp;
 
 public:
-    
+    Prune(std::function<bool(T, T)> &&cmp, std::size_t max_size) : _cuts_by_size(max_size + 1), _cmp(cmp) {
+        for (auto &vec : _cuts_by_size) {
+            vec.reserve(4);
+        }
+    }
+
+    ~Prune() = default;
 
 
+    void reset(std::size_t new_max_size) {
+        _cuts_by_size.clear();
+        _cuts_by_size.resize(new_max_size + 1);
+        for (auto &vec : _cuts_by_size) {
+            vec.reserve(4);
+        }
+    }
+
+    Inline void insert(T item) {
+        auto &vec = _cuts_by_size[item->size];
+        vec.push_back(item);
+        std::ranges::sort(vec, _cmp);
+    }
+
+    void get(std::vector<T> &set) {
+        for (std::size_t sz = 2; sz != _cuts_by_size.size(); ++sz) {
+
+        }
+    }
 };
 
 
@@ -644,97 +670,99 @@ class CutEnumerator {
     }
 
     static void wide_enum_cuts(mapper &mgr, uint id) {
-    //     const Config &cfg = mgr.config();
+        const Config &cfg = mgr.config();
 
-    //     // sort the gate inputs by area-cost increasing order ?
+        // sort the gate inputs by area-cost increasing order ?
 
-    //     mapper::CutSet *input_cut_sets[MAX_GATE_SIZE];
-    //     const uint num_inputs = mgr[id].size();
-    //     for (uint i = 0; i != num_inputs; ++i) {
-    //         input_cut_sets[i] = &mgr.cut_set(mgr[id][i]);
-    //     }
+        mapper::CutSet *input_cut_sets[MAX_GATE_SIZE];
+        const uint num_inputs = mgr[id].size();
+        for (uint i = 0; i != num_inputs; ++i) {
+            input_cut_sets[i] = &mgr.cut_set(mgr[id][i]);
+        }
 
-    //     uint  buffer[Cut::MAX_CUT_SIZE << 1] {0};
-    //     uint *end;
+        uint  buffer[Cut::MAX_CUT_SIZE] {0};
+        uint *end;
 
-    //     std::vector<Cut *> curr_cut_sets(*input_cut_sets[0]);
+        std::vector<Cut *> curr_cut_sets(*input_cut_sets[0]);
 
-    //     uint merged = 1;
-    //     while (merged < num_inputs) {
-    //         std::vector<Cut *> next_cut_sets;
-    //         next_cut_sets.reserve(curr_cut_sets.size() * input_cut_sets[merged]->size());
-    //         for (Cut *c0 : curr_cut_sets)
-    //         for (Cut *c1 : *input_cut_sets[merged])
-    //         {
-    //             // merge the subcuts
-    //             uint *end  = std::set_union(buffer, c0->leaves, c0->leaves + c0->size, c1->leaves, c1->leaves + c1->size);
-    //             uint  size = end - buffer;
-    //             // compute the area-cost for pruning
-    //             Area a = 0;
-    //             // for (int i = 0; i != size; ++i) {
-    //             //     a += mgr.area(buffer[i]);
-    //             // }
-    //             a = 
-    //             Cut *cut = allocate<Cut>(size, (uint *)buffer, end, c0->sign | c1->sign);
-    //             next_cut_sets.push_back(cut);
-    //         }
-    //         curr_cut_sets = std::move(next_cut_sets);
-    //         ++merged;
-    //     }
+        uint n = 1;
+        while (n < num_inputs) {
+            Prune<Cut *> prune((n + 1) * cfg.lut_size);
+            for (Cut *c0 : curr_cut_sets)
+            for (Cut *c1 : *input_cut_sets[n])
+            {
+                // merge the subcuts
+                uint *end  = std::set_union(buffer, c0->leaves, c0->leaves + c0->size, c1->leaves, c1->leaves + c1->size);
+                uint  size = end - buffer;
+                // compute the area-cost for pruning
+                Area a = 0;
+                for (int i = 0; i != size; ++i) {
+                    a += mgr.area(buffer[i]);
+                }
+                prune.insert(Cut::allocate(buffer, end, 0));                
+            }
+            if (n != 1) {
+                // Todo: reuse the cuts here
+                for (Cut *cut : curr_cut_sets)
+                    Cut::deallocate(cut);
+            }
+            prune.get(curr_cut_sets);
+            ++n;
+        }
 
-    //     mgr.num_k_feasible() += cuts.size();
+        mgr.num_k_feasible() += cuts.size();
 
-    //     // Structure-based pruning
+        // Structure-based pruning
 
-    //     // Restore the best cut from previous pass
-    //     // if (Cut *best = mgr.best_cut(id); best) {
-    //     //     cuts.push_back(best->clone());
-    //     // }
+        // Restore the best cut from previous pass
+        // if (Cut *best = mgr.best_cut(id); best) {
+        //     cuts.push_back(best->clone());
+        // }
 
-    //     // Calculate the cut cost
-    //     std::vector<CutCost> costs = compute_cut_cost(mgr, cuts);
+        // Calculate the cut cost
+        std::vector<CutCost> costs = compute_cut_cost(mgr, cuts);
 
-    //     // Cost-based cut pruning
+        // Cost-based cut pruning
 
-    //     float epsilon = cfg.epsilon;
-    //     CutCost::rank_fn fn = CutCost::GetRankFn(mgr.config().opt_target);
-    //     auto fn_wrap = [epsilon, fn](const CutCost &lhs, const CutCost &rhs) -> bool {
-    //         return fn(lhs, rhs, epsilon) == CutCost::cmp_res::LWIN;
-    //     };
+        float epsilon = cfg.epsilon;
+        CutCost::rank_fn fn = CutCost::GetRankFn(mgr.config().opt_target);
+        auto fn_wrap = [epsilon, fn](const CutCost &lhs, const CutCost &rhs) -> bool {
+            return fn(lhs, rhs, epsilon) == CutCost::cmp_res::LWIN;
+        };
 
-    //     if (costs.size() > cfg.max_cut_num){
-    //         std::sort(costs.begin(), costs.end(), fn_wrap);
-    //     } else{
-    //         auto best_itr = std::min_element(costs.begin(), costs.end(), fn_wrap);
-    //         std::iter_swap(costs.begin(), best_itr);
-    //     }
+        if (costs.size() > cfg.max_cut_num){
+            std::sort(costs.begin(), costs.end(), fn_wrap);
+        } else{
+            auto best_itr = std::min_element(costs.begin(), costs.end(), fn_wrap);
+            std::iter_swap(costs.begin(), best_itr);
+        }
 
-    //     // mapping cost ranking back to cuts
-    //     std::vector<Cut *> &cut_set = mgr.cut_set(id);
-    //     for (int i = 0; i != costs.size() && i != cfg.max_cut_num; ++i) {
-    //         Cut *&cut = cuts[costs[i].idx];
-    //         cut_set.push_back(cut);
-    //         cut = nullptr;
-    //     }
-    //     for (Cut *cut : cuts) {
-    //         deallocate(cut);
-    //     }
+        // mapping cost ranking back to cuts
+        std::vector<Cut *> &cut_set = mgr.cut_set(id);
+        for (int i = 0; i != costs.size() && i != cfg.max_cut_num; ++i) {
+            Cut *&cut = cuts[costs[i].idx];
+            cut_set.push_back(cut);
+            cut = nullptr;
+        }
+        for (Cut *cut : cuts) {
+            deallocate(cut);
+        }
 
-    //     // Save the best cut
-    //     mgr.best_cut(id) = cut_set.front()->clone(cfg.cut_size);
+        // Save the best cut
+        mgr.best_cut(id) = cut_set.front()->clone(cfg.cut_size);
 
-    //     // Set the node area/edge/arr info
-    //     const float ratio = 1.0 / std::max(1.0f, float(mgr.num_est_ref(id)));
-    //     mgr.area(id) = costs.front().area * ratio;
-    //     mgr.edge(id) = costs.front().edge * ratio;
+        // Set the node area/edge/arr info
+        const float ratio = 1.0 / std::max(1.0f, float(mgr.num_est_ref(id)));
+        mgr.area(id) = costs.front().area * ratio;
+        mgr.edge(id) = costs.front().edge * ratio;
 
-    //     // Statics
-    //     mgr.num_stored() += cut_set.size();
+        // Statics
+        mgr.num_stored() += cut_set.size();
 
-    //     // create trivial cut
-    //     Cut *triv_cut = allocate<Cut>(1, id);
-    //     if constexpr (algo == CutCostAlgo::PRAETOR) {}
-    //     cut_set.push_back(triv_cut);
+        // create trivial cut
+        Cut *triv_cut = allocate<Cut>(1, id);
+        if constexpr (algo == CutCostAlgo::PRAETOR) {}
+        cut_set.push_back(triv_cut);
     }
 
 public:
