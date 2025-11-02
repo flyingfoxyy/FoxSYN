@@ -49,9 +49,18 @@ public:
     Inline bool operator<=(const Lit &b) const { return _val <= b._val; }
     Inline bool operator> (const Lit &b) const { return _val >  b._val; }
     Inline bool operator>=(const Lit &b) const { return _val >= b._val; }
+    Inline bool operator==(uint b)       const { return id() == b;      }
+    Inline bool operator!=(uint b)       const { return id() != b;      }
+    Inline bool operator< (uint b)       const { return id() <  b;      }
+    Inline bool operator<=(uint b)       const { return id() <= b;      }
+    Inline bool operator> (uint b)       const { return id() >  b;      }
+    Inline bool operator>=(uint b)       const { return id() >= b;      }
 
     Inline Lit  operator~() const { return Lit(id(), !sign()); }
     Inline Lit &operator=(const Lit &b) = default;
+
+    Inline uint operator-(int diff) { return id() - diff; }
+    Inline uint operator+(int diff) { return id() + diff; }
 
     Inline bool sign() const { return _val & 1;  }
     Inline uint id  () const { return _val >> 1; }
@@ -64,6 +73,7 @@ public:
 
 template<typename T>
 class Array : public std::vector<T> {
+    uint _offset {0};
 public:
     enum class flag_t : uint8_t {
         RESERVE,
@@ -75,17 +85,19 @@ public:
 
     ~Array() = default;
 
-    Inline const T &operator[](Lit lit)           const { return std::vector<T>::operator[](lit.id()); }
-    Inline const T &operator[](std::size_t index) const { return std::vector<T>::operator[](index);    }
+    Inline const T &operator[](Lit lit)           const { return std::vector<T>::operator[](lit.id() - _offset); }
+    Inline const T &operator[](std::size_t index) const { return std::vector<T>::operator[](index - _offset);    }
 
-    Inline T &operator[](Lit lit)           { return std::vector<T>::operator[](lit.id()); }
-    Inline T &operator[](std::size_t index) { return std::vector<T>::operator[](index);    }
+    Inline T &operator[](Lit lit)           { return std::vector<T>::operator[](lit.id() - _offset); }
+    Inline T &operator[](std::size_t index) { return std::vector<T>::operator[](index - _offset);    }
 
-    void push_unique(const T &item) {
+    Inline void push_unique(const T &item) {
         if (std::find(this->begin(), this->end(), item) == this->end()) {
             this->push_back(item);
         }
     }
+
+    Inline void set_offset(uint offset) { _offset = offset; }
 };
 
 // ====================================================================
@@ -118,18 +130,18 @@ Inline static T compl_cond(T var, uint cond) {
 // ====================================================================
 // For class with dynamic array
 // ====================================================================
-template <typename T, typename... Args>
-Inline static T* allocate(uint size, Args&&... args) {
-    return new (std::malloc(sizeof(T) + sizeof(typename T::elem_type) * size)) T(std::forward<Args>(args)...);
-}
+// template <typename T, typename... Args>
+// Inline static T* allocate(uint size, Args&&... args) {
+//     return new (std::malloc(sizeof(T) + sizeof(typename T::elem_type) * size)) T(std::forward<Args>(args)...);
+// }
 
-template <typename T>
-Inline static void deallocate(T* item) noexcept {
-    if (item) {
-        item->~T();
-        std::free(item);
-    }
-}
+// template <typename T>
+// Inline static void deallocate(T* item) noexcept {
+//     if (item) {
+//         item->~T();
+//         std::free(item);
+//     }
+// }
 
 
 // ====================================================================

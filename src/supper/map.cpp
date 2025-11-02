@@ -293,7 +293,7 @@ mapper::print_node(uint id)
     for (const auto &cut : _cuts[id]) {
         std::cout << "  cut " << **cut << "\n";
     }
-    std::cout << " best cut " << **_best_cut[id] << "\n";
+    std::cout << " best cut " << **best_cut(id) << "\n";
 }
 
 mapper *
@@ -545,7 +545,6 @@ mapper::create_simple_gates(uint max_size)
         for (int i = 0; i != n.size(); ++i) {
             if (n[i].sign()) {
                 _gates[n[i]] = (Gate *)01;
-                std::cout << "heloo " << n[i] << "\n";
             }
         }
     }
@@ -599,16 +598,22 @@ mapper::create_simple_gates(uint max_size)
 graph_t *
 mapper::run_lut_mapping(const Config &cfg)
 {
-    _cfg = cfg;
-
-    create_simple_gates(8);
-
-    _rank_fn = CutCost::GetRankFn(_cfg.opt_target);
+    _cfg     = cfg;
+    _rank_fn = CutCost::GetRankFn(cfg.opt_target);
 
     // Setup PI cuts
     ForEachGraphPi(*this) {
-        _cuts[_pi[idx]].push_back(allocate<Cut>(1, _pi[idx]));
+        _cuts[_pi[idx]].push_back(Cut::allocate(_pi[idx]));
     }
+
+    _best_cuts.set_offset(logic_begin()); Assert(_nodes[logic_begin()].is_logic());
+    _best_cuts.resize(num_logic());
+    ForEachGraphLogicNode(*this) {
+        _best_cuts[idx] = (Cut *)std::malloc(sizeof(Cut) + sizeof(uint) * cfg.lut_size);
+    }
+
+    // create simple gates boundry
+    create_simple_gates(8);
 
     // according to run-time parameters, choose mapping algorithm
 
