@@ -20,17 +20,19 @@ namespace fox::supper {
 // ====================================================================
 // Type definitions
 // ====================================================================
-using uint = uint32_t;
-using Area = float   ;
-using Edge = float   ;
-using Time = uint    ;
-using Sign = uint    ;
-using word = uint64_t;
+using uint   = uint32_t;
+using uint8  = uint8_t ;
+using uint16 = uint16_t;
+using Area   = float   ;
+using Edge   = float   ;
+using Time   = uint    ;
+using Sign   = uint    ;
+using word   = uint64_t;
 
 // ====================================================================
 // Constants
 // ====================================================================
-constexpr Time kMaxTime = 123456;
+constexpr Time kMaxTime = 1234567;
 
 // ====================================================================
 // Literals

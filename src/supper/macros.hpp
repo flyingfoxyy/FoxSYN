@@ -12,6 +12,28 @@
  @ mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
  */
 
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+
+using uint = uint32_t;
+
+// ========================================================================
+// Attributes
+// ========================================================================
+#ifdef NDEBUG
+    #ifdef __GNUC__
+        #define Inline inline __attribute__((always_inline))
+    #elif __clang__
+        #define Inline inline __attribute__((always_inline))
+    #else
+        #define Inline inline
+    #endif
+#else
+    #define Inline
+#endif
+
 // ========================================================================
 // Enable performance analysis code
 // ========================================================================
@@ -28,6 +50,11 @@
 #define MAX_GATE_SIZE 16
 
 // ========================================================================
+// Max LUT size for agdmap
+// ========================================================================
+#define MAX_LUT_SIZE 6
+
+// ========================================================================
 // Max node size in graph_t
 // ========================================================================
 #define MAX_NODE_SIZE 16
@@ -35,27 +62,16 @@
 // ========================================================================
 // Signature
 // ========================================================================
-#define SIGNATURE(x, BITNUM) (1 << ((x) % ((BITNUM) - 1)))
+// #define SIGNATURE(x, BITNUM) (1 << ((x) % ((BITNUM) - 1)))
+template <std::size_t BITNUM>
+Inline uint get_signature(uint x) { if constexpr (BITNUM & (BITNUM - 1)) return 1 << (x % (BITNUM - 1)); else return 1 << (x & (BITNUM - 1)); }
+
+#define SIGNATURE(x) get_signature<Cut::BIT_NUM_SIGN>(x)
 
 // ========================================================================
 // Signature
 // ========================================================================
 #define Assert assert
-
-// ========================================================================
-// Attributes
-// ========================================================================
-#ifdef NDEBUG
-    #ifdef __GNUC__
-        #define Inline inline __attribute__((always_inline))
-    #elif __clang__
-        #define Inline inline __attribute__((always_inline))
-    #else
-        #define Inline inline
-    #endif
-#else
-    #define Inline
-#endif
 
 // ========================================================================
 // Shorthand format string

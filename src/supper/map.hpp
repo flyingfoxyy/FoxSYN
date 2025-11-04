@@ -31,11 +31,17 @@ namespace fox::supper {
 // ========================================================================
 // Cut
 // ========================================================================
+struct cut_data_u {
+    uint8_t sub_cuts[MAX_GATE_SIZE];
+    uint    root     ;
+    uint    leaves[0];
+};
+
 class Cut {
 public:
-    static constexpr uint BIT_NUM_SIZE = 7;
-    static constexpr uint MAX_CUT_SIZE = (1 << BIT_NUM_SIZE) - 1;
-    static constexpr uint BIT_NUM_SIGN = std::numeric_limits<uint>::digits;
+    static constexpr std::size_t BIT_NUM_SIZE = 7;
+    static constexpr std::size_t MAX_CUT_SIZE = (1 << BIT_NUM_SIZE) - 1;
+    static constexpr std::size_t BIT_NUM_SIGN = std::numeric_limits<uint>::digits;
 
     using elem_type = uint;
 
@@ -48,7 +54,7 @@ public:
     uint crs  : 1;  // compressed leaf array
     uint idx  : 22; // cut idx
     uint fid;       // truth table for functional id
-    uint leaves[0];
+    uint leaves[0]; // leaves or extended cut-data
 
     /**
      * @brief Get the number of bytes used by the cut.
@@ -57,7 +63,8 @@ public:
         return sizeof(Cut) + sizeof(uint) * (size + ext);
     }
 
-    Inline uint *begin() { return leaves + ext; }
+    Inline uint *begin() { return leaves + ext;        }
+    Inline uint *end  () { return leaves + ext + size; }
 
     static Inline Cut *allocate(const Cut &cut) {
         Cut *ptr = static_cast<Cut *>(std::malloc(cut.num_bytes()));
@@ -66,7 +73,7 @@ public:
     }
 
     static Inline Cut *allocate(uint *begin, uint *end, Sign s, int ext = 0, uint crs = 0) {
-        Cut *ptr = static_cast<Cut *>(std::malloc(sizeof(Cut) + sizeof(uint) * (end - begin + ext)));
+        Cut *ptr  = static_cast<Cut *>(std::malloc(sizeof(Cut) + sizeof(uint) * (end - begin + ext)));
         ptr->sign = s;
         ptr->size = end - begin;
         ptr->ext  = ext;
@@ -80,8 +87,8 @@ public:
     }
 
     static Inline Cut *allocate(uint id) {
-        Cut *ptr = static_cast<Cut *>(std::malloc(sizeof(Cut) + sizeof(uint) * 1));
-        ptr->sign = SIGNATURE(id, BIT_NUM_SIGN);
+        Cut *ptr  = static_cast<Cut *>(std::malloc(sizeof(Cut) + sizeof(uint) * 1));
+        ptr->sign = SIGNATURE(id);
         ptr->size = 1;
         ptr->ext  = 0;
         ptr->crs  = 0;
@@ -96,16 +103,6 @@ public:
             std::free(cut);
         }
     }
-
-    // Cut(uint *begin, uint *end, Sign s, int ext = 0) : size(ext ? end - begin - 1 : end - begin), sign(s), ext(ext) {
-    //     std::memcpy(leaves, begin, sizeof(uint) * size);
-    // }
-
-    // Cut(const Cut &cut) : size(cut.size), sign(cut.sign), ext(cut.ext) {
-    //     std::memcpy(leaves, cut.leaves, sizeof(uint) * size);
-    // }
-
-    // Cut(uint id) : size(1), sign(SIGNATURE(id, BIT_NUM_SIGN)), ext(0) { leaves[0] = id; }
 
     Inline Cut &operator=(const Cut &cut) {
         if (&cut == this)
@@ -140,7 +137,6 @@ public:
     }
 
     ~Prune() = default;
-
 
     void reset(std::size_t new_max_size) {
         _cuts_by_size.clear();
@@ -297,11 +293,9 @@ public:
     for (int idx = (mgr).logic_rbegin(); idx != (mgr).logic_rend(); --idx) \
         if (!(mgr)[idx].is_logic()) [[unlikely]] {} else
 
-#define ForEachGraphPi(mgr)                       \
-    for (int idx = 0; idx != (mgr).num_pi(); ++idx)
+#define ForEachGraphPi(mgr) for (int idx = 0; idx != (mgr).num_pi(); ++idx)
 
-#define ForEachGraphPo(mgr)                       \
-    for (int idx = 0; idx != (mgr).num_po(); ++idx)
+#define ForEachGraphPo(mgr) for (int idx = 0; idx != (mgr).num_po(); ++idx)
 
 #define ForEachGraphPoV(mgr)                                        \
     for (int idx = 0; idx != (mgr).num_po(); ++idx)                 \
@@ -505,7 +499,9 @@ public:
         return _rank_fn(lhs, rhs, _cfg.epsilon);
     }
 
-    void create_simple_gates(uint max_size);
+    // -- Agdmap related
+    void  create_simple_gates(uint max_size);
+    Gate *gate(uint id) { return _gates[id]; }
 
     Timer &timer() { return _timer; }
 
@@ -546,10 +542,57 @@ enum class heuristic_t {
     EXACT
 };
 
+Cut *agd_decompose(mapper &mgr, Cut *wcut, CutCost &cost);
+
 // normal enumerate cut way
 template <CutCostAlgo algo>
 class CutEnumerator {
-    static std::vector<CutCost> compute_cut_cost(mapper &mgr, std::vector<Cut *> &cuts) {
+    mapper       &_mgr;
+    const Config &_cfg;
+
+    void post_kcut_gen(uint id, std::vector<Cut *> &kcuts, std::vector<CutCost> &costs) {
+        float epsilon = _cfg.epsilon;
+        CutCost::rank_fn fn = CutCost::GetRankFn(_mgr.config().opt_target);
+        auto fn_wrap = [epsilon, fn](const CutCost &lhs, const CutCost &rhs) -> bool {
+            return fn(lhs, rhs, epsilon) == CutCost::cmp_res::LWIN;
+        };
+
+        if (costs.size() > _cfg.max_cut_num){
+            std::sort(costs.begin(), costs.end(), fn_wrap);
+        } else{
+            auto best_itr = std::min_element(costs.begin(), costs.end(), fn_wrap);
+            std::iter_swap(costs.begin(), best_itr);
+        }
+
+        // mapping cost ranking back to cuts
+        std::vector<Cut *> &cut_set = _mgr.cut_set(id);
+        for (int i = 0; i != costs.size() && i != _cfg.max_cut_num; ++i) {
+            Cut *&cut = kcuts[costs[i].idx];
+            cut_set.push_back(cut);
+            cut = nullptr;
+        }
+        for (Cut *cut : kcuts) {
+            Cut::deallocate(cut);
+        }
+
+        // Save the best cut
+        *_mgr.best_cut(id) = *cut_set.front();
+
+        // Set the node area/edge/arr info
+        const float ratio = 1.0 / std::max(1.0f, float(_mgr.num_est_ref(id)));
+        _mgr.area(id) = costs.front().area * ratio;
+        _mgr.edge(id) = costs.front().edge * ratio;
+
+        // Statics
+        _mgr.num_stored() += cut_set.size();
+
+        // create trivial cut
+        Cut *triv_cut = Cut::allocate(id);
+        if constexpr (algo == CutCostAlgo::PRAETOR) {}
+        cut_set.push_back(triv_cut);
+    }
+
+    std::vector<CutCost> compute_cut_cost(mapper &mgr, std::vector<Cut *> &cuts) {
         std::vector<CutCost> costs; costs.reserve(cuts.size());
         for (int i = 0; i != cuts.size(); ++i) {
             Cut *cut = cuts[i];
@@ -584,7 +627,7 @@ class CutEnumerator {
         return costs;
     }
 
-    static void general_enum_cuts(mapper &mgr, uint id) {
+    void general_enum_cuts(mapper &mgr, uint id) {
         const Config &cfg = mgr.config();
 
         Lit f0 = mgr[id][0];
@@ -669,8 +712,19 @@ class CutEnumerator {
         cut_set.push_back(triv_cut);
     }
 
-    static void wide_enum_cuts(mapper &mgr, uint id) {
+    void wide_enum_cuts(mapper &mgr, uint id) {
         const Config &cfg = mgr.config();
+
+        std::function<bool(Cut *, Cut *)> cmp;
+        if (cfg.opt_target == Config::target_t::AREA) {
+            cmp = [](Cut *lhs, Cut *rhs) -> bool {
+                return lhs->area() < rhs->area();
+            };
+        } else {
+            cmp = [](Cut *lhs, Cut *rhs) -> bool {
+                return lhs->size < rhs->size;
+            };
+        }
 
         // sort the gate inputs by area-cost increasing order ?
 
@@ -681,17 +735,16 @@ class CutEnumerator {
         }
 
         uint  buffer[Cut::MAX_CUT_SIZE] {0};
-        uint *end;
 
         std::vector<Cut *> curr_cut_sets(*input_cut_sets[0]);
 
-        uint n = 1;
-        while (n < num_inputs) {
-            Prune<Cut *> prune((n + 1) * cfg.lut_size);
+        uint n = 0;
+        while (++n < num_inputs) {
+            Prune<Cut *> prune(std::move(cmp), (n + 1) * cfg.lut_size);
             for (Cut *c0 : curr_cut_sets)
             for (Cut *c1 : *input_cut_sets[n])
             {
-                // merge the subcuts
+                // merge the sub-cuts
                 uint *end  = std::set_union(buffer, c0->leaves, c0->leaves + c0->size, c1->leaves, c1->leaves + c1->size);
                 uint  size = end - buffer;
                 // compute the area-cost for pruning
@@ -706,68 +759,35 @@ class CutEnumerator {
                 for (Cut *cut : curr_cut_sets)
                     Cut::deallocate(cut);
             }
+            curr_cut_sets.clear();
             prune.get(curr_cut_sets);
-            ++n;
         }
-
-        mgr.num_k_feasible() += cuts.size();
 
         // Structure-based pruning
+        // ?
 
-        // Restore the best cut from previous pass
-        // if (Cut *best = mgr.best_cut(id); best) {
-        //     cuts.push_back(best->clone());
-        // }
-
-        // Calculate the cut cost
-        std::vector<CutCost> costs = compute_cut_cost(mgr, cuts);
+        // Now curr_cut_sets contains all the final survived wide cuts
+        // Decomposing them into k-feasible cuts trees
+        std::vector<Cut *>   cuts;  cuts .reserve(curr_cut_sets.size());
+        std::vector<CutCost> costs; costs.reserve(curr_cut_sets.size());
 
         // Cost-based cut pruning
-
-        float epsilon = cfg.epsilon;
-        CutCost::rank_fn fn = CutCost::GetRankFn(mgr.config().opt_target);
-        auto fn_wrap = [epsilon, fn](const CutCost &lhs, const CutCost &rhs) -> bool {
-            return fn(lhs, rhs, epsilon) == CutCost::cmp_res::LWIN;
-        };
-
-        if (costs.size() > cfg.max_cut_num){
-            std::sort(costs.begin(), costs.end(), fn_wrap);
-        } else{
-            auto best_itr = std::min_element(costs.begin(), costs.end(), fn_wrap);
-            std::iter_swap(costs.begin(), best_itr);
+        int idx = 0;
+        for (Cut *wcut : curr_cut_sets) {
+            CutCost cost;
+            Cut *root_cut = agd_decompose(mgr, wcut, cost);
+            cuts .push_back(root_cut);
+            cost .idx = idx++;
+            costs.push_back(cost);
         }
 
-        // mapping cost ranking back to cuts
-        std::vector<Cut *> &cut_set = mgr.cut_set(id);
-        for (int i = 0; i != costs.size() && i != cfg.max_cut_num; ++i) {
-            Cut *&cut = cuts[costs[i].idx];
-            cut_set.push_back(cut);
-            cut = nullptr;
-        }
-        for (Cut *cut : cuts) {
-            deallocate(cut);
-        }
-
-        // Save the best cut
-        mgr.best_cut(id) = cut_set.front()->clone(cfg.cut_size);
-
-        // Set the node area/edge/arr info
-        const float ratio = 1.0 / std::max(1.0f, float(mgr.num_est_ref(id)));
-        mgr.area(id) = costs.front().area * ratio;
-        mgr.edge(id) = costs.front().edge * ratio;
-
-        // Statics
-        mgr.num_stored() += cut_set.size();
-
-        // create trivial cut
-        Cut *triv_cut = allocate<Cut>(1, id);
-        if constexpr (algo == CutCostAlgo::PRAETOR) {}
-        cut_set.push_back(triv_cut);
+        // ranking and prune the k-cuts
+        post_kcut_gen(id, cuts, costs);
     }
 
 public:
-    static void run(mapper &mgr, uint id) {
-        if (mgr[id].size() > 2) {
+    CutEnumerator(mapper &mgr, uint id) : _mgr(mgr), _cfg(mgr.config()) {
+        if (mgr.gate(id)) {
             wide_enum_cuts(mgr, id);
         } else {
             general_enum_cuts(mgr, id);
@@ -791,7 +811,7 @@ public:
 
     virtual void impl() {        
         ForEachGraphLogicNode(_mgr) {
-            CutEnumerator<CutCostAlgo::FLOW>::run(_mgr, idx);
+            CutEnumerator<CutCostAlgo::FLOW>(_mgr, idx);
         }
     }
 };
@@ -802,7 +822,7 @@ public:
 
     virtual void impl() {
         ForEachGraphLogicNode(_mgr) {
-            CutEnumerator<CutCostAlgo::EXACT>::run(_mgr, idx);
+            CutEnumerator<CutCostAlgo::EXACT>(_mgr, idx);
         }
     }
 };
