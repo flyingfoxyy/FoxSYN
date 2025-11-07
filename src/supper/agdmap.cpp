@@ -16,6 +16,7 @@ struct Bin {
     uint8    size2 {0};               // sub-cuts number
     uint8    bins  [MAX_LUT_SIZE]{0}; // the decomposition-tree inputs bins
     uint8    size3 {0};               // input bins number
+    uint8    idx;
 
     Bin();
 
@@ -35,8 +36,23 @@ struct Bin {
         cut = nullptr;
     }
 
-    Cut *to_cut() {
+    void add_bin_conn(Bin *bin) {
+        Assert(bin->idx);
+        bins[size3++] = bin->idx;
+    }
 
+    uint num_port() const { return size1 + size3; }
+
+    bool full(uint k) const {
+        Assert(num_port() <= k);
+        return num_port() == k;
+    }
+
+    // build decomposition tree, rooted at this bin
+    Cut *build_mapping_solution() {
+        Cut *cut = nullptr;
+
+        return cut;
     }
 };
 
@@ -51,6 +67,77 @@ public:
     AgdMgr(mapper &mgr, Cut *wcut, CutCost &cost) : _mgr(mgr), _cost(cost), _wcut(wcut) {}
 
     ~AgdMgr() = default;
+
+    Bin *build_trivial_tree(std::deque<Bin *> &bins, Bin *extra, uint k) {
+        Bin *root = extra++;
+        if (bins.size() <= k) {
+            for (auto &bin : bins)
+                root->add_bin_conn(bin);
+            return root;
+        } else {
+            int num_pushed = 0;
+            while (num_pushed++ < k) {
+                Bin *bin = bins.front();
+                bins.pop_front();
+                Assert(root->full(k) == false);
+                root->add_bin_conn(bin);
+            }
+            bins.push_back(root);
+            return build_trivial_tree(bins, extra++, k);
+        }
+    }
+
+    Cut *multilevel_decompose(Bin *bins, uint num_bin, uint k) {
+        // Sort the bins by smaller -> bigger size order
+        std::sort(bins, bins + num_bin, [](const Bin *lhs, const Bin *rhs) {
+            return lhs->size1 < rhs->size1;
+        });
+
+        Bin *b0 = bins;
+        uint num_used = 1;
+
+        std::deque<Bin *> tree; tree.push_back(bins + num_used++);
+        uint idx = 0;
+        while (idx++ != tree.size() && num_used < num_bin) {
+            Bin *root = tree[idx];
+            int n = k - root->num_port(); Assert(n >= 0);
+            for (int i = 0; i < n; i++) {
+                Bin *leaf = bins + num_used++;
+                root->add_bin_conn(leaf);
+                // if (!leaf->full(k))
+                tree.push_back(leaf);
+                if (num_used == num_bin)
+                    break;
+            }
+        }
+
+        if (num_used == num_bin) { // all bins are used, good, just return is ok
+            return b0->build_mapping_solution();
+        }
+
+        // There are some left bins need to be connected
+        // Try to connect them with free ports of b0
+        //! TODO: Use an extra bin, for smaller root cut ?
+        while (!b0->full(k) && num_used < num_bin) {
+            Bin *leaf = bins + num_used++;
+            b0->add_bin_conn(leaf);
+        }
+
+        if (num_used == num_bin) {
+            return b0->build_mapping_solution();
+        }
+
+        Assert(b0->full(k));
+
+        std::deque<Bin  *> remainder(bins + num_used, bins + num_bin);
+        std::array<Bin, 7> extra_bins;
+        for (int i = 0; i != extra_bins.size(); ++i) {
+            extra_bins[i].idx = i + num_bin;
+        }
+
+        Bin *root = build_trivial_tree(remainder, extra_bins.data(), k);
+        return root->build_mapping_solution();
+    }
 
     Cut *decompose() {
         // -- Collect the sub-cuts
