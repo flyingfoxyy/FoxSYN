@@ -1,5 +1,6 @@
 add_library(supper
     map.cpp
+    agdmap.cpp
 )
 
 add_compile_options(-fexceptions)

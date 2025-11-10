@@ -6,11 +6,14 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <forward_list>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <linux/limits.h>
 #include <memory>
 #include <ostream>
+#include <sys/types.h>
 #include <utility>
 #include <vector>
 #include <cassert>
@@ -124,37 +127,115 @@ public:
     for (uint leaf = 0, i = 0; i != (C)->size && (leaf = (C)->begin()[i]); ++i)
 
 
-template <typename  T>
+enum class prune_mode_t {
+    Unified,
+    Separated,
+    Agdmap
+};
+
+
+template <typename  T, prune_mode_t M>
 class Prune {
-    std::vector<std::vector<T>> _cuts_by_size;
+    std::vector<std::vector<T>> _separated_set;
+    std::vector<T>              _unified_set;
+    std::vector<uint>           _capacity;
     std::function<bool(T, T)>   _cmp;
+    Area                        _diff;
 
 public:
-    Prune(std::function<bool(T, T)> &&cmp, std::size_t max_size) : _cuts_by_size(max_size + 1), _cmp(cmp) {
-        for (auto &vec : _cuts_by_size) {
-            vec.reserve(4);
-        }
-    }
+    Prune(std::function<bool(T, T)> &&cmp) : _cmp(cmp), _diff(1.0) {}
 
     ~Prune() = default;
 
-    void reset(std::size_t new_max_size) {
-        _cuts_by_size.clear();
-        _cuts_by_size.resize(new_max_size + 1);
-        for (auto &vec : _cuts_by_size) {
-            vec.reserve(4);
+    Inline void set_diff(Area diff) {
+        _diff = diff;
+    }
+
+    Inline void set_cap(std::vector<uint> &&list) {
+        _capacity = std::move(list);
+    }
+
+    Inline void reset(std::size_t new_max_size) {
+        if constexpr (M == prune_mode_t::Unified) {
+            _unified_set.clear();
+            _unified_set.reserve(64);
+        } else {
+            _separated_set.clear();
+            _separated_set.resize(new_max_size + 1);
+            for (int i = 2; i != _separated_set.size(); ++i) {
+                _separated_set[i].reserve(4);
+            }
         }
     }
 
-    Inline void insert(T item) {
-        auto &vec = _cuts_by_size[item->size];
-        vec.push_back(item);
-        std::ranges::sort(vec, _cmp);
+    Inline void reset(std::vector<uint> &&cap) {
+        static_assert(M != prune_mode_t::Unified);
+        _capacity = cap;
     }
 
-    void get(std::vector<T> &set) {
-        for (std::size_t sz = 2; sz != _cuts_by_size.size(); ++sz) {
+    Inline void insert(T item) {
+        if constexpr (M == prune_mode_t::Unified) {
+            _unified_set.push_back(item);
+            // Do not sort elements now, using nth element ranking when getting
+            // std::ranges::sort(_unified_set, _cmp);
+        } else {
+            auto &vec = _separated_set[item->size];
+            vec.push_back(item);
+            // TODO: using self-implemented insert sorting for better performance
+            std::ranges::sort(vec, _cmp);
+            if (vec.size() > _capacity[item->size]) {
+                // TODO: using self-implemented vector, pop_back is slow. --size is ok
+                vec.pop_back();
+            }
+        }
+    }
 
+    void get(std::vector<T> &set, size_t n = 0)
+    {
+        set.reserve(n);
+        if constexpr (M == prune_mode_t::Unified)
+        {
+            auto top_n = std::nth_element(
+                _unified_set.begin(),
+                _unified_set.begin() + n,
+                _unified_set.end(),
+                _cmp
+            );
+            std::copy(_unified_set.begin(), top_n, std::back_inserter(set));
+            return;
+        }
+        else if constexpr (M == prune_mode_t::Separated) {
+            Area last = kMaxArea;
+            for (size_t sz = 2; sz != _separated_set.size(); ++sz)
+            {
+                auto &vec = _separated_set[sz];
+                for (auto it = vec.rbegin(); it != vec.rend(); ++it) {
+                    Area curr = (*it)->area();
+                    if (curr > last + _diff) {
+                        continue;
+                    }
+                    set.push_back(*it);
+                    last = curr;
+                }
+            }
+            std::ranges::reverse(set);
+            while (set.size() > n) {
+                set.pop_back();
+            }
+        }
+        else if constexpr (M == prune_mode_t::Agdmap) {
+            // TODO: using area-size pruning. Bigger wide cuts should have smaller area.
+            Area last_one_area = kMaxArea;
+            for (size_t sz = 2; sz != _separated_set.size(); ++sz)
+            {
+                auto &vec = _separated_set[sz];
+                for (auto it = vec.rbegin(); it != vec.rend(); ++it)
+                {
+                    if ((*it)->area() < _diff + last_one_area) {
+                        set.push_back(*it);
+                    }
+                }
+            }
         }
     }
 };
@@ -557,7 +638,7 @@ class CutEnumerator {
             return fn(lhs, rhs, epsilon) == CutCost::cmp_res::LWIN;
         };
 
-        if (costs.size() > _cfg.max_cut_num){
+        if (costs.size() > _cfg.max_cut_num) {
             std::sort(costs.begin(), costs.end(), fn_wrap);
         } else{
             auto best_itr = std::min_element(costs.begin(), costs.end(), fn_wrap);
@@ -627,7 +708,7 @@ class CutEnumerator {
         return costs;
     }
 
-    void general_enum_cuts(mapper &mgr, uint id) {
+    void kcut_cut_enum(mapper &mgr, uint id) {
         const Config &cfg = mgr.config();
 
         Lit f0 = mgr[id][0];
@@ -712,7 +793,7 @@ class CutEnumerator {
         cut_set.push_back(triv_cut);
     }
 
-    void wide_enum_cuts(mapper &mgr, uint id) {
+    void wide_cut_enum(mapper &mgr, uint id) {
         const Config &cfg = mgr.config();
 
         std::function<bool(Cut *, Cut *)> cmp;
@@ -721,6 +802,7 @@ class CutEnumerator {
                 return lhs->area() < rhs->area();
             };
         } else {
+            Assert(0);
             cmp = [](Cut *lhs, Cut *rhs) -> bool {
                 return lhs->size < rhs->size;
             };
@@ -728,19 +810,18 @@ class CutEnumerator {
 
         // sort the gate inputs by area-cost increasing order ?
 
-        mapper::CutSet *input_cut_sets[MAX_GATE_SIZE];
+        std::vector<Cut *> *input_cut_sets[MAX_GATE_SIZE];
         const uint num_inputs = mgr[id].size();
         for (uint i = 0; i != num_inputs; ++i) {
             input_cut_sets[i] = &mgr.cut_set(mgr[id][i]);
         }
 
-        uint  buffer[Cut::MAX_CUT_SIZE] {0};
-
         std::vector<Cut *> curr_cut_sets(*input_cut_sets[0]);
 
-        uint n = 0;
-        while (++n < num_inputs) {
-            Prune<Cut *> prune(std::move(cmp), (n + 1) * cfg.lut_size);
+        Prune<Cut *, prune_mode_t::Separated> prune(std::move(cmp));
+        uint n = 1;
+        uint buffer[Cut::MAX_CUT_SIZE];
+        while (n++ < num_inputs) {
             for (Cut *c0 : curr_cut_sets)
             for (Cut *c1 : *input_cut_sets[n])
             {
@@ -748,6 +829,7 @@ class CutEnumerator {
                 uint *end  = std::set_union(buffer, c0->leaves, c0->leaves + c0->size, c1->leaves, c1->leaves + c1->size);
                 uint  size = end - buffer;
                 // compute the area-cost for pruning
+                // Or, just adding their area into a sum ?
                 Area a = 0;
                 for (int i = 0; i != size; ++i) {
                     a += mgr.area(buffer[i]);
@@ -767,7 +849,7 @@ class CutEnumerator {
         // ?
 
         // Now curr_cut_sets contains all the final survived wide cuts
-        // Decomposing them into k-feasible cuts trees
+        // Decomposing them into k-feasible cuts
         std::vector<Cut *>   cuts;  cuts .reserve(curr_cut_sets.size());
         std::vector<CutCost> costs; costs.reserve(curr_cut_sets.size());
 
@@ -788,9 +870,9 @@ class CutEnumerator {
 public:
     CutEnumerator(mapper &mgr, uint id) : _mgr(mgr), _cfg(mgr.config()) {
         if (mgr.gate(id)) {
-            wide_enum_cuts(mgr, id);
+            wide_cut_enum(mgr, id);
         } else {
-            general_enum_cuts(mgr, id);
+            kcut_cut_enum(mgr, id);
         }
     }
 };
