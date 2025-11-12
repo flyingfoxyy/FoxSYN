@@ -856,14 +856,14 @@ class CutEnumerator {
         std::vector<Cut *> curr_cut_sets(*input_cut_sets[0]);
 
         Prune<Cut *, prune_mode_t::Separated> prune(std::move(cmp));
-        uint n = 1;
         uint buffer[Cut::MAX_CUT_SIZE];
-        while (n++ < num_inputs) {
+        uint n = 1;
+        while (n < num_inputs) {
             for (Cut *c0 : curr_cut_sets)
             for (Cut *c1 : *input_cut_sets[n])
             {
                 // merge the sub-cuts
-                uint *end  = std::set_union(buffer, c0->leaves, c0->leaves + c0->size, c1->leaves, c1->leaves + c1->size);
+                uint *end  = std::set_union(c0->begin(), c0->end(), c1->begin(), c1->end(), buffer);
                 uint  size = end - buffer;
                 // compute the area-cost for pruning
                 // Or, just adding their area into a sum ?
@@ -888,6 +888,7 @@ class CutEnumerator {
             }
             curr_cut_sets.clear();
             prune.get(curr_cut_sets);
+            ++n;
         }
 
         // Structure-based pruning
