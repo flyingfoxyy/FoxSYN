@@ -146,6 +146,7 @@ usage:
 namespace fox::supper {
     Abc_Ntk_t *PerformSupperMap(Abc_Ntk_t *pNtk, const Config &cfg);
 }
+
 int Suppermap_Command(Abc_Frame_t *pAbc, int argc, char **argv)
 {
     using namespace fox::supper;
@@ -169,6 +170,9 @@ int Suppermap_Command(Abc_Frame_t *pAbc, int argc, char **argv)
         {
         case 'a':
             cfg.opt_target = Config::target_t::AREA;
+            break;
+        case 'g':
+            cfg.map_impl = Config::map_impl_t::AGDMAP;
             break;
         case 'd':
             // Export graph to DOT format

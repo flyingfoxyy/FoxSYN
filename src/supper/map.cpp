@@ -613,7 +613,9 @@ mapper::run_lut_mapping(const Config &cfg)
     }
 
     // create simple gates boundry
-    create_simple_gates(8);
+    if (run_agdmap()) {
+        create_simple_gates(8);
+    }
 
     // according to run-time parameters, choose mapping algorithm
 

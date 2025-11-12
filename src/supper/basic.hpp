@@ -213,6 +213,8 @@ public:
         _wall_durations[name] += wall_duration;
     }
 
+    bool contain(const char *name) const { return _wall_durations.contains(name); }
+
     std::string time_duration_cpu(const std::string &name, bool fuzzy = false) const {
         if (fuzzy) {
             double total = 0.0;
@@ -247,6 +249,7 @@ public:
         const double cpu_time = double(std::clock() - _cpu_start) / CLOCKS_PER_SEC;
         os << std::format(" {:<20} {:>15} {:>15} {:>12}\n", "Action", "CPU Time", "Wall Time", "Ratio");
         #define PRINT_TIME(Stage)                                         \
+        if (contain(Stage))                                               \
         os << std::format(" {:<20} {:>15} {:>15} {:>10.1f} %\n", Stage,   \
             time_duration_cpu(Stage),                                     \
             time_duration_wall(Stage),                                    \

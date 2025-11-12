@@ -34,9 +34,15 @@ namespace fox::supper {
 // ========================================================================
 // Cut
 // ========================================================================
+// enum cut_data_t {
+//     WIDE,
+//     KCUT
+// };
+
 struct cut_data_u {
     uint8_t sub_cuts[MAX_GATE_SIZE];
-    uint    root     ;
+    uint8_t nums; // num of subcut
+    uint    root;
     uint    leaves[0];
 };
 
@@ -53,9 +59,8 @@ public:
         Area a   ;
     };
     uint size : 7;
-    uint ext  : 2;  // extended leaves storage. leaves[0] is the cut area
     uint crs  : 1;  // compressed leaf array
-    uint idx  : 22; // cut idx
+    uint idx  : 24; // cut idx
     uint fid;       // truth table for functional id
     uint leaves[0]; // leaves or extended cut-data
 
@@ -63,23 +68,26 @@ public:
      * @brief Get the number of bytes used by the cut.
      */
     Inline std::size_t num_bytes() const { 
-        return sizeof(Cut) + sizeof(uint) * (size + ext);
+        return sizeof(Cut) + sizeof(uint) * (size);
     }
 
-    Inline uint *begin() { return leaves + ext;        }
-    Inline uint *end  () { return leaves + ext + size; }
+    Inline cut_data_u *udata() { return reinterpret_cast<cut_data_u *>(leaves); }
 
+    Inline uint *begin() { return leaves;        }
+    Inline uint *end  () { return leaves + size; }
+
+    // For cut copy
     static Inline Cut *allocate(const Cut &cut) {
         Cut *ptr = static_cast<Cut *>(std::malloc(cut.num_bytes()));
         std::memcpy(ptr, &cut, cut.num_bytes());
         return ptr;
     }
 
-    static Inline Cut *allocate(uint *begin, uint *end, Sign s, int ext = 0, uint crs = 0) {
-        Cut *ptr  = static_cast<Cut *>(std::malloc(sizeof(Cut) + sizeof(uint) * (end - begin + ext)));
+    // For general k-cut
+    static Inline Cut *allocate(uint *begin, uint *end, Sign s, uint crs = 0) {
+        Cut *ptr  = static_cast<Cut *>(std::malloc(sizeof(Cut) + sizeof(uint) * (end - begin)));
         ptr->sign = s;
         ptr->size = end - begin;
-        ptr->ext  = ext;
         ptr->crs  = crs;
         ptr->idx  = 0;
         ptr->fid  = 0;
@@ -89,15 +97,27 @@ public:
         return ptr;
     }
 
+    // For trivial cut
     static Inline Cut *allocate(uint id) {
         Cut *ptr  = static_cast<Cut *>(std::malloc(sizeof(Cut) + sizeof(uint) * 1));
         ptr->sign = SIGNATURE(id);
         ptr->size = 1;
-        ptr->ext  = 0;
         ptr->crs  = 0;
         ptr->idx  = 0;
         ptr->fid  = 0;
         ptr->leaves[0] = id;
+        return ptr;
+    }
+
+    // For Agdmap wide cut
+    static Inline Cut *allocate_wide(uint *begin, uint *end) {
+        Cut *ptr  = static_cast<Cut *>(std::malloc(sizeof(Cut) + sizeof(cut_data_u) + sizeof(uint) * (end - begin)));
+        ptr->sign = 0;
+        ptr->size = end - begin;
+        ptr->crs  = 0;
+        ptr->idx  = 0;
+        ptr->fid  = 0;
+        std::copy(begin, end, ptr->begin());
         return ptr;
     }
 
@@ -112,6 +132,10 @@ public:
             return *this;
         std::memcpy(this, &cut, cut.num_bytes());
         return *this;
+    }
+
+    Inline void add_sub_cut(uint sub_cut_idx) {
+        udata()->sub_cuts[udata()->nums++] = sub_cut_idx;
     }
 
     Inline Area &area() { return a; }
@@ -537,6 +561,8 @@ public:
 
     void initialize();
 
+    bool run_agdmap() const { return _cfg.map_impl == Config::AGDMAP; }
+
     // reset flags
     Inline void reset_est_ref () { std::fill(_est_ref .begin(), _est_ref .end(), 0       ); }
     Inline void reset_required() { std::fill(_required.begin(), _required.end(), kMaxTime); }
@@ -582,6 +608,7 @@ public:
 
     // -- Agdmap related
     void  create_simple_gates(uint max_size);
+
     Gate *gate(uint id) { return _gates[id]; }
 
     Timer &timer() { return _timer; }
@@ -631,6 +658,13 @@ class CutEnumerator {
     mapper       &_mgr;
     const Config &_cfg;
 
+    /**
+     * @brief 
+     * 
+     * @param id 
+     * @param kcuts 
+     * @param costs 
+     */
     void post_kcut_gen(uint id, std::vector<Cut *> &kcuts, std::vector<CutCost> &costs) {
         float epsilon = _cfg.epsilon;
         CutCost::rank_fn fn = CutCost::GetRankFn(_mgr.config().opt_target);
@@ -650,6 +684,7 @@ class CutEnumerator {
         for (int i = 0; i != costs.size() && i != _cfg.max_cut_num; ++i) {
             Cut *&cut = kcuts[costs[i].idx];
             cut_set.push_back(cut);
+            cut->idx = cut_set.size() - 1;
             cut = nullptr;
         }
         for (Cut *cut : kcuts) {
@@ -669,6 +704,7 @@ class CutEnumerator {
 
         // create trivial cut
         Cut *triv_cut = Cut::allocate(id);
+        triv_cut->idx = cut_set.size();
         if constexpr (algo == CutCostAlgo::PRAETOR) {}
         cut_set.push_back(triv_cut);
     }
@@ -793,6 +829,7 @@ class CutEnumerator {
         cut_set.push_back(triv_cut);
     }
 
+    // TODO: when gate size <= 8, using stack memory to allocate wide-cut.
     void wide_cut_enum(mapper &mgr, uint id) {
         const Config &cfg = mgr.config();
 
@@ -830,11 +867,19 @@ class CutEnumerator {
                 uint  size = end - buffer;
                 // compute the area-cost for pruning
                 // Or, just adding their area into a sum ?
-                Area a = 0;
+                Cut *wcut = Cut::allocate_wide(buffer, end);
                 for (int i = 0; i != size; ++i) {
-                    a += mgr.area(buffer[i]);
+                    wcut->area() += mgr.area(buffer[i]);
                 }
-                prune.insert(Cut::allocate(buffer, end, 0));                
+                // store the sub-cuts info
+                if (n == 2) {
+                    wcut->add_sub_cut(c0->idx);
+                } else {
+                    for (int i = 0; i != c0->udata()->nums; ++i)
+                        wcut->add_sub_cut(c0->udata()->sub_cuts[i]);
+                }
+                wcut->add_sub_cut(c1->idx);
+                prune.insert(wcut);                
             }
             if (n != 1) {
                 // Todo: reuse the cuts here
@@ -869,10 +914,14 @@ class CutEnumerator {
 
 public:
     CutEnumerator(mapper &mgr, uint id) : _mgr(mgr), _cfg(mgr.config()) {
-        if (mgr.gate(id)) {
-            wide_cut_enum(mgr, id);
+        if (mgr.run_agdmap()) {
+            if (mgr.gate(id)) {
+                wide_cut_enum(mgr, id);
+            } else {
+                kcut_cut_enum(mgr, id);
+            }
         } else {
-            kcut_cut_enum(mgr, id);
+            kcut_cut_enum(mgr, id);        
         }
     }
 };
