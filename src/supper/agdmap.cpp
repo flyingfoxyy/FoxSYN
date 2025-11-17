@@ -161,7 +161,7 @@ public:
     Cut *area_decompose() {
         // -- Collect the sub-cuts
         const std::vector<Lit>  &gate_inputs = _mgr.gate(_id)->inputs();
-        cut_data_u              *data        = reinterpret_cast<cut_data_u *>(_wcut->leaves);
+        cut_data_w              *data        = _wcut->wdata();
 
         std::array<Cut *, MAX_GATE_SIZE> sub_cuts;
         for (int i = 0; i != gate_inputs.size(); ++i) {

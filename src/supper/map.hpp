@@ -34,16 +34,10 @@ namespace fox::supper {
 // ========================================================================
 // Cut
 // ========================================================================
-// enum cut_data_t {
-//     WIDE,
-//     KCUT
-// };
-
-struct cut_data_u {
-    uint8_t sub_cuts[MAX_GATE_SIZE];
-    uint8_t nums; // num of subcut
-    uint    root;
-    uint    leaves[0];
+struct cut_data_w {
+    uint8_t  sub_cuts[MAX_GATE_SIZE];
+    uint8_t  nums; // num of subcut
+    uint     leaves[0];
 };
 
 class Cut {
@@ -52,76 +46,121 @@ public:
     static constexpr std::size_t MAX_CUT_SIZE = (1 << BIT_NUM_SIZE) - 1;
     static constexpr std::size_t BIT_NUM_SIGN = std::numeric_limits<uint>::digits;
 
-    using elem_type = uint;
+    enum data_t : uint8_t { KCUT = 0, WCUT };
 
     union {
-        uint sign;
-        Area a   ;
+        uint  sign;      // signature
+        Area  a   ;      // area-cost
     };
-    uint size : 7;
-    uint crs  : 1;  // compressed leaf array
-    uint idx  : 24; // cut idx
-    uint fid;       // truth table for functional id
-    uint leaves[0]; // leaves or extended cut-data
+    uint      size :  7; // cut-set size
+    uint      crs  :  1; // compressed leaf array (first leaf -> id, diff21, diff32 ... )
+    uint8     dt   :  2; // data type
+    uint      idx  : 22; // cut idx
+    uint      fid;       // truth table (num. var <= 5) or functional id
+private:
+    uint      data[0];   // cut-data. Leaves or extened data.
+public:
 
     /**
      * @brief Get the number of bytes used by the cut.
      */
-    Inline std::size_t num_bytes() const { 
-        return sizeof(Cut) + sizeof(uint) * (size);
+    Inline std::size_t num_bytes() const {
+        if (dt == data_t::KCUT)
+            return sizeof(Cut) + sizeof(uint) * (size);
+        else
+            return sizeof(Cut) + sizeof(cut_data_w) + sizeof(uint) * (size);
     }
 
-    Inline cut_data_u *udata() { return reinterpret_cast<cut_data_u *>(leaves); }
+    Inline cut_data_w *wdata() {
+        Assert(dt == data_t::WCUT);
+        return reinterpret_cast<cut_data_w *>(data);
+    }
 
-    Inline uint *begin() { return leaves;        }
-    Inline uint *end  () { return leaves + size; }
+    Inline cut_data_w *wdata() const {
+        Assert(dt == data_t::WCUT);
+        return const_cast<cut_data_w *>(reinterpret_cast<const cut_data_w *>(data));
+    }
+
+    Inline uint *begin() {
+        switch (dt) {
+        case data_t::KCUT:
+            return data;
+        case data_t::WCUT:
+            return wdata()->leaves;
+        }
+        return nullptr;
+    }
+
+    Inline const uint *begin() const {
+        switch (dt) {
+        case data_t::KCUT:
+            return data;
+        case data_t::WCUT:
+            return wdata()->leaves;
+        }
+        return nullptr;
+    }
+
+    // TODO: crs, end is unknown
+    Inline uint *end() {
+        switch (dt) {
+        case data_t::KCUT:
+            return data + size;
+        case data_t::WCUT:
+            return wdata()->leaves + size;
+        }
+        return nullptr;
+    }
+
+    Inline uint leaf(uint p) const { return begin()[p]; }
 
     // For cut copy
-    static Inline Cut *allocate(const Cut &cut) {
+    static Inline Cut *copy(const Cut &cut) {
         Cut *ptr = static_cast<Cut *>(std::malloc(cut.num_bytes()));
         std::memcpy(ptr, &cut, cut.num_bytes());
         return ptr;
     }
 
     // For general k-cut
-    static Inline Cut *allocate(uint *begin, uint *end, Sign s, uint crs = 0) {
+    static Inline Cut *alloc_kcut(uint *begin, uint *end, Sign s, uint crs = 0) {
         Cut *ptr  = static_cast<Cut *>(std::malloc(sizeof(Cut) + sizeof(uint) * (end - begin)));
         ptr->sign = s;
         ptr->size = end - begin;
         ptr->crs  = crs;
+        ptr->dt   = data_t::KCUT;
         ptr->idx  = 0;
         ptr->fid  = 0;
-        for (int i = 0; i != ptr->size; ++i) {
-            ptr->begin()[i] = begin[i];
-        }
+        std::copy(begin, end, ptr->data);
         return ptr;
     }
 
     // For trivial cut
-    static Inline Cut *allocate(uint id) {
+    static Inline Cut *alloc_triv(uint id) {
         Cut *ptr  = static_cast<Cut *>(std::malloc(sizeof(Cut) + sizeof(uint) * 1));
         ptr->sign = SIGNATURE(id);
         ptr->size = 1;
         ptr->crs  = 0;
+        ptr->dt   = data_t::KCUT;
         ptr->idx  = 0;
         ptr->fid  = 0;
-        ptr->leaves[0] = id;
+        ptr->data[0] = id;
         return ptr;
     }
 
     // For Agdmap wide cut
-    static Inline Cut *allocate_wide(uint *begin, uint *end) {
-        Cut *ptr  = static_cast<Cut *>(std::malloc(sizeof(Cut) + sizeof(cut_data_u) + sizeof(uint) * (end - begin)));
+    static Inline Cut *alloc_wcut(uint *begin, uint *end) {
+        Cut *ptr  = static_cast<Cut *>(std::malloc(sizeof(Cut) + sizeof(cut_data_w) + sizeof(uint) * (end - begin)));
         ptr->sign = 0;
         ptr->size = end - begin;
         ptr->crs  = 0;
+        ptr->dt   = data_t::WCUT;
         ptr->idx  = 0;
         ptr->fid  = 0;
-        std::copy(begin, end, ptr->begin());
+        std::copy(begin, end, ptr->wdata()->leaves);
         return ptr;
     }
 
-    static Inline void deallocate(Cut *cut) {
+    static Inline void dealloc(Cut *cut) {
         if (cut) [[likely]] {
             std::free(cut);
         }
@@ -135,7 +174,7 @@ public:
     }
 
     Inline void add_sub_cut(uint sub_cut_idx) {
-        udata()->sub_cuts[udata()->nums++] = sub_cut_idx;
+        wdata()->sub_cuts[wdata()->nums++] = sub_cut_idx;
     }
 
     Inline Area &area() { return a; }
@@ -149,7 +188,6 @@ public:
 
 #define ForEachCutLeaf(C) \
     for (uint leaf = 0, i = 0; i != (C)->size && (leaf = (C)->begin()[i]); ++i)
-
 
 enum class prune_mode_t {
     Unified,
@@ -553,7 +591,7 @@ public:
 
     ~mapper() {
         for (Cut *cut : _best_cuts) {
-            Cut::deallocate(cut);
+            Cut::dealloc(cut);
         }
     }
 
@@ -627,7 +665,7 @@ public:
     void free_cuts() {
         ForEachGraphLogicNode(*this) {
             for (Cut *cut : _cuts[idx]) {
-                Cut::deallocate(cut);
+                Cut::dealloc(cut);
             }
             _cuts[idx].clear();
         }
@@ -688,7 +726,7 @@ class CutEnumerator {
             cut = nullptr;
         }
         for (Cut *cut : kcuts) {
-            Cut::deallocate(cut);
+            Cut::dealloc(cut);
         }
 
         // Save the best cut
@@ -703,7 +741,7 @@ class CutEnumerator {
         _mgr.num_stored() += cut_set.size();
 
         // create trivial cut
-        Cut *triv_cut = Cut::allocate(id);
+        Cut *triv_cut = Cut::alloc_triv(id);
         triv_cut->idx = cut_set.size();
         if constexpr (algo == CutCostAlgo::PRAETOR) {}
         cut_set.push_back(triv_cut);
@@ -720,8 +758,7 @@ class CutEnumerator {
                 cost.size = cut->size;
                 cost.idx  = i;
                 // area-flow/edge-flow
-                for (int i = 0; i != cut->size; ++i) {
-                    uint leaf = cut->leaves[i];
+                ForEachCutLeaf(cut) {
                     cost.area += mgr.area(leaf);
                     cost.edge += mgr.edge(leaf);
                 }
@@ -767,10 +804,10 @@ class CutEnumerator {
                 continue;
             std::memset(buffer, 0, sizeof(uint) * (cfg.cut_size * 2));
             // TODO: using optimized merge
-            if (end = set_union(buffer, c0->leaves, c0->leaves + c0->size, c1->leaves, c1->leaves + c1->size, cfg.cut_size); !end)
+            if (end = set_union(buffer, c0->begin(), c0->end(), c1->begin(), c1->end(), cfg.cut_size); !end)
                 continue;
             Assert(end - buffer <= cfg.cut_size);
-            Cut *cut = Cut::allocate(buffer, end, c0->sign | c1->sign);
+            Cut *cut = Cut::alloc_kcut(buffer, end, c0->sign | c1->sign);
             cuts.push_back(cut);
         }} // end merge cuts
 
@@ -809,7 +846,7 @@ class CutEnumerator {
             cut = nullptr;
         }
         for (Cut *cut : cuts) {
-            Cut::deallocate(cut);
+            Cut::dealloc(cut);
         }
 
         // Save the best cut
@@ -824,7 +861,7 @@ class CutEnumerator {
         mgr.num_stored() += cut_set.size();
 
         // create trivial cut
-        Cut *triv_cut = Cut::allocate(id);
+        Cut *triv_cut = Cut::alloc_triv(id);
         if constexpr (algo == CutCostAlgo::PRAETOR) {}
         cut_set.push_back(triv_cut);
     }
@@ -867,7 +904,7 @@ class CutEnumerator {
                 uint  size = end - buffer;
                 // compute the area-cost for pruning
                 // Or, just adding their area into a sum ?
-                Cut *wcut = Cut::allocate_wide(buffer, end);
+                Cut *wcut = Cut::alloc_wcut(buffer, end);
                 for (int i = 0; i != size; ++i) {
                     wcut->area() += mgr.area(buffer[i]);
                 }
@@ -875,8 +912,8 @@ class CutEnumerator {
                 if (n == 2) {
                     wcut->add_sub_cut(c0->idx);
                 } else {
-                    for (int i = 0; i != c0->udata()->nums; ++i)
-                        wcut->add_sub_cut(c0->udata()->sub_cuts[i]);
+                    for (int i = 0; i != c0->wdata()->nums; ++i)
+                        wcut->add_sub_cut(c0->wdata()->sub_cuts[i]);
                 }
                 wcut->add_sub_cut(c1->idx);
                 prune.insert(wcut);                
@@ -884,7 +921,7 @@ class CutEnumerator {
             if (n != 1) {
                 // Todo: reuse the cuts here
                 for (Cut *cut : curr_cut_sets)
-                    Cut::deallocate(cut);
+                    Cut::dealloc(cut);
             }
             curr_cut_sets.clear();
             prune.get(curr_cut_sets);
@@ -978,8 +1015,8 @@ protected:
             if (_mgr.num_est_ref(idx) == 0)
                 continue;
             Cut *cut = _mgr.best_cut(idx);
-            for (int i = 0; i != cut->size; ++i) {
-                ++_mgr.num_est_ref(cut->leaves[i]);
+            ForEachCutLeaf(cut) {
+                ++_mgr.num_est_ref(leaf);
             }
             _mgr.num_area() ++;
             _mgr.num_edge() += cut->size;

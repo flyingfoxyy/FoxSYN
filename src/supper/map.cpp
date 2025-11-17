@@ -22,7 +22,7 @@ Cut::operator*() const
     std::string res; res.reserve(20);
     res = "{ ";
     for (int i = 0; i != size; ++i) {
-        res += std::to_string(leaves[i]) + " ";
+        res += std::to_string(begin()[i]) + " ";
     }
     res += "}";
     return res;
@@ -376,7 +376,7 @@ mapper::compute_truth(Cut *cut, uint root) const
 
     _timer.start("compute_truth");
 
-    if (cut->size == 2 && _nodes[root][0].id() == cut->leaves[0] && _nodes[root][1].id() == cut->leaves[1]) {
+    if (cut->size == 2 && _nodes[root][0].id() == cut->leaf(0) && _nodes[root][1].id() == cut->leaf(1)) {
         word t0 = init_val[0];
         word t1 = init_val[1];
         if (_nodes[root][0].sign())
@@ -388,7 +388,7 @@ mapper::compute_truth(Cut *cut, uint root) const
 
     std::map<uint, word> cache;
 
-    const uint min_id = cut->leaves[0];
+    const uint min_id = cut->leaf(0);
     ForEachCutLeaf(cut) {
         cache[leaf - min_id] = init_val[i];
     }
@@ -421,12 +421,10 @@ Area
 mapper::ref_mffc(Cut *cut)
 {
     Area area = 1.0;
-    for (int i = 0; i != cut->size; ++i)
-    {
-        const uint id = cut->leaves[i];
-        if (num_est_ref(id)++ > 0 || !_nodes[id].is_logic())
+    ForEachCutLeaf(cut) {
+        if (num_est_ref(leaf)++ > 0 || !_nodes[leaf].is_logic())
             continue;
-        area += ref_mffc(best_cut(id));
+        area += ref_mffc(best_cut(leaf));
     }
     return area;
 }
@@ -435,13 +433,12 @@ Edge
 mapper::rip_mffc(Cut *cut)
 {
     Edge edge = cut->size;
-    for (int i = 0; i != cut->size; ++i)
+    ForEachCutLeaf(cut)
     {
-        const uint id = cut->leaves[i];
-        assert(num_est_ref(id) > 0);
-        if (--num_est_ref(id) > 0 || !_nodes[id].is_logic())
+        assert(num_est_ref(leaf) > 0);
+        if (--num_est_ref(leaf) > 0 || !_nodes[leaf].is_logic())
             continue;
-        edge += rip_mffc(best_cut(id));
+        edge += rip_mffc(best_cut(leaf));
     }
     return edge;
 }
@@ -485,7 +482,7 @@ mapper::create_abc_ntk_from_mapping(bool use_truth_table)
             pLut->pData = Abc_SopRegister((Mem_Flex_t*)ntk->pManFunc, Abc_SopCreateFromTruth((Mem_Flex_t *)ntk->pManFunc,
                 cut->size, (unsigned *)&truth));
             for (int m = 0; m != cut->size; ++m)
-                Abc_ObjAddFanin(pLut, idx2obj[cut->leaves[m]]);
+                Abc_ObjAddFanin(pLut, idx2obj[cut->begin()[m]]);
         }
         return pLut;
     };
@@ -603,7 +600,7 @@ mapper::run_lut_mapping(const Config &cfg)
 
     // Setup PI cuts
     ForEachGraphPi(*this) {
-        _cuts[_pi[idx]].push_back(Cut::allocate(_pi[idx]));
+        _cuts[_pi[idx]].push_back(Cut::alloc_triv(_pi[idx]));
     }
 
     _best_cuts.set_offset(logic_begin()); Assert(_nodes[logic_begin()].is_logic());
