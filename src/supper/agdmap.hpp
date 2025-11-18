@@ -13,9 +13,15 @@ public:
     uint size() const {
         return _inputs.size();
     }
-    void add_input(Lit input) {
-        _inputs.push_back(input);
+
+    Lit operator[](std::size_t idx) const {
+        return _inputs[idx];
     }
+
+    Lit input(std::size_t idx) const {
+        return _inputs[idx];
+    }
+
     const std::vector<Lit> &inputs() const {
         return _inputs;
     }

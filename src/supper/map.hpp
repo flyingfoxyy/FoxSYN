@@ -61,6 +61,13 @@ private:
     uint      data[0];   // cut-data. Leaves or extened data.
 public:
 
+    Inline Cut &operator=(const Cut &cut) {
+        if (&cut == this)
+            return *this;
+        std::memcpy(this, &cut, cut.num_bytes());
+        return *this;
+    }
+
     /**
      * @brief Get the number of bytes used by the cut.
      */
@@ -114,6 +121,8 @@ public:
 
     Inline uint leaf(uint p) const { return begin()[p]; }
 
+    Inline bool is_wcut() const { return dt == data_t::WCUT; }
+
     // For cut copy
     static Inline Cut *copy(const Cut &cut) {
         Cut *ptr = static_cast<Cut *>(std::malloc(cut.num_bytes()));
@@ -166,13 +175,6 @@ public:
         }
     }
 
-    Inline Cut &operator=(const Cut &cut) {
-        if (&cut == this)
-            return *this;
-        std::memcpy(this, &cut, cut.num_bytes());
-        return *this;
-    }
-
     Inline void add_sub_cut(uint sub_cut_idx) {
         wdata()->sub_cuts[wdata()->nums++] = sub_cut_idx;
     }
@@ -217,7 +219,7 @@ public:
         _capacity = std::move(list);
     }
 
-    Inline void reset(std::size_t new_max_size) {
+    Inline void reset(std::size_t new_max_size, uint max_num = 4) {
         if constexpr (M == prune_mode_t::Unified) {
             _unified_set.clear();
             _unified_set.reserve(64);
@@ -225,8 +227,9 @@ public:
             _separated_set.clear();
             _separated_set.resize(new_max_size + 1);
             for (int i = 2; i != _separated_set.size(); ++i) {
-                _separated_set[i].reserve(4);
+                _separated_set[i].reserve(max_num);
             }
+            _capacity.resize(new_max_size + 1, max_num);
         }
     }
 
@@ -885,9 +888,9 @@ class CutEnumerator {
         // sort the gate inputs by area-cost increasing order ?
 
         std::vector<Cut *> *input_cut_sets[MAX_GATE_SIZE];
-        const uint num_inputs = mgr[id].size();
+        const uint num_inputs = mgr.gate(id)->size();
         for (uint i = 0; i != num_inputs; ++i) {
-            input_cut_sets[i] = &mgr.cut_set(mgr[id][i]);
+            input_cut_sets[i] = &mgr.cut_set(mgr.gate(id)->input(i));
         }
 
         std::vector<Cut *> curr_cut_sets(*input_cut_sets[0]);
@@ -896,6 +899,7 @@ class CutEnumerator {
         uint buffer[Cut::MAX_CUT_SIZE];
         uint n = 1;
         while (n < num_inputs) {
+            prune.reset((n + 1) * cfg.lut_size, 4);
             for (Cut *c0 : curr_cut_sets)
             for (Cut *c1 : *input_cut_sets[n])
             {
@@ -909,13 +913,16 @@ class CutEnumerator {
                     wcut->area() += mgr.area(buffer[i]);
                 }
                 // store the sub-cuts info
-                if (n == 2) {
+                if (n == 1) {
+                    Assert(!c0->is_wcut() && !c1->is_wcut());
                     wcut->add_sub_cut(c0->idx);
+                    wcut->add_sub_cut(c1->idx);
                 } else {
+                    Assert(c0->is_wcut() && !c1->is_wcut());
+                    wcut->add_sub_cut(c1->idx);
                     for (int i = 0; i != c0->wdata()->nums; ++i)
                         wcut->add_sub_cut(c0->wdata()->sub_cuts[i]);
                 }
-                wcut->add_sub_cut(c1->idx);
                 prune.insert(wcut);                
             }
             if (n != 1) {
@@ -953,10 +960,12 @@ class CutEnumerator {
 public:
     CutEnumerator(mapper &mgr, uint id) : _mgr(mgr), _cfg(mgr.config()) {
         if (mgr.run_agdmap()) {
-            if (mgr.gate(id)) {
-                wide_cut_enum(mgr, id);
-            } else {
-                kcut_cut_enum(mgr, id);
+            if (Gate *g = mgr.gate(id)) {
+                if (g->size() > 2) {
+                    wide_cut_enum(mgr, id);
+                } else {
+                    kcut_cut_enum(mgr, id);
+                }
             }
         } else {
             kcut_cut_enum(mgr, id);        
