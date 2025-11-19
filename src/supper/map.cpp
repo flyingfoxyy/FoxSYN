@@ -1,8 +1,10 @@
 #include <cstddef>
 #include <cstdlib>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <sstream>
 #include <vector>
 #include <ctime>
 #include <print>
@@ -19,14 +21,51 @@ namespace fox::supper {
 std::string
 Cut::operator*() const
 {
-    std::string res; res.reserve(20);
-    res = "{ ";
-    for (int i = 0; i != size; ++i) {
-        res += std::to_string(begin()[i]) + " ";
+    std::stringstream ss;
+    ss << std::setprecision(4);
+    ss << "Area: " << a << ", Size: " << size << ", DT: " << (dt == 1 ? 'w' : 'k') << ", Leaves: ";
+    ss << "{ ";
+    ForEachCutLeaf(this) {
+        ss << leaf << " ";
     }
-    res += "}";
-    return res;
+    ss << "}";
+    if (is_wcut()) {
+        ss << " " << **wdata();
+    }
+    return ss.str();
 }
+
+template <typename  T, prune_mode_t M> void
+Prune<T, M>::print() const
+{
+    auto &ss = std::cout;
+    ss << "Prune stats:\n";
+    if constexpr (M == prune_mode_t::Unified) {
+        ss << " unified set size : " << _unified_set.size();
+        for (const T &item : _unified_set) {
+            if constexpr (std::is_pointer_v<T>) {
+                ss << "  " << **item << "\n";
+            } else {
+                ss << "  " << *item << "\n";
+            }
+        }
+    } else {
+        ss << " separated set size : " << _separated_set.size() - 1 << "\n";
+        for (int i = 2; i != _separated_set.size(); ++i) {
+            ss << "[" << i << "]\n";
+            for (const T &item : _separated_set[i]) {
+                if constexpr (std::is_pointer_v<T>) {
+                    ss << "  " << **item << "\n";
+                } else {
+                    ss << "  " << *item << "\n";
+                }
+            }
+        }
+    }
+}
+
+template class Prune<Cut *, prune_mode_t::Unified  >;
+template class Prune<Cut *, prune_mode_t::Separated>;
 
 bool
 graph_t::is_topologically_sorted() const

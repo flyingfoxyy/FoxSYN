@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "basic.hpp"
 #include "macros.hpp"
 #include "map.hpp"
 
@@ -25,44 +26,46 @@ struct Bin {
     Bin() {}
 
     Bin(Cut *cut) : sign(cut->sign), root(0), numl(cut->size), numc(1) {
+        ForEachCutLeaf(cut) {
+            leaves[i] = leaf;
+        }
         cuts[0] = cut->idx;
     }
 
-    uint  *leaf_begin() { return leaves;         }
-    uint  *leaf_end  () { return leaves + numl;  }
-    uint8 *cut_begin () { return cuts;           }
-    uint8 *cut_end   () { return cuts + numc;    }
-    uint8 *bin_begin () { return bins;           }
-    uint8 *bin_end   () { return bins + numb;    }
+    Inline uint  *leaf_begin() { return leaves;         }
+    Inline uint  *leaf_end  () { return leaves + numl;  }
+    Inline uint8 *cut_begin () { return cuts;           }
+    Inline uint8 *cut_end   () { return cuts   + numc;  }
+    Inline uint8 *bin_begin () { return bins;           }
+    Inline uint8 *bin_end   () { return bins   + numb;  }
 
-    bool full(uint k) const {
+    Inline bool full(uint k) const {
         Assert (numl + numb  <= k);
         return (numl + numb) == k;
     }
 
-    bool free(uint k) const {
+    Inline bool free(uint k) const {
         return (numl + numb) < k;
     }
 
-    uint num_port() const {
+    Inline uint num_port() const {
         return numl + numb;
     }
 
-    void add_cut(Cut *&cut, uint *begin, uint *end) {
-        uint new_size = numl = end - begin;
-        for (int i = 0; i != new_size; ++i)
-            leaves[i] = begin[i];
+    Inline void add_cut(Cut *&cut, uint *begin, uint *end) {
+        numl = end - begin;
+        std::copy(begin, end, leaves);
         cuts[numc++] = cut->idx;
         sign |= cut->sign;
         cut = nullptr;
     }
 
     // Connect bin to this bin's free port
-    void add_bin_conn(Bin *bin) {
+    Inline void add_bin_conn(Bin *bin) {
         bins[numb++] = bin->idx;
     }
 
-    // Convert decompostion tree into a cut-tree
+    // Convert decomposition tree into a cut-tree
     Cut *build_mapping_solution() {
         Cut *root = nullptr;
         return root;
@@ -80,7 +83,7 @@ class AgdMgr {
 
 public:
 
-    AgdMgr(mapper &mgr, Cut *wcut, CutCost &cost) : _mgr(mgr), _cost(cost), _wcut(wcut) {}
+    AgdMgr(mapper &mgr, uint id, Cut *wcut, CutCost &cost) : _mgr(mgr), _cost(cost), _wcut(wcut), _id(id) {}
 
     ~AgdMgr() = default;
 
@@ -106,21 +109,23 @@ public:
 
     Cut *multilevel_decompose(Bin *bins, uint num_bin, uint k) {
         Bin *b0 = bins;
-        uint num_used = 1;
+        Bin *b1 = bins + 1;
+        b0->add_bin_conn(b1);
 
-        std::deque<Bin *> tree; tree.push_back(bins + num_used++);
-        uint idx = 0;
-        while (idx++ != tree.size() && num_used < num_bin) {
+        std::deque<Bin *> tree; tree.push_back(b1); // tree has a initial root b1.
+        uint idx      = 0;
+        uint num_used = 2;
+        while (idx != tree.size() && num_used < num_bin) {
             Bin *root = tree[idx];
-            int n = k - root->num_port(); Assert(n >= 0);
+            int  n    = k - root->num_port(); Assert(n >= 0);
             for (int i = 0; i < n; i++) {
                 Bin *leaf = bins + num_used++;
                 root->add_bin_conn(leaf);
-                // if (!leaf->full(k))
                 tree.push_back(leaf);
                 if (num_used == num_bin)
                     break;
             }
+            ++idx;
         }
 
         if (num_used == num_bin) { // all bins are used, good, just return is ok
@@ -160,17 +165,17 @@ public:
 
     Cut *area_decompose() {
         // -- Collect the sub-cuts
-        const std::vector<Lit>  &gate_inputs = _mgr.gate(_id)->inputs();
-        cut_data_w              *data        = _wcut->wdata();
+        const Gate *g    = _mgr.gate(_id);
+        cut_data_w *data = _wcut->wdata();
 
-        std::array<Cut *, MAX_GATE_SIZE> sub_cuts;
-        for (int i = 0; i != gate_inputs.size(); ++i) {
-            const auto &in_cuts = _mgr.cut_set(gate_inputs[i]);
-            sub_cuts[i] = in_cuts[data->sub_cuts[i]];
+        array<Cut *, MAX_GATE_SIZE> sub_cuts;
+        for (int i = 0; i != g->size(); ++i) {
+            const auto &in_cuts = _mgr.cut_set(g->input(i));
+            sub_cuts.push_back(in_cuts[data->sub_cuts[i]]);
         }
 
         // -- Sort sub-cuts in given order
-        std::ranges::sort(sub_cuts, [](Cut *lhs, Cut *rhs) { return lhs->size > rhs->size; });
+        std::sort(sub_cuts.begin(), sub_cuts.end(), [](Cut *lhs, Cut *rhs) { return lhs->size > rhs->size; });
 
         // -- Bin-packing
         std::array<Bin ,     MAX_GATE_SIZE> bins;
@@ -241,8 +246,8 @@ public:
 };
 
 Cut *
-agd_decompose(mapper &mgr, Cut *wcut, CutCost &cost) {
-    AgdMgr agd(mgr, wcut, cost);
+agd_decompose(mapper &mgr, uint id, Cut *wcut, CutCost &cost) {
+    AgdMgr agd(mgr, id, wcut, cost);
     if (mgr.config().opt_target == Config::AREA)
         return agd.area_decompose();
     else

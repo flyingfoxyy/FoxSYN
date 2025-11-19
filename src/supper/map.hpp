@@ -14,6 +14,7 @@
 #include <memory>
 #include <ostream>
 #include <sys/types.h>
+#include <type_traits>
 #include <utility>
 #include <vector>
 #include <cassert>
@@ -36,8 +37,16 @@ namespace fox::supper {
 // ========================================================================
 struct cut_data_w {
     uint8_t  sub_cuts[MAX_GATE_SIZE];
-    uint8_t  nums; // num of subcut
+    uint8_t  nums; // num of sub-cut
     uint     leaves[0];
+
+    Inline std::string operator*() const {
+        std::string str = "<";
+        for (int i = 0; i != nums; ++i)
+            str += std::to_string(sub_cuts[i]) + " ";
+        str += ">";
+        return str;
+    }
 };
 
 class Cut {
@@ -54,8 +63,9 @@ public:
     };
     uint      size :  7; // cut-set size
     uint      crs  :  1; // compressed leaf array (first leaf -> id, diff21, diff32 ... )
-    uint8     dt   :  2; // data type
-    uint      idx  : 22; // cut idx
+    uint      dt   :  2; // data type
+    uint      idx  : 17; // cut id, i.e., its position in cut list
+    uint      root :  5; // the root id in Agdmap
     uint      fid;       // truth table (num. var <= 5) or functional id
 private:
     uint      data[0];   // cut-data. Leaves or extened data.
@@ -64,7 +74,7 @@ public:
     Inline Cut &operator=(const Cut &cut) {
         if (&cut == this)
             return *this;
-        std::memcpy(this, &cut, cut.num_bytes());
+        std::memcpy((void *)this, &cut, cut.num_bytes());
         return *this;
     }
 
@@ -125,9 +135,9 @@ public:
 
     // For cut copy
     static Inline Cut *copy(const Cut &cut) {
-        Cut *ptr = static_cast<Cut *>(std::malloc(cut.num_bytes()));
+        void *ptr = std::malloc(cut.num_bytes());
         std::memcpy(ptr, &cut, cut.num_bytes());
-        return ptr;
+        return static_cast<Cut *>(ptr);
     }
 
     // For general k-cut
@@ -138,6 +148,7 @@ public:
         ptr->crs  = crs;
         ptr->dt   = data_t::KCUT;
         ptr->idx  = 0;
+        ptr->root = 0;
         ptr->fid  = 0;
         std::copy(begin, end, ptr->data);
         return ptr;
@@ -151,6 +162,7 @@ public:
         ptr->crs  = 0;
         ptr->dt   = data_t::KCUT;
         ptr->idx  = 0;
+        ptr->root = 0;
         ptr->fid  = 0;
         ptr->data[0] = id;
         return ptr;
@@ -164,8 +176,11 @@ public:
         ptr->crs  = 0;
         ptr->dt   = data_t::WCUT;
         ptr->idx  = 0;
+        ptr->root = 0;
         ptr->fid  = 0;
-        std::copy(begin, end, ptr->wdata()->leaves);
+        cut_data_w *wdata = ptr->wdata();
+        std::memset(wdata, 0, sizeof(cut_data_w));
+        std::copy(begin, end, wdata->leaves);
         return ptr;
     }
 
@@ -193,8 +208,7 @@ public:
 
 enum class prune_mode_t {
     Unified,
-    Separated,
-    Agdmap
+    Separated
 };
 
 
@@ -234,7 +248,7 @@ public:
     }
 
     Inline void reset(std::vector<uint> &&cap) {
-        static_assert(M != prune_mode_t::Unified);
+        // static_assert(M != prune_mode_t::Unified);
         _capacity = cap;
     }
 
@@ -260,13 +274,13 @@ public:
         set.reserve(n);
         if constexpr (M == prune_mode_t::Unified)
         {
-            auto top_n = std::nth_element(
+            std::nth_element(
                 _unified_set.begin(),
                 _unified_set.begin() + n,
                 _unified_set.end(),
                 _cmp
             );
-            std::copy(_unified_set.begin(), top_n, std::back_inserter(set));
+            std::copy(_unified_set.begin(), _unified_set.begin() + n, std::back_inserter(set));
             return;
         }
         else if constexpr (M == prune_mode_t::Separated) {
@@ -275,34 +289,25 @@ public:
             {
                 auto &vec = _separated_set[sz];
                 for (auto it = vec.rbegin(); it != vec.rend(); ++it) {
-                    Area curr = (*it)->area();
+                    T    elem = *it;
+                    Area curr = kMaxArea;
+                    if constexpr (std::is_pointer_v<T>) {
+                        curr = elem->area();
+                    } else {
+                        curr = elem.area();
+                    }
                     if (curr > last + _diff) {
                         continue;
                     }
-                    set.push_back(*it);
+                    set.push_back(elem);
                     last = curr;
                 }
             }
             std::ranges::reverse(set);
-            while (set.size() > n) {
-                set.pop_back();
-            }
-        }
-        else if constexpr (M == prune_mode_t::Agdmap) {
-            // TODO: using area-size pruning. Bigger wide cuts should have smaller area.
-            Area last_one_area = kMaxArea;
-            for (size_t sz = 2; sz != _separated_set.size(); ++sz)
-            {
-                auto &vec = _separated_set[sz];
-                for (auto it = vec.rbegin(); it != vec.rend(); ++it)
-                {
-                    if ((*it)->area() < _diff + last_one_area) {
-                        set.push_back(*it);
-                    }
-                }
-            }
         }
     }
+
+    void print() const;
 };
 
 
@@ -691,7 +696,7 @@ enum class heuristic_t {
     EXACT
 };
 
-Cut *agd_decompose(mapper &mgr, Cut *wcut, CutCost &cost);
+Cut *agd_decompose(mapper &mgr, uint id, Cut *wcut, CutCost &cost);
 
 // normal enumerate cut way
 template <CutCostAlgo algo>
@@ -728,6 +733,7 @@ class CutEnumerator {
             cut->idx = cut_set.size() - 1;
             cut = nullptr;
         }
+
         for (Cut *cut : kcuts) {
             Cut::dealloc(cut);
         }
@@ -827,46 +833,7 @@ class CutEnumerator {
         std::vector<CutCost> costs = compute_cut_cost(mgr, cuts);
 
         // Cost-based cut pruning
-
-        float epsilon = cfg.epsilon;
-        CutCost::rank_fn fn = CutCost::GetRankFn(mgr.config().opt_target);
-        auto fn_wrap = [epsilon, fn](const CutCost &lhs, const CutCost &rhs) -> bool {
-            return fn(lhs, rhs, epsilon) == CutCost::cmp_res::LWIN;
-        };
-
-        if (costs.size() > cfg.max_cut_num){
-            std::sort(costs.begin(), costs.end(), fn_wrap);
-        } else{
-            auto best_itr = std::min_element(costs.begin(), costs.end(), fn_wrap);
-            std::iter_swap(costs.begin(), best_itr);
-        }
-
-        // mapping cost ranking back to cuts
-        std::vector<Cut *> &cut_set = mgr.cut_set(id);
-        for (int i = 0; i != costs.size() && i != cfg.max_cut_num; ++i) {
-            Cut *&cut = cuts[costs[i].idx];
-            cut_set.push_back(cut);
-            cut = nullptr;
-        }
-        for (Cut *cut : cuts) {
-            Cut::dealloc(cut);
-        }
-
-        // Save the best cut
-        *mgr.best_cut(id) = *cut_set.front();
-
-        // Set the node area/edge/arr info
-        const float ratio = 1.0 / std::max(1.0f, float(mgr.num_est_ref(id)));
-        mgr.area(id) = costs.front().area * ratio;
-        mgr.edge(id) = costs.front().edge * ratio;
-
-        // Statics
-        mgr.num_stored() += cut_set.size();
-
-        // create trivial cut
-        Cut *triv_cut = Cut::alloc_triv(id);
-        if constexpr (algo == CutCostAlgo::PRAETOR) {}
-        cut_set.push_back(triv_cut);
+        post_kcut_gen(id, cuts, costs);
     }
 
     // TODO: when gate size <= 8, using stack memory to allocate wide-cut.
@@ -891,6 +858,10 @@ class CutEnumerator {
         const uint num_inputs = mgr.gate(id)->size();
         for (uint i = 0; i != num_inputs; ++i) {
             input_cut_sets[i] = &mgr.cut_set(mgr.gate(id)->input(i));
+            // std::cout << "Input " << i << " cuts:\n";
+            // for (Cut *cut : *input_cut_sets[i]) {
+            //     std::cout << **cut << "\n";
+            // }
         }
 
         std::vector<Cut *> curr_cut_sets(*input_cut_sets[0]);
@@ -932,6 +903,10 @@ class CutEnumerator {
             }
             curr_cut_sets.clear();
             prune.get(curr_cut_sets);
+            // std::cout << "After merging input " << n << ", cut num = " << curr_cut_sets.size() << "\n";
+            // for (Cut *cut : curr_cut_sets) {
+            //     std::cout << **cut << "\n";
+            // }
             ++n;
         }
 
@@ -946,8 +921,10 @@ class CutEnumerator {
         // Cost-based cut pruning
         int idx = 0;
         for (Cut *wcut : curr_cut_sets) {
+            if (num_inputs == 8)
+                std::cout << **wcut << "\n";
             CutCost cost;
-            Cut *root_cut = agd_decompose(mgr, wcut, cost);
+            Cut *root_cut = agd_decompose(mgr, id, wcut, cost);
             cuts .push_back(root_cut);
             cost .idx = idx++;
             costs.push_back(cost);
