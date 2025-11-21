@@ -23,6 +23,11 @@ Cut::operator*() const
 {
     std::stringstream ss;
     ss << std::setprecision(4);
+    if (is_kcut()) {
+        ss << "K-Cut: ";
+    } else {
+        ss << "W-Cut: ";
+    }
     ss << "Area: " << a << ", Size: " << size << ", DT: " << (dt == 1 ? 'w' : 'k') << ", Leaves: ";
     ss << "{ ";
     ForEachCutLeaf(this) {
@@ -33,6 +38,15 @@ Cut::operator*() const
         ss << " " << **wdata();
     }
     return ss.str();
+}
+
+uint
+Cut::get_sign() const {
+    uint sign = 0;
+    ForEachCutLeaf(this) {
+        sign |= SIGNATURE(leaf);
+    }
+    return sign;
 }
 
 template <typename  T, prune_mode_t M> void
@@ -480,6 +494,35 @@ mapper::rip_mffc(Cut *cut)
         edge += rip_mffc(best_cut(leaf));
     }
     return edge;
+}
+
+CutCost
+mapper::compute_cut_cost(CutCostAlgo algo, Cut *cut)
+{
+    CutCost cost;
+    switch (algo) {
+    case CutCostAlgo::FLOW: {
+        cost.size = cut->size;
+        // area-flow/edge-flow
+        ForEachCutLeaf(cut) {
+            cost.area += area(leaf);
+            cost.edge += edge(leaf);
+        }
+        // TODO: using cost library
+        cost.area += 1.0;
+        cost.edge += cut->size;
+        break;
+    }
+    case CutCostAlgo::EXACT: {
+        break;
+    }
+    case CutCostAlgo::PRAETOR: {
+        break;
+    }
+    default:
+        break;
+    }
+    return cost;
 }
 
 graph_t *

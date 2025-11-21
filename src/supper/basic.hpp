@@ -7,6 +7,7 @@
 #include <ostream>
 #include <type_traits>
 #include <memory>
+#include <cstring>
 #include <cstdlib>
 #include <unordered_map>
 #include <unordered_set>
@@ -333,5 +334,89 @@ static Inline int popcount(T var) {
     static_assert(std::is_integral_v<T>);
     return std::popcount(var);
 }
+
+// ====================================================================
+// Simple array implementation
+// ====================================================================
+template <typename T, size_t S = 4>
+class array {
+    T       *_data;
+    T        _stack_buf[S];     // small buffer on stack
+    uint32_t _capacity;         // capacity
+    uint32_t _sz          : 31; // size
+    uint32_t _using_stack :  1; // flag
+
+    void grow(uint32_t new_cap) {
+        if (new_cap <= _capacity)
+            return;
+        if (_using_stack) {
+            _data = static_cast<T*>(std::malloc(new_cap * sizeof(T))); Assert(_data && "malloc failed");
+            for (uint32_t i = 0; i < _sz; ++i) {
+                _data[i] = _stack_buf[i];
+            }
+            _capacity    = new_cap;
+            _using_stack = 0;
+        } else {
+            _data     = static_cast<T*>(std::realloc(_data, new_cap * sizeof(T))); Assert(_data && "realloc failed");
+            _capacity = new_cap;
+        }
+    }
+
+public:
+    using iterator = T *;
+    using const_iterator = const T *;
+    using reverse_iterator = std::reverse_iterator<iterator>;
+    using const_reverse_iterator = std::reverse_iterator<const_iterator>;
+
+    array() : _data(_stack_buf), _capacity(S), _sz(0), _using_stack(1) {}
+   ~array() {
+        if (!_using_stack)
+            std::free(_data);
+    }
+
+    void reserve(uint32_t new_cap) { grow(new_cap); }
+
+    void push_back(const T& value) {
+        if (_sz == _capacity) {
+            uint32_t new_cap = (_capacity == 0) ? 4 : _capacity * 2;
+            grow(new_cap);
+        }
+        _data[_sz++] = value;
+    }
+
+    void pop_back() {
+        assert(_sz > 0);
+        --_sz;
+    }
+
+    void insert(uint32_t pos, const T& value) {
+        assert(pos <= _sz);
+        if (_sz == _capacity) {
+            uint32_t new_cap = (_capacity == 0) ? 1 : _capacity * 2;
+            grow(new_cap);
+        }
+        std::memmove(_data + pos + 1, _data + pos, (_sz - pos) * sizeof(T));
+        _data[pos] = value;
+        ++_sz;
+    }
+
+    void erase(uint32_t pos) {
+        assert(pos < _sz);
+        std::memmove(_data + pos, _data + pos + 1, (_sz - pos - 1) * sizeof(T));
+        --_sz;
+    }
+
+          T& operator[](uint32_t idx)       { assert(idx < _sz); return _data[idx]; }
+    const T& operator[](uint32_t idx) const { assert(idx < _sz); return _data[idx]; }
+
+    uint32_t size()     const { return _sz;       }
+    uint32_t capacity() const { return _capacity; }
+    void     clear()          { _sz = 0;          }
+
+    iterator       begin()       { return _data;       }
+    iterator       end()         { return _data + _sz; }
+    const_iterator begin() const { return _data;       }
+    const_iterator end()   const { return _data + _sz; }
+};
 
 } // namespace fox::supper

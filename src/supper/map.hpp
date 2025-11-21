@@ -59,13 +59,16 @@ public:
 
     union {
         uint  sign;      // signature
-        Area  a   ;      // area-cost
+        Area  a   ;      // area-cost. Used for wide-cut enumeration on-the-fly pruning
+        struct {
+            uint16 karea;   // number of internal k-cuts in this wide cut
+            uint16 kedge;   // number of edges in this wide cut
+        };
     };
     uint      size :  7; // cut-set size
     uint      crs  :  1; // compressed leaf array (first leaf -> id, diff21, diff32 ... )
     uint      dt   :  2; // data type
-    uint      idx  : 17; // cut id, i.e., its position in cut list
-    uint      root :  5; // the root id in Agdmap
+    uint      idx  : 22; // cut id, i.e., its position in cut list
     uint      fid;       // truth table (num. var <= 5) or functional id
 private:
     uint      data[0];   // cut-data. Leaves or extened data.
@@ -77,6 +80,13 @@ public:
         std::memcpy((void *)this, &cut, cut.num_bytes());
         return *this;
     }
+
+    /**
+     * @brief Calculate the signature of the cut.
+     * 
+     * @return uint 
+     */
+    uint get_sign() const;
 
     /**
      * @brief Get the number of bytes used by the cut.
@@ -132,6 +142,7 @@ public:
     Inline uint leaf(uint p) const { return begin()[p]; }
 
     Inline bool is_wcut() const { return dt == data_t::WCUT; }
+    Inline bool is_kcut() const { return dt == data_t::KCUT; }
 
     // For cut copy
     static Inline Cut *copy(const Cut &cut) {
@@ -142,42 +153,42 @@ public:
 
     // For general k-cut
     static Inline Cut *alloc_kcut(uint *begin, uint *end, Sign s, uint crs = 0) {
-        Cut *ptr  = static_cast<Cut *>(std::malloc(sizeof(Cut) + sizeof(uint) * (end - begin)));
+        Cut *ptr  = static_cast<Cut *>(std::calloc(1, sizeof(Cut) + sizeof(uint) * (end - begin)));
         ptr->sign = s;
         ptr->size = end - begin;
         ptr->crs  = crs;
         ptr->dt   = data_t::KCUT;
-        ptr->idx  = 0;
-        ptr->root = 0;
-        ptr->fid  = 0;
+     // ptr->idx  = 0;
+     // ptr->root = 0;
+     // ptr->fid  = 0;
         std::copy(begin, end, ptr->data);
         return ptr;
     }
 
     // For trivial cut
     static Inline Cut *alloc_triv(uint id) {
-        Cut *ptr  = static_cast<Cut *>(std::malloc(sizeof(Cut) + sizeof(uint) * 1));
+        Cut *ptr  = static_cast<Cut *>(std::calloc(1, sizeof(Cut) + sizeof(uint) * 1));
         ptr->sign = SIGNATURE(id);
         ptr->size = 1;
-        ptr->crs  = 0;
+     // ptr->crs  = 0;
         ptr->dt   = data_t::KCUT;
-        ptr->idx  = 0;
-        ptr->root = 0;
-        ptr->fid  = 0;
+     // ptr->idx  = 0;
+     // ptr->root = 0;
+     // ptr->fid  = 0;
         ptr->data[0] = id;
         return ptr;
     }
 
     // For Agdmap wide cut
     static Inline Cut *alloc_wcut(uint *begin, uint *end) {
-        Cut *ptr  = static_cast<Cut *>(std::malloc(sizeof(Cut) + sizeof(cut_data_w) + sizeof(uint) * (end - begin)));
-        ptr->sign = 0;
+        Cut *ptr  = static_cast<Cut *>(std::calloc(1, sizeof(Cut) + sizeof(cut_data_w) + sizeof(uint) * (end - begin)));
+     // ptr->sign = 0;
         ptr->size = end - begin;
-        ptr->crs  = 0;
+     // ptr->crs  = 0;
         ptr->dt   = data_t::WCUT;
-        ptr->idx  = 0;
-        ptr->root = 0;
-        ptr->fid  = 0;
+     // ptr->idx  = 0;
+     // ptr->root = 0;
+     // ptr->fid  = 0;
         cut_data_w *wdata = ptr->wdata();
         std::memset(wdata, 0, sizeof(cut_data_w));
         std::copy(begin, end, wdata->leaves);
@@ -545,6 +556,17 @@ struct CutCost {
     }
 };
 
+enum class CutCostAlgo {
+    PRAETOR,
+    FLOW,
+    EXACT
+};
+
+enum class heuristic_t {
+    PRAETOR,
+    FLOW,
+    EXACT
+};
 
 class mapper : public graph_t {
     Config                      _cfg     ;
@@ -635,7 +657,6 @@ public:
 
     template<Indexable T> Inline Area &cut_area(T n, uint idx) { return _cuts_area[n][idx]; }
 
-
     Inline uint &num_area()  { return _num_area;  }
     Inline uint &num_edge()  { return _num_edge;  }
     Inline uint &num_delay() { return _num_delay; }
@@ -679,24 +700,14 @@ public:
         }
     }
 
+    CutCost compute_cut_cost(CutCostAlgo algo, Cut *cut);
+
     word compute_truth(Cut *cut, uint root) const;
 
     void print_node(uint id);
 };
 
-enum class CutCostAlgo {
-    PRAETOR,
-    FLOW,
-    EXACT
-};
-
-enum class heuristic_t {
-    PRAETOR,
-    FLOW,
-    EXACT
-};
-
-Cut *agd_decompose(mapper &mgr, uint id, Cut *wcut, CutCost &cost);
+Cut *agd_decompose(mapper &mgr, CutCostAlgo algo, uint id, Cut *wcut, CutCost &cost);
 
 // normal enumerate cut way
 template <CutCostAlgo algo>
@@ -830,7 +841,10 @@ class CutEnumerator {
         // }
 
         // Calculate the cut cost
-        std::vector<CutCost> costs = compute_cut_cost(mgr, cuts);
+        std::vector<CutCost> costs; costs.reserve(cuts.size());
+        for (Cut *cut : cuts) {
+            costs.push_back(mgr.compute_cut_cost(algo, cut));
+        }
 
         // Cost-based cut pruning
         post_kcut_gen(id, cuts, costs);
@@ -921,10 +935,8 @@ class CutEnumerator {
         // Cost-based cut pruning
         int idx = 0;
         for (Cut *wcut : curr_cut_sets) {
-            if (num_inputs == 8)
-                std::cout << **wcut << "\n";
             CutCost cost;
-            Cut *root_cut = agd_decompose(mgr, id, wcut, cost);
+            Cut *root_cut = agd_decompose(mgr, algo, id, wcut, cost);
             cuts .push_back(root_cut);
             cost .idx = idx++;
             costs.push_back(cost);

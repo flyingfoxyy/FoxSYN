@@ -14,7 +14,6 @@ struct Order {
 
 struct Bin {
     uint     sign  {0};
-    uint     root  {0};
     uint     leaves[AGD_MAX_LUT_SIZE]{0}; // real cut leaves
     uint8    numl  {0};                   // leaf size
     uint8    cuts  [AGD_MAX_LUT_SIZE]{0}; // the sub-cut index
@@ -25,7 +24,7 @@ struct Bin {
 
     Bin() {}
 
-    Bin(Cut *cut) : sign(cut->sign), root(0), numl(cut->size), numc(1) {
+    Bin(Cut *cut) : sign(cut->sign), numl(cut->size), numc(1) {
         ForEachCutLeaf(cut) {
             leaves[i] = leaf;
         }
@@ -53,11 +52,12 @@ struct Bin {
     }
 
     Inline void add_cut(Cut *&cut, uint *begin, uint *end) {
-        numl = end - begin;
+        Assert(cut->is_kcut());
         std::copy(begin, end, leaves);
         cuts[numc++] = cut->idx;
         sign |= cut->sign;
-        cut = nullptr;
+        numl  = end - begin;
+        cut   = nullptr;
     }
 
     // Connect bin to this bin's free port
@@ -78,8 +78,8 @@ class AgdMgr {
     Cut     *_wcut;
     uint     _id  ;
 
-    Area &get_area() { return _cost.area; }
-    Edge &get_edge() { return _cost.edge; }
+    // Area &get_area() { return _cost.area; }
+    // Edge &get_edge() { return _cost.edge; }
 
 public:
 
@@ -159,6 +159,7 @@ public:
 
         const uint num_extra_used = root - extra_bins.data();
         get_area() += num_extra_used;
+        get_edge() += num_extra_used;
 
         return root->build_mapping_solution();
     }
@@ -204,7 +205,7 @@ public:
             }
         }
 
-        get_area() = num_bin;
+        _wcut->karea += num_bin;
 
         // -- Multi-level decomposition
         std::sort(bins.begin(), bins.begin() + num_bin, [](const Bin &lhs, const Bin &rhs) {
@@ -216,7 +217,7 @@ public:
             bins[i].idx = i;
         }
 
-        // Build decompostion tree
+        // Build decomposition tree
         // Handle the simple cases at first
         if (num_bin == 1) {
             return bins[0].build_mapping_solution();
@@ -226,7 +227,7 @@ public:
                 Bin root;
                 root.add_bin_conn(&bins[0]);
                 root.add_bin_conn(&bins[1]);
-                ++get_area();
+                ++_wcut->karea;
                 return root.build_mapping_solution();
             } else {
                 uint idx = bins[0].numl > bins[1].numl ? 1 : 0;
@@ -246,12 +247,34 @@ public:
 };
 
 Cut *
-agd_decompose(mapper &mgr, uint id, Cut *wcut, CutCost &cost) {
+agd_decompose(mapper &mgr, CutCostAlgo algo, uint id, Cut *wcut, CutCost &cost) {
+    // General k-cut, just return itself
+    if (wcut->size <= mgr.config().lut_size) {
+        Cut *cut = Cut::alloc_kcut(wcut->begin(), wcut->end(), wcut->sign);
+        cost     = mgr.compute_cut_cost(algo, cut);
+        return cut;
+    }
+
+    // compute cone area-flow/edge-flow
+    // Praetor ?
+    for (int i = 0; i != wcut->size; ++i) {
+        uint leaf = wcut->leaf(i);
+        cost.area += mgr.area(leaf);
+        cost.edge += mgr.edge(leaf);
+    }
+
+    // clear the union cost
+    wcut->sign = 0;
+
+    Cut *root = nullptr;
     AgdMgr agd(mgr, id, wcut, cost);
+
     if (mgr.config().opt_target == Config::AREA)
-        return agd.area_decompose();
+        root = agd.area_decompose();
     else
-        return agd.delay_decompose();
+        root = agd.delay_decompose();
+
+    return root;
 }
 
 }
