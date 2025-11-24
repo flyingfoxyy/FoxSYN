@@ -37,7 +37,7 @@ namespace fox::supper {
 // ========================================================================
 struct cut_data_w {
     uint8_t  sub_cuts[MAX_GATE_SIZE];
-    uint8_t  nums; // num of sub-cut
+    uint     nums; // num of sub-cut
     uint     leaves[0];
 
     Inline std::string operator*() const {
@@ -165,6 +165,20 @@ public:
         return ptr;
     }
 
+    
+    static Inline Cut *alloc_kcut(uint leaf_size) {
+        Cut *ptr  = static_cast<Cut *>(std::calloc(1, sizeof(Cut) + sizeof(uint) * (leaf_size)));
+     // ptr->sign = 0;
+        ptr->size = leaf_size;
+     // ptr->crs  = 0;
+        ptr->dt   = data_t::KCUT;
+     // ptr->idx  = 0;
+     // ptr->root = 0;
+     // ptr->fid  = 0;
+     // std::copy(begin(), end(), ptr->data);
+        return ptr;
+    }
+
     // For trivial cut
     static Inline Cut *alloc_triv(uint id) {
         Cut *ptr  = static_cast<Cut *>(std::calloc(1, sizeof(Cut) + sizeof(uint) * 1));
@@ -201,8 +215,17 @@ public:
         }
     }
 
+    void add_leaf(uint leaf) {
+        Assert(is_kcut());
+        data[size++] = leaf; 
+    }
+
     Inline void add_sub_cut(uint sub_cut_idx) {
         wdata()->sub_cuts[wdata()->nums++] = sub_cut_idx;
+    }
+
+    Inline uint8 get_sub_cut(uint idx) const {
+        return wdata()->sub_cuts[idx];
     }
 
     Inline Area &area() { return a; }
@@ -707,7 +730,7 @@ public:
     void print_node(uint id);
 };
 
-Cut *agd_decompose(mapper &mgr, CutCostAlgo algo, uint id, Cut *wcut, CutCost &cost);
+std::vector<Cut *> agd_decompose(mapper &mgr, CutCostAlgo algo, uint id, Cut *wcut, CutCost &cost);
 
 // normal enumerate cut way
 template <CutCostAlgo algo>
@@ -811,7 +834,7 @@ class CutEnumerator {
         const std::vector<Cut *> &cuts1 = mgr.cut_set(f1);
 
         uint  merge_num_upper = cuts0.size() * cuts1.size();
-        uint  buffer[Cut::MAX_CUT_SIZE] {0};
+        uint  buffer[MAX_LUT_SIZE] {0};
         uint *end;
 
         mgr.num_merged() += merge_num_upper;
@@ -936,8 +959,9 @@ class CutEnumerator {
         int idx = 0;
         for (Cut *wcut : curr_cut_sets) {
             CutCost cost;
-            Cut *root_cut = agd_decompose(mgr, algo, id, wcut, cost);
-            cuts .push_back(root_cut);
+            std::vector<Cut *> tree = agd_decompose(mgr, algo, id, wcut, cost);
+            Cut *root = tree.front();
+            cuts .push_back(root);
             cost .idx = idx++;
             costs.push_back(cost);
         }

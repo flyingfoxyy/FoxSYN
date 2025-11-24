@@ -2,10 +2,13 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <sstream>
 
 #include "basic.hpp"
 #include "macros.hpp"
 #include "map.hpp"
+
+constexpr uint VID = 1u << 31;
 
 namespace fox::supper {
 struct Order {
@@ -31,12 +34,33 @@ struct Bin {
         cuts[0] = cut->idx;
     }
 
-    Inline uint  *leaf_begin() { return leaves;         }
-    Inline uint  *leaf_end  () { return leaves + numl;  }
-    Inline uint8 *cut_begin () { return cuts;           }
-    Inline uint8 *cut_end   () { return cuts   + numc;  }
-    Inline uint8 *bin_begin () { return bins;           }
-    Inline uint8 *bin_end   () { return bins   + numb;  }
+    void operator*() {
+        std::stringstream ss;
+        ss << "Idx " << idx << ", ";
+        ss << "Leaves {";
+        for (auto it = leaf_begin(); it != leaf_end(); ++it) {
+            ss << " " << *it;
+        }
+        ss << " }, ";
+        ss << "Sub-cuts {";
+        for (auto it = cut_begin(); it != cut_end(); ++it) {
+            ss << " " << static_cast<uint>(*it);
+        }
+        ss << " }, ";
+        ss << "Bins {";
+        for (auto it = bin_begin(); it != bin_end(); ++it) {
+            ss << " " << static_cast<uint>(*it);
+        }
+        ss << " }\n";
+        std::cout << ss.str() << std::endl;
+    }
+
+    Inline uint  *leaf_begin() { return leaves;        }
+    Inline uint  *leaf_end  () { return leaves + numl; }
+    Inline uint8 *cut_begin () { return cuts;          }
+    Inline uint8 *cut_end   () { return cuts   + numc; }
+    Inline uint8 *bin_begin () { return bins;          }
+    Inline uint8 *bin_end   () { return bins   + numb; }
 
     Inline bool full(uint k) const {
         Assert (numl + numb  <= k);
@@ -64,195 +88,192 @@ struct Bin {
     Inline void add_bin_conn(Bin *bin) {
         bins[numb++] = bin->idx;
     }
-
-    // Convert decomposition tree into a cut-tree
-    Cut *build_mapping_solution() {
-        Cut *root = nullptr;
-        return root;
-    }
 };
 
 class AgdMgr {
-    mapper  &_mgr ;
-    CutCost &_cost;
-    Cut     *_wcut;
-    uint     _id  ;
+    static constexpr uint kMaxBinNum = MAX_GATE_SIZE + 7;
+    Bin        _bins[kMaxBinNum] {}; // buffer of bins for fast acess
+    mapper    &_mgr ;
+    CutCost   &_cost;
+    Cut       *_wcut;
+    uint       _id  ;
+    uint       _num ;
+    std::vector<Cut *> _tree;
 
-    // Area &get_area() { return _cost.area; }
-    // Edge &get_edge() { return _cost.edge; }
-
-public:
-
-    AgdMgr(mapper &mgr, uint id, Cut *wcut, CutCost &cost) : _mgr(mgr), _cost(cost), _wcut(wcut), _id(id) {}
-
-    ~AgdMgr() = default;
+    Cut *build_mapping_solution(Bin *root) {
+        _tree.resize(_num, nullptr);
+        for (int i = 0; i != _num; ++i) {
+            Bin *bin = _bins + i;
+            Cut *cut = Cut::alloc_kcut(bin->num_port());
+            for (auto it = bin->leaf_begin(); it != bin->leaf_end(); ++it) {
+                cut->add_leaf(*it);
+            }
+            for (auto it = bin->bin_begin(); it != bin->bin_end(); ++it) {
+                uint idx = _bins[*it].idx;
+                cut->add_leaf(idx + VID);
+            }
+            _tree[i] = cut;
+        }
+        return _tree[root->idx];
+    }
 
     // TODO: change bins to vector. pop_front is unnecessary
-    Bin *build_trivial_tree(std::deque<Bin *> &bins, Bin *extra, uint k) {
-        Bin *root = extra++;
-        if (bins.size() <= k) {
-            for (auto &bin : bins)
-                root->add_bin_conn(bin);
+    Bin *build_trivial_tree(std::vector<Bin *> &bins, uint k, uint start) {
+        Bin *root = _bins + _num++;
+        if (bins.size() - start <= k) {
+            for (uint i = start; i != bins.size(); ++i) {
+                root->add_bin_conn(bins[i]);
+                Assert(root->num_port() <= k);
+            }
             return root;
         } else {
-            int num_pushed = 0;
-            while (num_pushed++ < k) {
-                Bin *bin = bins.front();
-                bins.pop_front();
-                Assert(root->full(k) == false);
+            while (!root->full(k)) {
+                Bin *bin = bins[start++];
                 root->add_bin_conn(bin);
             }
+            Assert(root->full(k));
             bins.push_back(root);
-            return build_trivial_tree(bins, extra++, k);
+            return build_trivial_tree(bins, k, start);
         }
     }
 
-    Cut *multilevel_decompose(Bin *bins, uint num_bin, uint k) {
-        Bin *b0 = bins;
-        Bin *b1 = bins + 1;
+    Cut *multilevel_decompose(uint k) {
+        Bin *b0 = _bins;
+        Bin *b1 = _bins + 1;
         b0->add_bin_conn(b1);
 
         std::deque<Bin *> tree; tree.push_back(b1); // tree has a initial root b1.
         uint idx      = 0;
         uint num_used = 2;
-        while (idx != tree.size() && num_used < num_bin) {
+        while (idx != tree.size() && num_used < _num) {
             Bin *root = tree[idx];
             int  n    = k - root->num_port(); Assert(n >= 0);
             for (int i = 0; i < n; i++) {
-                Bin *leaf = bins + num_used++;
+                Bin *leaf = _bins + num_used++;
                 root->add_bin_conn(leaf);
                 tree.push_back(leaf);
-                if (num_used == num_bin)
+                if (num_used == _num)
                     break;
             }
             ++idx;
         }
 
-        if (num_used == num_bin) { // all bins are used, good, just return is ok
-            return b0->build_mapping_solution();
+        if (num_used == _num) { // all bins are used, good, just return is ok
+            return build_mapping_solution(b0);
         }
 
         // There are some left bins need to be connected
         // Try to connect them with free ports of b0
         //! TODO: Use an extra bin, for smaller root cut ?
-        while (!b0->full(k) && num_used < num_bin) {
-            Bin *leaf = bins + num_used++;
+        while (!b0->full(k) && num_used < _num) {
+            Bin *leaf = _bins + num_used++;
             b0->add_bin_conn(leaf);
         }
 
-        if (num_used == num_bin) {
-            return b0->build_mapping_solution();
+        if (num_used == _num) {
+            return build_mapping_solution(b0);
         }
 
         Assert(b0->full(k));
 
-        std::deque<Bin *> remainder;
-        for (uint i = num_used; i != num_bin; ++i) {
-            remainder.push_back(bins + i);
+        std::vector<Bin *> remainder; remainder.reserve(10);
+        for (uint i = num_used; i != _num; ++i) {
+            remainder.push_back(_bins + i);
         }
-        std::array<Bin, 7> extra_bins;
-        for (int i = 0; i != extra_bins.size(); ++i) {
-            extra_bins[i].idx = i + num_bin;
-        }
-
-        Bin *root = build_trivial_tree(remainder, extra_bins.data(), k);
-
-        const uint num_extra_used = root - extra_bins.data();
-        get_area() += num_extra_used;
-        get_edge() += num_extra_used;
-
-        return root->build_mapping_solution();
+        Bin *root = build_trivial_tree(remainder, k, 0);
+        return build_mapping_solution(root);
     }
+
+public:
+    AgdMgr(mapper &mgr, uint id, Cut *wcut, CutCost &cost) : _mgr(mgr), _cost(cost), _wcut(wcut), _id(id), _num(0) {}
+
+    ~AgdMgr() = default;
 
     Cut *area_decompose() {
         // -- Collect the sub-cuts
-        const Gate *g    = _mgr.gate(_id);
-        cut_data_w *data = _wcut->wdata();
+        const Gate *g = _mgr.gate(_id);
+        std::vector<Cut *> sub_cuts; sub_cuts.reserve(g->size());
 
-        array<Cut *, MAX_GATE_SIZE> sub_cuts;
-        for (int i = 0; i != g->size(); ++i) {
+        for (uint i = 0; i != g->size(); ++i) {
             const auto &in_cuts = _mgr.cut_set(g->input(i));
-            sub_cuts.push_back(in_cuts[data->sub_cuts[i]]);
+            sub_cuts.push_back(in_cuts[_wcut->get_sub_cut(i)]);
         }
 
         // -- Sort sub-cuts in given order
-        std::sort(sub_cuts.begin(), sub_cuts.end(), [](Cut *lhs, Cut *rhs) { return lhs->size > rhs->size; });
+        std::sort(sub_cuts.begin(), sub_cuts.end(), [](Cut *lhs, Cut *rhs) {
+            return lhs->size > rhs->size;
+        });
 
         // -- Bin-packing
-        std::array<Bin ,     MAX_GATE_SIZE> bins;
-        std::array<uint, Cut::MAX_CUT_SIZE> buffer;
-
-        uint lut_size = _mgr.config().lut_size;
-        uint num_bin  = 0;
+        uint  buf[MAX_GATE_SIZE] {0};
+        uint  lut_size = _mgr.config().lut_size;
 
         for (int i = 0; i < sub_cuts.size(); ++i)
         {
             Cut *cut = sub_cuts[i];
-            for (int k = 0; k != num_bin; ++k)
+            for (int k = 0; k != _num; ++k)
             {
-                Bin *bin = &bins[k];
+                Bin *bin = _bins + k;
                 if (bin->numl + cut->size > lut_size && popcount(bin->sign | cut->sign) > lut_size)
                     continue;
-                uint *end = std::set_union(bin->leaf_begin(), bin->leaf_end(), cut->begin(), cut->end(), buffer.begin());
-                if (end - buffer.begin() <= lut_size)
+                uint *end = std::set_union(bin->leaf_begin(), bin->leaf_end(), cut->begin(), cut->end(), buf);
+                if (end - buf <= lut_size)
                 {
-                    bin->add_cut(cut, buffer.begin(), end);
+                    bin->add_cut(cut, buf, end);
                     break;
                 }
             }
             if (cut) {
-                new (&bins[num_bin++]) Bin(cut);
+                new (_bins + _num++) Bin(cut);
             }
         }
 
-        _wcut->karea += num_bin;
-
         // -- Multi-level decomposition
-        std::sort(bins.begin(), bins.begin() + num_bin, [](const Bin &lhs, const Bin &rhs) {
+        std::sort(_bins, _bins + _num, [](const Bin &lhs, const Bin &rhs) {
             return lhs.numl < rhs.numl;
         });
 
-        // Set the bin idx
-        for (int i = 0; i != num_bin; ++i) {
-            bins[i].idx = i;
-        }
+        // Assgin the bin idx (only the top-num bins order changed)
+        for (int i = 0; i != _num; ++i)
+            _bins[i].idx = i;
 
         // Build decomposition tree
         // Handle the simple cases at first
-        if (num_bin == 1) {
-            return bins[0].build_mapping_solution();
-        } else if (num_bin == 2) {
-            uint size = bins[0].numl + bins[1].numl;
+        if (_num == 1) {
+            return build_mapping_solution(_bins);
+        }
+        else if (_num == 2) {
+            uint size = _bins[0].numl + _bins[1].numl;
             if (size == lut_size) {
-                Bin root;
-                root.add_bin_conn(&bins[0]);
-                root.add_bin_conn(&bins[1]);
-                ++_wcut->karea;
-                return root.build_mapping_solution();
+                Bin *root = _bins + _num++;
+                root->add_bin_conn(&_bins[0]);
+                root->add_bin_conn(&_bins[1]);
+                return build_mapping_solution(root);
             } else {
-                uint idx = bins[0].numl > bins[1].numl ? 1 : 0;
-                bins[idx].add_bin_conn(&bins[1 - idx]);
-                return bins[idx].build_mapping_solution();
+                uint idx  = _bins[0].numl > _bins[1].numl ? 1 : 0;
+                Bin *root = _bins + idx;
+                Bin *leaf = _bins + 1 - idx;
+                root->add_bin_conn(leaf);
+                return build_mapping_solution(root);
             }
         }
 
         // General case
-        Cut *root = multilevel_decompose(bins.data(), num_bin, lut_size);
-        return root;
+        return multilevel_decompose(lut_size);
     }
 
-    Cut *delay_decompose() {
-        return NULL;
+    std::vector<Cut *> delay_decompose() {
+        return {};
     }
 };
 
-Cut *
+std::vector<Cut *>
 agd_decompose(mapper &mgr, CutCostAlgo algo, uint id, Cut *wcut, CutCost &cost) {
     // General k-cut, just return itself
     if (wcut->size <= mgr.config().lut_size) {
         Cut *cut = Cut::alloc_kcut(wcut->begin(), wcut->end(), wcut->sign);
         cost     = mgr.compute_cut_cost(algo, cut);
-        return cut;
+        return {cut};
     }
 
     // compute cone area-flow/edge-flow
@@ -266,7 +287,7 @@ agd_decompose(mapper &mgr, CutCostAlgo algo, uint id, Cut *wcut, CutCost &cost) 
     // clear the union cost
     wcut->sign = 0;
 
-    Cut *root = nullptr;
+    std::vector<Cut *> root;
     AgdMgr agd(mgr, id, wcut, cost);
 
     if (mgr.config().opt_target == Config::AREA)

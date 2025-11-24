@@ -3,7 +3,6 @@
 #include "basic.hpp"
 
 namespace fox::supper {
-
 class Gate {
     std::vector<Lit> _inputs;
 
