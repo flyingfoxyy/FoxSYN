@@ -126,7 +126,7 @@ Inline static bool is_signed(T var) {
 }
 
 template <typename T>
-Inline static T compl_cond(T var, uint cond) {
+Inline static T sign_cond(T var, uint cond) {
     static_assert(std::is_pointer_v<T>);
     return (T)((std::uint64_t)var ^ (std::uint64_t)(cond != 0));
 }

@@ -2,8 +2,6 @@
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
-#include <limits>
-#include <memory>
 #include <sstream>
 #include <vector>
 #include <ctime>
@@ -11,6 +9,7 @@
 #include <map>
 
 #include "base/abc/abc.h"
+#include "misc/util/utilTruth.h"
 
 #include "basic.hpp"
 #include "map.hpp"
@@ -47,6 +46,39 @@ Cut::get_sign() const {
         sign |= SIGNATURE(leaf);
     }
     return sign;
+}
+
+word
+Cut::compute_truth(Cut *cut, Cut *lhs, Cut *rhs, int oper)
+{
+    const bool s0 = is_signed(lhs);
+    const bool s1 = is_signed(rhs);
+    auto TtExpand = [](word *pTruth, Cut *sub, Cut *cut) -> void
+    {
+        int i, k;
+        for (i = cut->size - 1, k = sub->size - 1; i >= 0 && k >= 0; i--)
+        {
+            if (cut->leaf(i) > sub->leaf(k))
+                continue;
+            // assert(cut->leaves[i]->id() == sub->leaves[k]->id());
+            if (k < i)
+                Abc_TtSwapVars(pTruth, cut->size, k, i);
+            k--;
+        }
+        assert( k == -1 );
+    };
+
+    word truth0 = lhs->fid;
+    word truth1 = rhs->fid;
+    TtExpand(&truth0, lhs, cut);
+    TtExpand(&truth1, rhs, cut);
+
+    if (s0)
+        truth0 = ~truth0;
+    if (s1)
+        truth1 = ~truth1;
+
+    return truth0 & truth1;
 }
 
 template <typename  T, prune_mode_t M> void

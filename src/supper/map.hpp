@@ -22,6 +22,7 @@
 #include <deque>
 #include <chrono>
 #include <print>
+#include <atomic>
 
 #include "macros.hpp"
 #include "basic.hpp"
@@ -42,8 +43,11 @@ struct cut_data_w {
 
     Inline std::string operator*() const {
         std::string str = "<";
-        for (int i = 0; i != nums; ++i)
-            str += std::to_string(sub_cuts[i]) + " ";
+        for (int i = 0; i != nums; ++i) {
+            str += std::to_string(sub_cuts[i]);
+            if (i != nums - 1)
+                str += " ";
+        }
         str += ">";
         return str;
     }
@@ -60,16 +64,12 @@ public:
     union {
         uint  sign;      // signature
         Area  a   ;      // area-cost. Used for wide-cut enumeration on-the-fly pruning
-        struct {
-            uint16 karea;   // number of internal k-cuts in this wide cut
-            uint16 kedge;   // number of edges in this wide cut
-        };
     };
     uint      size :  7; // cut-set size
     uint      crs  :  1; // compressed leaf array (first leaf -> id, diff21, diff32 ... )
     uint      dt   :  2; // data type
     uint      idx  : 22; // cut id, i.e., its position in cut list
-    uint      fid;       // truth table (num. var <= 5) or functional id
+    word      fid;       // truth table (num. var <= 5) or functional id
 private:
     uint      data[0];   // cut-data. Leaves or extened data.
 public:
@@ -87,6 +87,8 @@ public:
      * @return uint 
      */
     uint get_sign() const;
+
+    static word compute_truth(Cut *cut, Cut *lhs, Cut *rhs, int oper = 0);
 
     /**
      * @brief Get the number of bytes used by the cut.
@@ -151,7 +153,7 @@ public:
         return static_cast<Cut *>(ptr);
     }
 
-    // For general k-cut
+    // Allocate a k-cut with given cut leaves
     static Inline Cut *alloc_kcut(uint *begin, uint *end, Sign s, uint crs = 0) {
         Cut *ptr  = static_cast<Cut *>(std::calloc(1, sizeof(Cut) + sizeof(uint) * (end - begin)));
         ptr->sign = s;
@@ -165,11 +167,11 @@ public:
         return ptr;
     }
 
-    
+    // Allocate a k-cut with pre-set leaf size
     static Inline Cut *alloc_kcut(uint leaf_size) {
         Cut *ptr  = static_cast<Cut *>(std::calloc(1, sizeof(Cut) + sizeof(uint) * (leaf_size)));
      // ptr->sign = 0;
-        ptr->size = leaf_size;
+        ptr->size = 0;
      // ptr->crs  = 0;
         ptr->dt   = data_t::KCUT;
      // ptr->idx  = 0;
@@ -532,11 +534,11 @@ struct CutCost {
     };
     using rank_fn = std::function<cmp_res(const CutCost &, const CutCost &, float)>;
 
-    Area area {0};
-    Edge edge {0};
-    Time arr  {kMaxTime};
-    uint size {0};
-    uint idx  {0};
+    Area   area {0};
+    Edge   edge {0};
+    Time   arr  {kMaxTime};
+    uint16 size {0};
+    uint16 idx  {0};
 
     CutCost() = default;
     CutCost(Edge e, Area a, Time t = kMaxTime) : area(a), edge(e), arr(t), size(0), idx(0) {}
@@ -605,12 +607,13 @@ class mapper : public graph_t {
     CutCost::rank_fn            _rank_fn ;
     std::vector<std::string>    _pi_names;
     std::vector<std::string>    _po_names;
-    
 
     // -- Agdmap related
-    Array<Gate *> _gates; // Simple gates
+    Array<Gate *>               _gates;         // Simple gates
+    std::atomic<uint>           _id_counter;    // Id counter for Agdmap virtual tree nodes
 
     std::vector<std::vector<Area>> _cuts_area;
+
 
     mutable Timer _timer;
 
@@ -723,6 +726,10 @@ public:
         }
     }
 
+    uint fetch_free_id(uint num) {
+        return _id_counter.fetch_add(num, std::memory_order_relaxed);
+    }
+
     CutCost compute_cut_cost(CutCostAlgo algo, Cut *cut);
 
     word compute_truth(Cut *cut, uint root) const;
@@ -730,22 +737,39 @@ public:
     void print_node(uint id);
 };
 
-std::vector<Cut *> agd_decompose(mapper &mgr, CutCostAlgo algo, uint id, Cut *wcut, CutCost &cost);
-
 // normal enumerate cut way
 template <CutCostAlgo algo>
 class CutEnumerator {
     mapper       &_mgr;
     const Config &_cfg;
 
-    /**
-     * @brief 
-     * 
-     * @param id 
-     * @param kcuts 
-     * @param costs 
-     */
-    void post_kcut_gen(uint id, std::vector<Cut *> &kcuts, std::vector<CutCost> &costs) {
+    void post_enum(uint id, const CutCost &best_cost) {
+        std::vector<Cut *> &cut_set = _mgr.cut_set(id);
+
+        // Save the best cut
+        *_mgr.best_cut(id) = *cut_set.front();
+
+        // Set the node area/edge/arr info
+        const float ratio = 1.0 / std::max(1.0f, float(_mgr.num_est_ref(id)));
+        _mgr.area(id) = best_cost.area * ratio;
+        _mgr.edge(id) = best_cost.edge * ratio;
+
+        // Statics
+        _mgr.num_stored() += cut_set.size();
+
+        // create trivial cut
+        Cut *triv_cut = Cut::alloc_triv(id);
+        triv_cut->idx = cut_set.size();
+        if constexpr (algo == CutCostAlgo::PRAETOR) {
+
+        }
+        cut_set.push_back(triv_cut);
+    }
+
+    // Ranking the cutcost according to the target
+    // Prune the cuts which has a lower rank after max_cut_num
+    // return the pruned cuts' indices in the original cut list
+    std::vector<Cut *> prune_kcut(uint id, std::vector<Cut *> &kcuts, std::vector<CutCost> &costs) {
         float epsilon = _cfg.epsilon;
         CutCost::rank_fn fn = CutCost::GetRankFn(_mgr.config().opt_target);
         auto fn_wrap = [epsilon, fn](const CutCost &lhs, const CutCost &rhs) -> bool {
@@ -754,40 +778,31 @@ class CutEnumerator {
 
         if (costs.size() > _cfg.max_cut_num) {
             std::sort(costs.begin(), costs.end(), fn_wrap);
-        } else{
+        } else {
             auto best_itr = std::min_element(costs.begin(), costs.end(), fn_wrap);
             std::iter_swap(costs.begin(), best_itr);
         }
 
-        // mapping cost ranking back to cuts
-        std::vector<Cut *> &cut_set = _mgr.cut_set(id);
-        for (int i = 0; i != costs.size() && i != _cfg.max_cut_num; ++i) {
-            Cut *&cut = kcuts[costs[i].idx];
-            cut_set.push_back(cut);
-            cut->idx = cut_set.size() - 1;
+        // Mapping cost ranking back to cuts
+        size_t saved_num = std::min((size_t)_cfg.max_cut_num, costs.size());
+        size_t idx       = 0;
+        std::vector<Cut *> saved_cuts; saved_cuts.reserve(saved_num);
+        while (idx < saved_num) {
+            Cut *&cut = kcuts[costs[idx].idx];
+            cut->idx  = idx;
+            saved_cuts.push_back(cut);
             cut = nullptr;
+            ++idx;
         }
 
-        for (Cut *cut : kcuts) {
-            Cut::dealloc(cut);
+        std::vector<Cut *> pruned; pruned.reserve(kcuts.size() - saved_num);
+        if (kcuts.size() > _cfg.max_cut_num) {
+            for (Cut *cut : kcuts) {
+                if (cut)
+                    pruned.push_back(cut);
+            }
         }
-
-        // Save the best cut
-        *_mgr.best_cut(id) = *cut_set.front();
-
-        // Set the node area/edge/arr info
-        const float ratio = 1.0 / std::max(1.0f, float(_mgr.num_est_ref(id)));
-        _mgr.area(id) = costs.front().area * ratio;
-        _mgr.edge(id) = costs.front().edge * ratio;
-
-        // Statics
-        _mgr.num_stored() += cut_set.size();
-
-        // create trivial cut
-        Cut *triv_cut = Cut::alloc_triv(id);
-        triv_cut->idx = cut_set.size();
-        if constexpr (algo == CutCostAlgo::PRAETOR) {}
-        cut_set.push_back(triv_cut);
+        std::swap(kcuts, saved_cuts);
     }
 
     std::vector<CutCost> compute_cut_cost(mapper &mgr, std::vector<Cut *> &cuts) {
@@ -839,7 +854,7 @@ class CutEnumerator {
 
         mgr.num_merged() += merge_num_upper;
 
-        std::vector<Cut *> cuts; cuts.reserve(merge_num_upper + 1);
+        std::vector<Cut *> kcuts; kcuts.reserve(merge_num_upper + 1);
 
         for (int i0 = 0; i0 != cuts0.size(); ++i0) { Cut *c0 = cuts0[i0];
         for (int i1 = 0; i1 != cuts1.size(); ++i1) { Cut *c1 = cuts1[i1];
@@ -851,10 +866,10 @@ class CutEnumerator {
                 continue;
             Assert(end - buffer <= cfg.cut_size);
             Cut *cut = Cut::alloc_kcut(buffer, end, c0->sign | c1->sign);
-            cuts.push_back(cut);
+            kcuts.push_back(cut);
         }} // end merge cuts
 
-        mgr.num_k_feasible() += cuts.size();
+        mgr.num_k_feasible() += kcuts.size();
 
         // Structure-based pruning
 
@@ -864,13 +879,16 @@ class CutEnumerator {
         // }
 
         // Calculate the cut cost
-        std::vector<CutCost> costs; costs.reserve(cuts.size());
-        for (Cut *cut : cuts) {
+        std::vector<CutCost> costs; costs.reserve(kcuts.size());
+        for (Cut *cut : kcuts) {
             costs.push_back(mgr.compute_cut_cost(algo, cut));
         }
 
         // Cost-based cut pruning
-        post_kcut_gen(id, cuts, costs);
+        
+
+        // Create trivial cut, set the area/edge info for gate.
+        post_enum(id, costs[0]);
     }
 
     // TODO: when gate size <= 8, using stack memory to allocate wide-cut.
@@ -891,25 +909,21 @@ class CutEnumerator {
 
         // sort the gate inputs by area-cost increasing order ?
 
-        std::vector<Cut *> *input_cut_sets[MAX_GATE_SIZE];
+        // std::vector<Cut *> *input_cut_sets[MAX_GATE_SIZE];
         const uint num_inputs = mgr.gate(id)->size();
-        for (uint i = 0; i != num_inputs; ++i) {
-            input_cut_sets[i] = &mgr.cut_set(mgr.gate(id)->input(i));
-            // std::cout << "Input " << i << " cuts:\n";
-            // for (Cut *cut : *input_cut_sets[i]) {
-            //     std::cout << **cut << "\n";
-            // }
-        }
+        // for (uint i = 0; i != num_inputs; ++i) {
+        //     input_cut_sets[i] = &mgr.cut_set(mgr.gate(id)->input(i));
+        // }
 
-        std::vector<Cut *> curr_cut_sets(*input_cut_sets[0]);
+        std::vector<Cut *> curr_cuts(mgr.cut_set(mgr.gate(id)->input(0)));
 
         Prune<Cut *, prune_mode_t::Separated> prune(std::move(cmp));
         uint buffer[Cut::MAX_CUT_SIZE];
         uint n = 1;
         while (n < num_inputs) {
             prune.reset((n + 1) * cfg.lut_size, 4);
-            for (Cut *c0 : curr_cut_sets)
-            for (Cut *c1 : *input_cut_sets[n])
+            for (Cut *c0 : curr_cuts)
+            for (Cut *c1 : mgr.cut_set(mgr.gate(id)->input(n)))
             {
                 // merge the sub-cuts
                 uint *end  = std::set_union(c0->begin(), c0->end(), c1->begin(), c1->end(), buffer);
@@ -935,45 +949,70 @@ class CutEnumerator {
             }
             if (n != 1) {
                 // Todo: reuse the cuts here
-                for (Cut *cut : curr_cut_sets)
+                for (Cut *cut : curr_cuts)
                     Cut::dealloc(cut);
             }
-            curr_cut_sets.clear();
-            prune.get(curr_cut_sets);
-            // std::cout << "After merging input " << n << ", cut num = " << curr_cut_sets.size() << "\n";
-            // for (Cut *cut : curr_cut_sets) {
-            //     std::cout << **cut << "\n";
-            // }
+            curr_cuts.clear();
+            prune.get(curr_cuts);
             ++n;
         }
 
         // Structure-based pruning
         // ?
 
-        // Now curr_cut_sets contains all the final survived wide cuts
+        // Now curr_cuts contains all the final survived wide cuts
         // Decomposing them into k-feasible cuts
-        std::vector<Cut *>   cuts;  cuts .reserve(curr_cut_sets.size());
-        std::vector<CutCost> costs; costs.reserve(curr_cut_sets.size());
+        std::vector<Cut *>              kcuts;            kcuts.reserve(curr_cuts.size());
+        std::vector<CutCost>            costs;            costs.reserve(curr_cuts.size());
+        std::vector<std::vector<Cut *>> decomposed_cuts;  decomposed_cuts.reserve(curr_cuts.size());
+
+        extern std::vector<Cut *> agd_decompose(mapper &mgr, uint id, Cut *wcut);
 
         // Cost-based cut pruning
         int idx = 0;
-        for (Cut *wcut : curr_cut_sets) {
+        for (Cut *wcut : curr_cuts) {
+            std::vector<Cut *> tree = agd_decompose(mgr, id, wcut);
+            Cut *root_kcut = tree.back();
+            root_kcut->idx = idx;
+            kcuts.push_back(root_kcut);
+            // compute the cut cost
             CutCost cost;
-            std::vector<Cut *> tree = agd_decompose(mgr, algo, id, wcut, cost);
-            Cut *root = tree.front();
-            cuts .push_back(root);
-            cost .idx = idx++;
+            ForEachCutLeaf(wcut) {
+                cost.area += mgr.area(leaf);
+                cost.edge += mgr.edge(leaf);
+            }
+            cost.area += tree.size();
+            Assert(abs(cost.area - wcut->area() + tree.size()) < 1e-3);
+            for (Cut *cut : tree) {
+                cost.edge += cut->size;
+            }
+            cost.size = root_kcut->size;
+            // TODO: using cost library
+            cost.idx  = idx;
             costs.push_back(cost);
+            decomposed_cuts.push_back(std::move(tree));
+            ++idx;
         }
 
-        // ranking and prune the k-cuts
-        post_kcut_gen(id, cuts, costs);
+        // Ranking and prune the k-cuts of wide-cuts
+        {
+            auto pruned = prune_kcut(id, kcuts, costs);
+            // TODO: using Cut * to represent decomposed cuts. So when freeing root k-cut, the decomposed cuts can be freed together.
+            for (Cut *cut : pruned) {
+                for (Cut *dc : decomposed_cuts[cut->idx]) {
+                    Cut::dealloc(dc);
+                }
+            }
+        }
+
+        // For saved decomposed cuts, re-assign their internal nodes' id
+        
     }
 
 public:
     CutEnumerator(mapper &mgr, uint id) : _mgr(mgr), _cfg(mgr.config()) {
         if (mgr.run_agdmap()) {
-            if (Gate *g = mgr.gate(id)) {
+            if (Gate *g = mgr.gate(id); g) {
                 if (g->size() > 2) {
                     wide_cut_enum(mgr, id);
                 } else {
