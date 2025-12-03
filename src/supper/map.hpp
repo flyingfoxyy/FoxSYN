@@ -217,7 +217,7 @@ public:
         }
     }
 
-    void add_leaf(uint leaf) {
+    Inline void add_leaf(uint leaf) {
         Assert(is_kcut());
         data[size++] = leaf; 
     }
@@ -966,12 +966,12 @@ class CutEnumerator {
         std::vector<CutCost>            costs;            costs.reserve(curr_cuts.size());
         std::vector<std::vector<Cut *>> decomposed_cuts;  decomposed_cuts.reserve(curr_cuts.size());
 
-        extern std::vector<Cut *> agd_decompose(mapper &mgr, uint id, Cut *wcut);
+        extern Cut *agd_decompose(mapper &mgr, uint id, Cut *wcut);
 
         // Cost-based cut pruning
         int idx = 0;
         for (Cut *wcut : curr_cuts) {
-            std::vector<Cut *> tree = agd_decompose(mgr, id, wcut);
+            Cut *tree = agd_decompose(mgr, id, wcut);
             Cut *root_kcut = tree.back();
             root_kcut->idx = idx;
             kcuts.push_back(root_kcut);
