@@ -136,19 +136,23 @@ class agd_decompose_mgr {
     // Building a mapping solution tree from bin decomposition.
     // For a bin, its bins represents the fanout edges from these bins.
     Cut *build_mapping_solution(Bin *root) {
-        uint num_edge = _cost.edge;
+        uint num_edge = 0;
         for (int i = 0; i != _num; ++i) {
             num_edge += _bins[i].num_port();
         }
         _cost.area = _num;
+        _cost.edge = num_edge;
 
-        Cut   *mem = (Cut   *)std::calloc(1, sizeof(Cut) + sizeof(uint) * num_edge);
+        const size_t mem_size = sizeof(Cut) * _num + sizeof(uint) * (int)num_edge;
+        Cut   *mem = (Cut   *)std::calloc(1, mem_size);
         uint8 *ptr = (uint8 *)mem;
 
         uint cnt = 1;
         std::function<void(Bin &)> rec_fn = [&](Bin &bin) {
             Cut *cut = (Cut *)ptr;
-            ptr += sizeof(Cut) + sizeof(uint) * bin.num_port();
+            const size_t ms = Cut::bytes_needed<Cut::data_t::KCUT>(bin.num_port());
+            cut->ms = ms;
+            ptr += ms;
             for (auto it = bin.bin_begin(); it != bin.bin_end(); ++it) {
                 rec_fn(_bins[*it]);
             }
@@ -171,6 +175,7 @@ class agd_decompose_mgr {
         };
 
         rec_fn(*root);
+        Assert(ptr == (uint8 *)mem + mem_size);
 
         return mem;
     }

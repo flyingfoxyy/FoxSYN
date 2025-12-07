@@ -68,16 +68,21 @@ public:
     uint      size :  7; // cut-set size
     uint      crs  :  1; // compressed leaf array (first leaf -> id, diff21, diff32 ... )
     uint      dt   :  2; // data type
-    uint      idx  : 22; // cut id, i.e., its position in cut list
+    uint      idx  : 10; // cut id, i.e., its position in cut list
+    uint      ms   : 12; // the number of bytes pointed by this cut
     word      fid;       // truth table (num. var <= 5) or functional id
 private:
-    uint      data[0];   // cut-data. Leaves or extened data.
+    uint      data[0];   // cut-data. Leaves or extended data.
 public:
 
     Inline Cut &operator=(const Cut &cut) {
         if (&cut == this)
             return *this;
+        Assert(ms >= cut.num_bytes());
+        uint ms_tmp = ms;
+        std::memset((void *)this, 0, ms_tmp);
         std::memcpy((void *)this, &cut, cut.num_bytes());
+        ms = ms_tmp; // restore ms
         return *this;
     }
 
@@ -88,16 +93,28 @@ public:
      */
     uint get_sign() const;
 
-    static word compute_truth(Cut *cut, Cut *lhs, Cut *rhs, int oper = 0);
+    static word compute_truth(const Cut *cut, const Cut *lhs, const Cut *rhs, int oper = 0);
+
+    template<data_t T>
+    static constexpr std::size_t bytes_needed(uint size) {
+        if constexpr (T == KCUT) {
+            return sizeof(Cut) + sizeof(uint) * size;
+        } else if constexpr (T == WCUT) {
+            return sizeof(Cut) + sizeof(cut_data_w) + sizeof(uint) * size;
+        } else {
+            static_assert(T == KCUT || T == WCUT, "Invalid cut data type");
+            return 0; // unreachable
+        }
+    }
 
     /**
      * @brief Get the number of bytes used by the cut.
      */
     Inline std::size_t num_bytes() const {
         if (dt == data_t::KCUT)
-            return sizeof(Cut) + sizeof(uint) * (size);
+            return bytes_needed<data_t::KCUT>(size);
         else
-            return sizeof(Cut) + sizeof(cut_data_w) + sizeof(uint) * (size);
+            return bytes_needed<data_t::WCUT>(size);
     }
 
     Inline cut_data_w *wdata() {
@@ -148,19 +165,21 @@ public:
 
     // For cut copy
     static Inline Cut *copy(const Cut &cut) {
-        void *ptr = std::malloc(cut.num_bytes());
-        std::memcpy(ptr, &cut, cut.num_bytes());
-        return static_cast<Cut *>(ptr);
+        const std::size_t num_bytes = cut.num_bytes();
+        void *ptr = std::malloc(num_bytes);
+        return (Cut *)std::memcpy(ptr, &cut, num_bytes);
     }
 
     // Allocate a k-cut with given cut leaves
     static Inline Cut *alloc_kcut(uint *begin, uint *end, Sign s, uint crs = 0) {
-        Cut *ptr  = static_cast<Cut *>(std::calloc(1, sizeof(Cut) + sizeof(uint) * (end - begin)));
+        const size_t num_bytes = bytes_needed<data_t::KCUT>(end - begin);
+        Cut *ptr  = static_cast<Cut *>(std::calloc(1, num_bytes));
         ptr->sign = s;
         ptr->size = end - begin;
         ptr->crs  = crs;
         ptr->dt   = data_t::KCUT;
      // ptr->idx  = 0;
+        ptr->ms   = num_bytes;
      // ptr->root = 0;
      // ptr->fid  = 0;
         std::copy(begin, end, ptr->data);
@@ -169,12 +188,14 @@ public:
 
     // Allocate a k-cut with pre-set leaf size
     static Inline Cut *alloc_kcut(uint leaf_size) {
-        Cut *ptr  = static_cast<Cut *>(std::calloc(1, sizeof(Cut) + sizeof(uint) * (leaf_size)));
+        const size_t num_bytes = bytes_needed<data_t::KCUT>(leaf_size);
+        Cut *ptr  = static_cast<Cut *>(std::calloc(1, num_bytes));
      // ptr->sign = 0;
         ptr->size = 0;
      // ptr->crs  = 0;
         ptr->dt   = data_t::KCUT;
      // ptr->idx  = 0;
+        ptr->ms   = num_bytes;
      // ptr->root = 0;
      // ptr->fid  = 0;
      // std::copy(begin(), end(), ptr->data);
@@ -183,12 +204,14 @@ public:
 
     // For trivial cut
     static Inline Cut *alloc_triv(uint id) {
-        Cut *ptr  = static_cast<Cut *>(std::calloc(1, sizeof(Cut) + sizeof(uint) * 1));
+        constexpr size_t num_bytes = bytes_needed<data_t::KCUT>(1);
+        Cut *ptr  = static_cast<Cut *>(std::calloc(1, num_bytes));
         ptr->sign = SIGNATURE(id);
         ptr->size = 1;
      // ptr->crs  = 0;
         ptr->dt   = data_t::KCUT;
      // ptr->idx  = 0;
+        ptr->ms   = num_bytes;
      // ptr->root = 0;
      // ptr->fid  = 0;
         ptr->data[0] = id;
@@ -197,17 +220,17 @@ public:
 
     // For Agdmap wide cut
     static Inline Cut *alloc_wcut(uint *begin, uint *end) {
-        Cut *ptr  = static_cast<Cut *>(std::calloc(1, sizeof(Cut) + sizeof(cut_data_w) + sizeof(uint) * (end - begin)));
+        const size_t num_bytes = bytes_needed<data_t::WCUT>(end - begin);
+        Cut *ptr  = static_cast<Cut *>(std::calloc(1, num_bytes));
      // ptr->sign = 0;
         ptr->size = end - begin;
      // ptr->crs  = 0;
         ptr->dt   = data_t::WCUT;
      // ptr->idx  = 0;
+        ptr->ms   = num_bytes;
      // ptr->root = 0;
      // ptr->fid  = 0;
-        cut_data_w *wdata = ptr->wdata();
-        std::memset(wdata, 0, sizeof(cut_data_w));
-        std::copy(begin, end, wdata->leaves);
+        std::copy(begin, end, ptr->wdata()->leaves);
         return ptr;
     }
 
@@ -219,7 +242,8 @@ public:
 
     Inline void add_leaf(uint leaf) {
         Assert(is_kcut());
-        data[size++] = leaf; 
+        Assert(ms >= bytes_needed<data_t::KCUT>(size + 1));
+        data[size++] = leaf;
     }
 
     Inline void add_sub_cut(uint sub_cut_idx) {
@@ -230,7 +254,9 @@ public:
         return wdata()->sub_cuts[idx];
     }
 
-    Inline Area &area() { return a; }
+    Inline Area &area() {
+        return a;
+    }
 
     Inline Cut *next() const {
         return reinterpret_cast<Cut *>(reinterpret_cast<uintptr_t>(this) + num_bytes());
@@ -240,7 +266,7 @@ public:
 };
 
 #define ForEachCutLeaf(C) \
-    for (uint leaf = 0, i = 0; i != (C)->size && (leaf = (C)->begin()[i]); ++i)
+    for (uint leaf = 0, i = 0; i != (C)->size && (leaf = (C)->leaf(i)); ++i)
 
 enum class prune_mode_t {
     Unified,
@@ -675,10 +701,24 @@ public:
     template<Indexable T> Inline float &num_est_ref(T n) { return _est_ref[n];  }
     template<Indexable T> Inline uint  &num_ref    (T n) { return _int_ref[n];  }
 
-    template<Indexable T> Inline Cut  *&best_cut(T n) {
-        assert(n >= logic_begin());
-        assert(n < logic_end());
+    template<Indexable T> Inline const Cut *best_cut(T n) {
+        Assert(n >= logic_begin() && n < logic_end());
         return _best_cuts[n];
+    }
+
+    template<Indexable T> Inline void set_best_cut(T n, const Cut *cut) {
+        Assert(n >= logic_begin() && n < logic_end());
+        Assert(cut);
+        if (Cut *&best = _best_cuts[n]; best) {
+            if (best->ms < cut->num_bytes()) {
+                Cut::dealloc(best);
+                best = Cut::copy(*cut);
+            } else {
+                *best = *cut; // copy
+            }
+        } else {
+            best = Cut::copy(*cut);
+        }
     }
 
     template<Indexable T> Inline Area &cut_area(T n, uint idx) { return _cuts_area[n][idx]; }
@@ -714,8 +754,8 @@ public:
 
     Time calculate_delay();
 
-    Area ref_mffc(Cut *cut);
-    Edge rip_mffc(Cut *cut);
+    Area ref_mffc(const Cut *cut);
+    Edge rip_mffc(const Cut *cut);
 
     void free_cuts() {
         ForEachGraphLogicNode(*this) {
@@ -732,7 +772,7 @@ public:
 
     CutCost compute_cut_cost(CutCostAlgo algo, Cut *cut);
 
-    word compute_truth(Cut *cut, uint root) const;
+    word compute_truth(const Cut *cut, uint root) const;
 
     void print_node(uint id);
 };
@@ -747,7 +787,7 @@ class CutEnumerator {
         std::vector<Cut *> &cut_set = _mgr.cut_set(id);
 
         // Save the best cut
-        *_mgr.best_cut(id) = *cut_set.front();
+        _mgr.set_best_cut(id, cut_set.front());
 
         // Set the node area/edge/arr info
         const float ratio = 1.0 / std::max(1.0f, float(_mgr.num_est_ref(id)));
@@ -798,40 +838,6 @@ class CutEnumerator {
 
         std::swap(kcuts, saved_cuts);
     }
-
-    // std::vector<CutCost> compute_cut_cost(mapper &mgr, std::vector<Cut *> &cuts) {
-    //     std::vector<CutCost> costs; costs.reserve(cuts.size());
-    //     for (int i = 0; i != cuts.size(); ++i) {
-    //         Cut *cut = cuts[i];
-    //         // compute cut cost according to the algo
-    //         CutCost cost;
-    //         switch (algo) {
-    //         case CutCostAlgo::FLOW: {
-    //             cost.size = cut->size;
-    //             cost.idx  = i;
-    //             // area-flow/edge-flow
-    //             ForEachCutLeaf(cut) {
-    //                 cost.area += mgr.area(leaf);
-    //                 cost.edge += mgr.edge(leaf);
-    //             }
-    //             // TODO: using cost library
-    //             cost.area += 1.0;
-    //             cost.edge += cut->size;
-    //             break;
-    //         }
-    //         case CutCostAlgo::EXACT: {
-    //             break;
-    //         }
-    //         case CutCostAlgo::PRAETOR: {
-    //             break;
-    //         }
-    //         default:
-    //             break;
-    //         }
-    //         costs.push_back(cost);
-    //     }
-    //     return costs;
-    // }
 
     void kcut_cut_enum(mapper &mgr, uint id) {
         const Config &cfg = mgr.config();
@@ -969,20 +975,18 @@ class CutEnumerator {
         extern Cut *agd_decompose(mapper &mgr, uint id, Cut *wcut, CutCost &cost);
 
         // Cost-based cut pruning
-        for (Cut *wcut : curr_cuts) {
-            CutCost temp;
-            Cut *kcut = agd_decompose(mgr, id, wcut, temp);
+        for (uint i = 0; i != curr_cuts.size(); ++i) {
+            Cut *wcut = curr_cuts[i];
+            CutCost cost;
+            Cut *kcut = agd_decompose(mgr, id, wcut, cost);
             // kcut->idx = idx;
             kcuts.push_back(kcut);
             // compute the cut cost
             // TODO: using cost library
-            CutCost cost;
             ForEachCutLeaf(wcut) {
                 cost.area += mgr.area(leaf);
                 cost.edge += mgr.edge(leaf);
             }
-            cost.area += temp.area;
-            cost.edge += temp.edge;
             cost.size = kcut->size;
             cost.idx  = costs.size();
             costs.push_back(cost);
@@ -990,6 +994,11 @@ class CutEnumerator {
 
         // Ranking and prune the k-cuts of wide-cuts
         prune_kcut(kcuts, costs);
+
+        // Write kcuts into cut_set of node[id]
+        std::vector<Cut *> &cut_set = mgr.cut_set(id);
+        cut_set.reserve(kcuts.size() + 1); // +1 for trivial cut
+        cut_set.insert(cut_set.end(), kcuts.begin(), kcuts.end());
 
         // Create trivial cut, set the area/edge info for gate.
         post_enum(id, costs.front());
@@ -1049,7 +1058,7 @@ class Backword {
 protected:
     mapper &_mgr;
 
-    virtual Cut *get_best_cut(uint idx) {
+    virtual const Cut *get_best_cut(uint idx) {
         return _mgr.best_cut(idx);
     }
 
@@ -1061,7 +1070,7 @@ protected:
         ForEachGraphLogicNodeRev(_mgr) { 
             if (_mgr.num_est_ref(idx) == 0)
                 continue;
-            Cut *cut = _mgr.best_cut(idx);
+            const Cut *cut = _mgr.best_cut(idx);
             ForEachCutLeaf(cut) {
                 ++_mgr.num_est_ref(leaf);
             }

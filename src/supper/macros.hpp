@@ -73,7 +73,6 @@ using uint = uint32_t;
 // ========================================================================
 // Signature
 // ========================================================================
-// #define SIGNATURE(x, BITNUM) (1 << ((x) % ((BITNUM) - 1)))
 template <std::size_t BITNUM>
 Inline uint get_signature(uint x) { if constexpr (BITNUM & (BITNUM - 1)) return 1 << (x % (BITNUM - 1)); else return 1 << (x & (BITNUM - 1)); }
 

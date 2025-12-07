@@ -49,11 +49,11 @@ Cut::get_sign() const {
 }
 
 word
-Cut::compute_truth(Cut *cut, Cut *lhs, Cut *rhs, int oper)
+Cut::compute_truth(const Cut *cut, const Cut *lhs, const Cut *rhs, int oper)
 {
     const bool s0 = is_signed(lhs);
     const bool s1 = is_signed(rhs);
-    auto TtExpand = [](word *pTruth, Cut *sub, Cut *cut) -> void
+    auto TtExpand = [](word *pTruth, const Cut *sub, const Cut *cut) -> void
     {
         int i, k;
         for (i = cut->size - 1, k = sub->size - 1; i >= 0 && k >= 0; i--)
@@ -326,7 +326,7 @@ MappingPass::improve_mapping_exactly(mapper &mgr)
     TIME_START(T)
     ForEachGraphLogicNode(mgr)
     {
-        Cut *best_cut = mgr.best_cut(idx);
+        const Cut *best_cut = mgr.best_cut(idx);
         if (mgr.num_est_ref(idx))
             mgr.rip_mffc(best_cut);
         CutCost best_cost(mgr.rip_mffc(best_cut), mgr.ref_mffc(best_cut));
@@ -346,7 +346,7 @@ MappingPass::improve_mapping_exactly(mapper &mgr)
             mgr.ref_mffc(best_cut);
 
         if (best_cut != mgr.best_cut(idx)) {
-            *mgr.best_cut(idx) = *best_cut;
+            mgr.set_best_cut(idx, best_cut);
         }
     }
 
@@ -448,7 +448,7 @@ mapper::initialize()
 }
 
 word
-mapper::compute_truth(Cut *cut, uint root) const
+mapper::compute_truth(const Cut *cut, uint root) const
 {
     static constexpr word init_val[6] = {
         0xAAAAAAAAAAAAAAAA,
@@ -503,7 +503,7 @@ mapper::compute_truth(Cut *cut, uint root) const
 }
 
 Area
-mapper::ref_mffc(Cut *cut)
+mapper::ref_mffc(const Cut *cut)
 {
     Area area = 1.0;
     ForEachCutLeaf(cut) {
@@ -515,7 +515,7 @@ mapper::ref_mffc(Cut *cut)
 }
 
 Edge
-mapper::rip_mffc(Cut *cut)
+mapper::rip_mffc(const Cut *cut)
 {
     Edge edge = cut->size;
     ForEachCutLeaf(cut)
@@ -583,7 +583,7 @@ mapper::create_abc_ntk_from_mapping(bool use_truth_table)
     }
 
     auto create_sop_node = [&](uint idx, Abc_Obj_t *pConst1) {
-        Cut *cut = best_cut(idx);
+        const Cut *cut = best_cut(idx);
         word truth = compute_truth(cut, idx);
         Abc_Obj_t *pLut = Abc_NtkCreateObj(ntk, ABC_OBJ_NODE);
         if (truth == 0ul || truth == ~0ul) [[unlikely]] {
