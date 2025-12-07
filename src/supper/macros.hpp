@@ -105,11 +105,11 @@ Inline uint get_signature(uint x) { if constexpr (BITNUM & (BITNUM - 1)) return 
     std::clock_t cpu_time_begin_##name = std::clock();          \
     auto wall_time_begin_##name = std::chrono::high_resolution_clock::now();
 
-#define TIME_STOP(name)                                                                       \
-    std::clock_t cpu_time_end_##name = std::clock();                                          \
-    auto wall_time_end_##name = std::chrono::high_resolution_clock::now();                    \
-    double cpu_##name = double(cpu_time_end_##name - cpu_time_begin_##name) / CLOCKS_PER_SEC; \
-    double wall_##name = std::chrono::duration<double>(wall_time_end_##name - wall_time_begin_##name).count();
+#define TIME_STOP(name)                                                                                        \
+    [[maybe_unused]] std::clock_t cpu_time_end_##name = std::clock();                                          \
+    [[maybe_unused]] auto wall_time_end_##name = std::chrono::high_resolution_clock::now();                    \
+    [[maybe_unused]] double cpu_##name = double(cpu_time_end_##name - cpu_time_begin_##name) / CLOCKS_PER_SEC; \
+    [[maybe_unused]] double wall_##name = std::chrono::duration<double>(wall_time_end_##name - wall_time_begin_##name).count();
 
 
 

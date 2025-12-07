@@ -105,11 +105,10 @@ class agd_decompose_mgr {
     Cut       *_wcut;
     uint       _id  ;
     uint       _num ;
+    CutCost   &_cost;
 
     std::vector<Cut *> _sub_cuts;
     // TODO: optmize here
-    // std::map<Cut *, Lit > _cut_roots;
-    // std::map<Cut *, uint> _cut_idx;
     Lit _cut_roots[MAX_GATE_SIZE]{Lit(0, 0)}; // indexed by cut idx
 
     //mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
@@ -137,10 +136,11 @@ class agd_decompose_mgr {
     // Building a mapping solution tree from bin decomposition.
     // For a bin, its bins represents the fanout edges from these bins.
     Cut *build_mapping_solution(Bin *root) {
-        uint num_edge = 0;
+        uint num_edge = _cost.edge;
         for (int i = 0; i != _num; ++i) {
             num_edge += _bins[i].num_port();
         }
+        _cost.area = _num;
 
         Cut   *mem = (Cut   *)std::calloc(1, sizeof(Cut) + sizeof(uint) * num_edge);
         uint8 *ptr = (uint8 *)mem;
@@ -160,7 +160,7 @@ class agd_decompose_mgr {
                 cut->add_leaf(id + VID); // mapping to virtual id
             }
             Assert(cut->size == bin.num_port());
-            cut->dt  = Cut::data_t::KCUT;
+            cut->dt = Cut::data_t::KCUT;
             // compute the root
             Assert(bin.root == 0);
             if (bin.numc == 1) {
@@ -221,7 +221,7 @@ class agd_decompose_mgr {
     }
 
 public:
-    agd_decompose_mgr(mapper &mgr, uint id, Cut *wcut) : _mgr(mgr), _wcut(wcut), _id(id), _num(0) {}
+    agd_decompose_mgr(mapper &mgr, uint id, Cut *wcut, CutCost &cost) : _mgr(mgr), _wcut(wcut), _id(id), _num(0), _cost(cost) {}
 
     ~agd_decompose_mgr() = default;
 
@@ -326,14 +326,16 @@ public:
 };
 
 Cut *
-agd_decompose(mapper &mgr, uint id, Cut *wcut) {
+agd_decompose(mapper &mgr, uint id, Cut *wcut, CutCost &cost) {
     // General k-cut, just return itself
     if (wcut->size <= mgr.config().lut_size) {
         Cut *cut = Cut::alloc_kcut(wcut->begin(), wcut->end(), wcut->sign);
-        return {cut};
+        cost.area = 1;
+        cost.edge = wcut->size;
+        return cut;
     }
 
-    agd_decompose_mgr agd(mgr, id, wcut);
+    agd_decompose_mgr agd(mgr, id, wcut, cost);
 
     Cut *root_kcut = nullptr;
     if (mgr.config().opt_target == Config::AREA)
