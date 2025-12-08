@@ -67,9 +67,10 @@ public:
     };
     uint      size :  7; // cut-set size
     uint      crs  :  1; // compressed leaf array (first leaf -> id, diff21, diff32 ... )
+    uint      last :  1; // the last cut in a memory chunk
     uint      dt   :  2; // data type
     uint      idx  : 10; // cut id, i.e., its position in cut list
-    uint      ms   : 12; // the number of bytes pointed by this cut
+    uint      ms   : 11; // the number of bytes pointed by this cut
     word      fid;       // truth table (num. var <= 5) or functional id
 private:
     uint      data[0];   // cut-data. Leaves or extended data.
@@ -167,7 +168,9 @@ public:
     static Inline Cut *copy(const Cut &cut) {
         const std::size_t num_bytes = cut.num_bytes();
         void *ptr = std::malloc(num_bytes);
-        return (Cut *)std::memcpy(ptr, &cut, num_bytes);
+        Cut *pcut = (Cut *)std::memcpy(ptr, &cut, num_bytes);
+        pcut->ms = num_bytes; // restore ms
+        return pcut;
     }
 
     // Allocate a k-cut with given cut leaves
@@ -662,6 +665,7 @@ public:
             std::println("Node number exceeds maximum limit {}, quit.", kMax);
             std::exit(1);
         }
+
         _int_ref .resize(max_node_num, 0);
         _est_ref .resize(max_node_num, 0);
         _area    .resize(max_node_num, 0);
@@ -669,6 +673,8 @@ public:
         _arrival .resize(max_node_num, 0);
         _required.resize(max_node_num, kMaxTime);
         _cuts    .resize(max_node_num, {});
+
+        _id_counter = 1u << 31;
     }
 
     ~mapper() {
@@ -990,10 +996,19 @@ class CutEnumerator {
             cost.size = kcut->size;
             cost.idx  = costs.size();
             costs.push_back(cost);
+            Cut::dealloc(wcut);
         }
+
+        std::vector<Cut *>().swap(curr_cuts); // clear the wide cuts
 
         // Ranking and prune the k-cuts of wide-cuts
         prune_kcut(kcuts, costs);
+
+        for (Cut *cut : kcuts) {
+            do {
+
+            } while (!cut->last && (cut = cut->next()));
+        }
 
         // Write kcuts into cut_set of node[id]
         std::vector<Cut *> &cut_set = mgr.cut_set(id);
