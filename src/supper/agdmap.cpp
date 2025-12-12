@@ -1,7 +1,6 @@
 
 #include <array>
 #include <cstddef>
-#include <cstdint>
 #include <cstdlib>
 #include <sstream>
 #include <vector>
@@ -11,7 +10,6 @@
 #include "macros.hpp"
 #include "map.hpp"
 
-constexpr uint VID = 1u << 31;
 
 namespace fox::supper {
 struct Order {
@@ -135,7 +133,7 @@ class agd_decompose_mgr {
 
     // Building a mapping solution tree from bin decomposition.
     // For a bin, its bins represents the fanout edges from these bins.
-    Cut *build_mapping_solution(Bin *root) {
+    Cut *build_mapping_solution(Bin *root_bin) {
         uint num_edge = 0;
         for (int i = 0; i != _num; ++i) {
             num_edge += _bins[i].num_port();
@@ -144,42 +142,47 @@ class agd_decompose_mgr {
         _cost.edge = num_edge;
 
         const size_t mem_size = sizeof(Cut) * _num + sizeof(uint) * (int)num_edge;
-        Cut   *mem = (Cut   *)std::calloc(1, mem_size);
-        uint8 *ptr = (uint8 *)mem;
-        uint8 *end = ptr + mem_size;
+        Cut  *mem = (Cut  *)std::calloc(1, mem_size);
+        char *ptr = (char *)mem;
+        char *end = ptr + mem_size;
+        
+        uint num_virtual = 0;
 
-        uint cnt = 1;
-        std::function<void(Bin &)> rec_fn = [&](Bin &bin) {
+        std::function<uint(Bin &)> rec_fn = [&](Bin &bin) -> uint {
+            uint  ms = Cut::bytes_needed<Cut::data_t::KCUT>(bin.num_port());
             Cut *cut = (Cut *)ptr;
-            const size_t ms = Cut::bytes_needed<Cut::data_t::KCUT>(bin.num_port());
-            cut->ms = ms;
-            ptr += ms;
+            cut->ms  = ms;
+            cut->dt  = Cut::data_t::KCUT;
+            ptr     += ms;
+
             if (ptr == end)
-                cut->last = 1;
-            for (auto it = bin.bin_begin(); it != bin.bin_end(); ++it) {
-                rec_fn(_bins[*it]);
-            }
+                cut->tail = 1;
+
             for (auto it = bin.leaf_begin(); it != bin.leaf_end(); ++it) {
                 cut->add_leaf(*it);
             }
+
             for (auto it = bin.bin_begin(); it != bin.bin_end(); ++it) {
-                uint id = _bins[*it].root;
-                cut->add_leaf(id + VID); // mapping to virtual id
+                const uint root = rec_fn(_bins[*it]);
+                cut->add_leaf(root);
             }
+
             Assert(cut->size == bin.num_port());
-            cut->dt = Cut::data_t::KCUT;
-            // compute the root
-            Assert(bin.root == 0);
+
             if (bin.numc == 1) {
-                bin.root = _cut_roots[bin.cuts[0]].id(); // ignore the sign
+                const uint root_id = _cut_roots[bin.cuts[0]].id(); Assert(root_id < VID);
+                return root_id;
             } else {
-                bin.root = cnt++;
+                ++num_virtual;
+                const uint diff = reinterpret_cast<char *>(cut) - reinterpret_cast<char *>(mem); Assert(diff < ms);
+                return VID + (diff);
             }
         };
 
-        rec_fn(*root);
-        Assert(ptr == (uint8 *)mem + mem_size);
+        [[maybe_unused]] uint root_id = rec_fn(*root_bin); Assert(ptr == end && root_id == VID);
 
+        mem->head = 1;
+        mem->idx  = num_virtual;
         return mem;
     }
 

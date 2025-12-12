@@ -15,6 +15,7 @@
 #include <ostream>
 #include <sys/types.h>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 #include <cassert>
@@ -67,9 +68,10 @@ public:
     };
     uint      size :  7; // cut-set size
     uint      crs  :  1; // compressed leaf array (first leaf -> id, diff21, diff32 ... )
-    uint      last :  1; // the last cut in a memory chunk
+    uint      tail :  1; // the last  cut in a cut-array
+    uint      head :  1; // the first cut in a cut-array
     uint      dt   :  2; // data type
-    uint      idx  : 10; // cut id, i.e., its position in cut list
+    uint      idx  : 10; // cut id, i.e., its position in cut list.
     uint      ms   : 11; // the number of bytes pointed by this cut
     word      fid;       // truth table (num. var <= 5) or functional id
 private:
@@ -92,7 +94,11 @@ public:
      * 
      * @return uint 
      */
-    uint get_sign() const;
+    uint compute_sign() const;
+
+    void change_leaf(uint idx, uint new_id) {
+        begin()[idx] = new_id;
+    }
 
     static word compute_truth(const Cut *cut, const Cut *lhs, const Cut *rhs, int oper = 0);
 
@@ -262,7 +268,7 @@ public:
     }
 
     Inline Cut *next() const {
-        return reinterpret_cast<Cut *>(reinterpret_cast<uintptr_t>(this) + num_bytes());
+        return tail ? nullptr : reinterpret_cast<Cut *>(reinterpret_cast<uintptr_t>(this) + num_bytes());
     }
 
     std::string operator*() const;
@@ -640,6 +646,7 @@ class mapper : public graph_t {
     // -- Agdmap related
     Array<Gate *>               _gates;         // Simple gates
     std::atomic<uint>           _id_counter;    // Id counter for Agdmap virtual tree nodes
+    std::unordered_map<uint, Cut *> _virual_cuts; // Virtual cuts for Agdmap
 
     std::vector<std::vector<Area>> _cuts_area;
 
@@ -674,7 +681,7 @@ public:
         _required.resize(max_node_num, kMaxTime);
         _cuts    .resize(max_node_num, {});
 
-        _id_counter = 1u << 31;
+        _id_counter = VID;
     }
 
     ~mapper() {
@@ -708,8 +715,8 @@ public:
     template<Indexable T> Inline uint  &num_ref    (T n) { return _int_ref[n];  }
 
     template<Indexable T> Inline const Cut *best_cut(T n) {
-        Assert(n >= logic_begin() && n < logic_end());
-        return _best_cuts[n];
+        Assert(n > VID || (n >= logic_begin() && n < logic_end()));
+        return n > VID ? _virual_cuts[n - VID] : _best_cuts[n];
     }
 
     template<Indexable T> Inline void set_best_cut(T n, const Cut *cut) {
@@ -750,6 +757,13 @@ public:
 
     Gate *gate(uint id) { return _gates[id]; }
 
+    // TODO: using parallel hash map.
+    Inline void register_virtual_cut(uint id, Cut *cut) {
+        Assert(id > VID);
+        Assert(_virual_cuts.find(id) == _virual_cuts.end() || _virual_cuts.find(id)->second == cut);
+        _virual_cuts[id] = cut;
+    }
+
     Timer &timer() { return _timer; }
 
     graph_t *run_lut_mapping(const Config &cfg);
@@ -788,6 +802,35 @@ template <CutCostAlgo algo>
 class CutEnumerator {
     mapper       &_mgr;
     const Config &_cfg;
+
+    void assign_node_id(std::vector<Cut *> &kcuts) {
+        uint num_virtual = 0;
+        // TODO, record this value in cut.
+        for (Cut *cut : kcuts) {
+            if (cut->head) {
+                num_virtual += cut->idx;
+            }
+        }
+
+        uint id_start = _mgr.fetch_free_id(num_virtual);
+        uint cnt = 0;
+
+        for (Cut *cut : kcuts) {
+            if (cut->head) {
+                char *base = reinterpret_cast<char *>(cut);
+                do {
+                    ForEachCutLeaf(cut) {
+                        if (leaf >= VID) {
+                            const uint new_id = id_start + cnt++;
+                            cut->change_leaf(i, new_id);
+                            Cut *leaf_cut = reinterpret_cast<Cut *>(base + leaf - VID);
+                            _mgr.register_virtual_cut(new_id, leaf_cut);
+                        }
+                    }
+                } while ((cut = cut->next()));
+            }
+        }
+    }
 
     void post_enum(uint id, const CutCost &best_cost) {
         std::vector<Cut *> &cut_set = _mgr.cut_set(id);
@@ -958,7 +1001,7 @@ class CutEnumerator {
                     for (int i = 0; i != c0->wdata()->nums; ++i)
                         wcut->add_sub_cut(c0->wdata()->sub_cuts[i]);
                 }
-                prune.insert(wcut);                
+                prune.insert(wcut);
             }
             if (n != 1) {
                 // Todo: reuse the cuts here
@@ -1004,10 +1047,17 @@ class CutEnumerator {
         // Ranking and prune the k-cuts of wide-cuts
         prune_kcut(kcuts, costs);
 
-        for (Cut *cut : kcuts) {
-            do {
+        assign_node_id(kcuts);
 
-            } while (!cut->last && (cut = cut->next()));
+        // Make the cuts ready
+        uint num = 0;
+        for (Cut *cut : kcuts) {
+            uint sign = 0;
+            ForEachCutLeaf(cut) {
+                sign |= SIGNATURE(leaf);
+            }
+            cut->sign = sign;
+            cut->idx  = num++;
         }
 
         // Write kcuts into cut_set of node[id]
@@ -1077,7 +1127,19 @@ protected:
         return _mgr.best_cut(idx);
     }
 
+    void reference_cut_rec(uint idx) {
+        const Cut *cut = _mgr.best_cut(idx);
+        ForEachCutLeaf(cut) {
+            if (_mgr.num_est_ref(leaf)++ == 0) {
+                reference_cut_rec(leaf);
+            }
+        }
+        _mgr.num_area() ++;
+        _mgr.num_edge() += cut->size;
+    }
+
     virtual void reference_best_cuts() {
+#if 0
         ForEachGraphPoV(_mgr) {
             ++_mgr.num_est_ref(_mgr.get_po(idx)[0]);
         }
@@ -1092,6 +1154,14 @@ protected:
             _mgr.num_area() ++;
             _mgr.num_edge() += cut->size;
         }
+#else
+        ForEachGraphPoV(_mgr) {
+            uint po_fanin = _mgr.get_po(idx)[0].id();
+            if (_mgr.num_est_ref(po_fanin)++ == 0) {
+                reference_cut_rec(po_fanin);
+            }
+        }
+#endif
     }
 
     void propagate_required() {}

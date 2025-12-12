@@ -40,7 +40,7 @@ Cut::operator*() const
 }
 
 uint
-Cut::get_sign() const {
+Cut::compute_sign() const {
     uint sign = 0;
     ForEachCutLeaf(this) {
         sign |= SIGNATURE(leaf);
