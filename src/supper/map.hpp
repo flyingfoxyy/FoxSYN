@@ -650,7 +650,6 @@ class mapper : public graph_t {
 
     std::vector<std::vector<Area>> _cuts_area;
 
-
     mutable Timer _timer;
 
     uint _bc_size  {0};
@@ -714,6 +713,11 @@ public:
     template<Indexable T> Inline Time  &required   (T n) { return _required[n]; }
     template<Indexable T> Inline float &num_est_ref(T n) { return _est_ref[n];  }
     template<Indexable T> Inline uint  &num_ref    (T n) { return _int_ref[n];  }
+
+    template<Indexable T> Inline bool is_logic(T n) {
+        return n >= (uint)logic_begin(); // including virtual nodes
+    }
+
 
     template<Indexable T> Inline const Cut *best_cut(T n) {
         Assert(n > VID || (n >= logic_begin() && n < logic_end()));
@@ -1131,7 +1135,7 @@ protected:
     void reference_cut_rec(uint idx) {
         const Cut *cut = _mgr.best_cut(idx);
         ForEachCutLeaf(cut) {
-            if (_mgr.num_est_ref(leaf)++ == 0) {
+            if (_mgr.num_est_ref(leaf)++ == 0 && _mgr.is_logic(leaf)) {
                 reference_cut_rec(leaf);
             }
         }
@@ -1158,7 +1162,7 @@ protected:
 #else
         ForEachGraphPoV(_mgr) {
             uint po_fanin = _mgr.get_po(idx)[0].id();
-            if (_mgr.num_est_ref(po_fanin)++ == 0) {
+            if (_mgr.num_est_ref(po_fanin)++ == 0 && _mgr.is_logic(po_fanin)) {
                 reference_cut_rec(po_fanin);
             }
         }
