@@ -218,7 +218,7 @@ public:
         ptr->sign = SIGNATURE(id);
         ptr->size = 1;
      // ptr->crs  = 0;
-        ptr->dt   = data_t::KCUT;
+     // ptr->dt   = data_t::KCUT;
      // ptr->idx  = 0;
         ptr->ms   = num_bytes;
      // ptr->root = 0;
@@ -653,6 +653,7 @@ class mapper : public graph_t {
 
     mutable Timer _timer;
 
+    uint _bc_size  {0};
     uint _num_area {0};
     uint _num_edge {0};
     uint _num_delay{0};

@@ -9,6 +9,7 @@
 #include <map>
 
 #include "base/abc/abc.h"
+#include "macros.hpp"
 #include "misc/util/utilTruth.h"
 
 #include "basic.hpp"
@@ -713,14 +714,31 @@ mapper::run_lut_mapping(const Config &cfg)
     _rank_fn = CutCost::GetRankFn(cfg.opt_target);
 
     // Setup PI cuts
-    ForEachGraphPi(*this) {
-        _cuts[_pi[idx]].push_back(Cut::alloc_triv(_pi[idx]));
+    constexpr uint kTrivCutMemSize = Cut::bytes_needed<Cut::KCUT>(1);
+    void *pi_triv_cuts = std::calloc(1, kTrivCutMemSize * num_pi());
+    {
+        char *p = reinterpret_cast<char *>(pi_triv_cuts);
+        ForEachGraphPi(*this) {
+            uint id         = _pi[idx];
+            Cut *cut        = reinterpret_cast<Cut *>(p);
+            cut->sign       = SIGNATURE(id);
+            cut->size       = 1;
+            cut->begin()[0] = id;
+            _cuts[id].push_back(cut);
+            p += kTrivCutMemSize;
+        }
+        Assert(p == (reinterpret_cast<char *>(pi_triv_cuts) + kTrivCutMemSize * num_pi()));
     }
 
-    _best_cuts.set_offset(logic_begin()); Assert(_nodes[logic_begin()].is_logic());
-    _best_cuts.resize(num_logic());
+    // Setup best cuts
+    const uint kBestCutMemSize = Cut::bytes_needed<Cut::KCUT>(cfg.lut_size);
+    Assert(_nodes[logic_begin()].is_logic());
+    _best_cuts.set_offset(logic_begin());
+    _best_cuts.resize(num_logic(), nullptr);
     ForEachGraphLogicNode(*this) {
-        _best_cuts[idx] = (Cut *)std::malloc(sizeof(Cut) + sizeof(uint) * cfg.lut_size);
+        Cut *cut = (Cut *)std::calloc(1, kBestCutMemSize);
+        cut->ms  = kBestCutMemSize;
+        _best_cuts[idx] = cut;
     }
 
     // create simple gates boundry
@@ -741,6 +759,7 @@ mapper::run_lut_mapping(const Config &cfg)
     //     MappingPass(CutCostAlgo::EXACT, *this, i);
     // }
 
+    std::free(pi_triv_cuts);
     return create_mapped_graph();
 }
 
