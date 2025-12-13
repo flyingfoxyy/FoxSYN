@@ -134,6 +134,7 @@ class agd_decompose_mgr {
     // Building a mapping solution tree from bin decomposition.
     // For a bin, its bins represents the fanout edges from these bins.
     Cut *build_mapping_solution(Bin *root_bin) {
+        // TODO: if a bin is just a wrapper of a single cut, reuse the cut directly.
         uint num_edge = 0;
         for (int i = 0; i != _num; ++i) {
             num_edge += _bins[i].num_port();
@@ -149,14 +150,14 @@ class agd_decompose_mgr {
         uint num_virtual = 0;
 
         std::function<uint(Bin &)> rec_fn = [&](Bin &bin) -> uint {
-            uint  ms = Cut::bytes_needed<Cut::data_t::KCUT>(bin.num_port());
+            uint ms  = Cut::bytes_needed<Cut::data_t::KCUT>(bin.num_port());
             Cut *cut = (Cut *)ptr;
             cut->ms  = ms;
-            cut->dt  = Cut::data_t::KCUT;
             ptr     += ms;
 
-            if (ptr == end)
+            if (ptr == end) {
                 cut->tail = 1;
+            }
 
             for (auto it = bin.leaf_begin(); it != bin.leaf_end(); ++it) {
                 cut->add_leaf(*it);
@@ -169,19 +170,28 @@ class agd_decompose_mgr {
 
             Assert(cut->size == bin.num_port());
 
-            if (bin.numc == 1) {
+            uint prev = 0;
+            ForEachCutLeaf(cut) {
+                if (leaf < prev) [[unlikely]] {
+                    std::sort(cut->begin(), cut->end());
+                    break;
+                } else {
+                    prev = leaf;
+                }
+            }
+
+            if (bin.numc == 1 && bin.numb == 0) {
                 const uint root_id = _cut_roots[bin.cuts[0]].id(); Assert(root_id < VID);
                 return root_id;
             } else {
                 ++num_virtual;
-                const uint diff = reinterpret_cast<char *>(cut) - reinterpret_cast<char *>(mem); Assert(diff < ms);
+                const uint diff = reinterpret_cast<char *>(cut) - reinterpret_cast<char *>(mem); Assert(diff < mem_size);
                 return VID + (diff);
             }
         };
 
-        [[maybe_unused]] uint root_id = rec_fn(*root_bin); Assert(ptr == end && root_id == VID);
-
-        mem->head = 1;
+        uint rid  = rec_fn(*root_bin); Assert(ptr == end && rid == VID);
+        mem->head = 1;    
         mem->idx  = num_virtual;
         return mem;
     }

@@ -645,6 +645,7 @@ class mapper : public graph_t {
 
     // -- Agdmap related
     Array<Gate *>               _gates;         // Simple gates
+    Array<float>                _est_ref_agd;   // Estimated reference count for Agdmap
     std::atomic<uint>           _id_counter;    // Id counter for Agdmap virtual tree nodes
     std::unordered_map<uint, Cut *> _virual_cuts; // Virtual cuts for Agdmap
 
@@ -681,7 +682,9 @@ public:
         _required.resize(max_node_num, kMaxTime);
         _cuts    .resize(max_node_num, {});
 
+        // Agdmap related initialization
         _id_counter = VID;
+        _est_ref_agd.set_offset(VID);
     }
 
     ~mapper() {
@@ -711,7 +714,7 @@ public:
     template<Indexable T> Inline Edge  &edge       (T n) { return _edge[n];     }
     template<Indexable T> Inline Time  &arrival    (T n) { return _arrival[n];  }
     template<Indexable T> Inline Time  &required   (T n) { return _required[n]; }
-    template<Indexable T> Inline float &num_est_ref(T n) { return _est_ref[n];  }
+    template<Indexable T> Inline float &num_est_ref(T n) { return n >= VID ? _est_ref_agd[n] : _est_ref[n];  }
     template<Indexable T> Inline uint  &num_ref    (T n) { return _int_ref[n];  }
 
     template<Indexable T> Inline bool is_logic(T n) {
@@ -720,8 +723,8 @@ public:
 
 
     template<Indexable T> Inline const Cut *best_cut(T n) {
-        Assert(n > VID || (n >= logic_begin() && n < logic_end()));
-        return n > VID ? _virual_cuts[n - VID] : _best_cuts[n];
+        Assert(n >= VID || (n >= logic_begin() && n < logic_end()));
+        return n >= VID ? _virual_cuts[n - VID] : _best_cuts[n];
     }
 
     template<Indexable T> Inline void set_best_cut(T n, const Cut *cut) {
@@ -740,6 +743,11 @@ public:
     }
 
     template<Indexable T> Inline Area &cut_area(T n, uint idx) { return _cuts_area[n][idx]; }
+
+    void setup_agdmap_containers() {
+        _est_ref_agd.clear();
+        _est_ref_agd.resize(_id_counter.load() - VID, 0);
+    }
 
     Inline uint &num_area()  { return _num_area;  }
     Inline uint &num_edge()  { return _num_edge;  }
@@ -764,9 +772,9 @@ public:
 
     // TODO: using parallel hash map.
     Inline void register_virtual_cut(uint id, Cut *cut) {
-        Assert(id > VID);
+        Assert(id >= VID);
         Assert(_virual_cuts.find(id) == _virual_cuts.end() || _virual_cuts.find(id)->second == cut);
-        _virual_cuts[id] = cut;
+        _virual_cuts[id - VID] = cut;
     }
 
     Timer &timer() { return _timer; }
@@ -839,6 +847,11 @@ class CutEnumerator {
 
     void post_enum(uint id, const CutCost &best_cost) {
         std::vector<Cut *> &cut_set = _mgr.cut_set(id);
+        // Set the idx
+        uint idx = 0;
+        for (Cut *cut : cut_set) {
+            cut->idx = idx++;
+        }
 
         // Save the best cut
         _mgr.set_best_cut(id, cut_set.front());
@@ -875,22 +888,19 @@ class CutEnumerator {
         }
 
         // Mapping cost ranking back to cuts
-        size_t saved_num = std::min((size_t)_cfg.max_cut_num, costs.size());
-        size_t idx       = 0;
-        std::vector<Cut *> saved_cuts; saved_cuts.reserve(saved_num);
-        while (idx < saved_num) {
-            Cut *&cut = kcuts[costs[idx].idx];
-            cut->idx  = idx;
-            saved_cuts.push_back(cut);
+        const size_t num_saved = std::min((size_t)_cfg.max_cut_num, costs.size());
+        std::vector<Cut *> saved; saved.reserve(num_saved);
+        while (saved.size() < num_saved) {
+            Cut *&cut = kcuts[costs[saved.size()].idx];
+            saved.push_back(cut);
             cut = nullptr;
-            ++idx;
         }
 
         for (Cut *cut : kcuts) {
             Cut::dealloc(cut);
         }
 
-        std::swap(kcuts, saved_cuts);
+        std::swap(kcuts, saved);
     }
 
     void kcut_cut_enum(mapper &mgr, uint id) {
@@ -1218,6 +1228,10 @@ public:
         _forward ->impl();
         ///////////////////////////////////////
         _mgr.timer().stop ("forward");
+
+        if (_mgr.run_agdmap()) {
+            _mgr.setup_agdmap_containers();
+        }
 
         _mgr.timer().start("backward");
         ///////////////////////////////////////
