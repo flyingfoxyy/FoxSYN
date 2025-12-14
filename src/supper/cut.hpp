@@ -2,6 +2,8 @@
 
 #include "macros.hpp"
 #include "basic.hpp"
+#include <cstddef>
+#include <cstring>
 
 namespace fox::supper {
 // ========================================================================
@@ -47,6 +49,8 @@ public:
 private:
     uint      data[0];   // cut-data. Leaves or extended data.
 public:
+
+    Cut() : sign(0), size(0), crs(0), tail(0), head(0), dt(0), idx(0), ms(0), fid(0) {}
 
     Inline Cut &operator=(const Cut &cut) {
         if (&cut == this)
@@ -244,7 +248,17 @@ public:
     std::string operator*() const;
 };
 
+template <std::size_t K>
+struct kCut {
+    Cut  cut{};
+    uint leaves[K]{0};
+};
+
 #define ForEachCutLeaf(C) \
     for (uint leaf = 0, i = 0; i != (C)->size && (leaf = (C)->leaf(i)); ++i)
+
+
+template <std::size_t K>
+word compute_cut_truth(std::vector<kCut<K>> &sub_cuts);
 
 }

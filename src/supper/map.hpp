@@ -501,11 +501,6 @@ public:
 
     template<Indexable T> Inline Area &cut_area(T n, uint idx) { return _cuts_area[n][idx]; }
 
-    void setup_agdmap_containers() {
-        _est_ref_agd.clear();
-        _est_ref_agd.resize(_id_counter.load() - VID, 0);
-    }
-
     Inline uint &num_area()  { return _num_area;  }
     Inline uint &num_edge()  { return _num_edge;  }
     Inline uint &num_delay() { return _num_delay; }
@@ -522,10 +517,22 @@ public:
         return _rank_fn(lhs, rhs, _cfg.epsilon);
     }
 
-    // -- Agdmap related
-    void  create_simple_gates(uint max_size);
+    // mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+    // Agdmap related functions
+    void create_simple_gates(uint max_size);
 
-    Gate *gate(uint id) { return _gates[id]; }
+    Inline Gate *gate(uint id) {
+        return _gates[id];
+    }
+
+    Inline uint fetch_free_id(uint num) {
+        return _id_counter.fetch_add(num, std::memory_order_relaxed);
+    }
+
+    Inline void setup_agdmap_containers() {
+        _est_ref_agd.clear();
+        _est_ref_agd.resize(_id_counter.load() - VID, 0);
+    }
 
     // TODO: using parallel hash map.
     Inline void register_virtual_cut(uint id, Cut *cut) {
@@ -554,10 +561,6 @@ public:
             }
             _cuts[idx].clear();
         }
-    }
-
-    uint fetch_free_id(uint num) {
-        return _id_counter.fetch_add(num, std::memory_order_relaxed);
     }
 
     CutCost compute_cut_cost(CutCostAlgo algo, Cut *cut);
@@ -660,22 +663,21 @@ class CutEnumerator {
         std::swap(kcuts, saved);
     }
 
-    void kcut_cut_enum(mapper &mgr, uint id) {
-        const Config &cfg = mgr.config();
+    void kcut_cut_enum(uint id) {
+        const Config &cfg = _mgr.config();
 
-        Lit f0 = mgr[id][0];
-        Lit f1 = mgr[id][1];
+        Lit f0 = _mgr[id][0];
+        Lit f1 = _mgr[id][1];
 
-        const std::vector<Cut *> &cuts0 = mgr.cut_set(f0);
-        const std::vector<Cut *> &cuts1 = mgr.cut_set(f1);
-
+        const std::vector<Cut *> &cuts0 = _mgr.cut_set(f0);
+        const std::vector<Cut *> &cuts1 = _mgr.cut_set(f1);
         const uint k = cfg.cut_size;
 
         uint  merge_num_upper = cuts0.size() * cuts1.size();
         uint  buffer[MAX_LUT_SIZE + MAX_LUT_SIZE] {0};
         uint *end;
 
-        mgr.num_merged() += merge_num_upper;
+        _mgr.num_merged() += merge_num_upper;
 
         std::vector<Cut *> kcuts; kcuts.reserve(merge_num_upper + 1);
 
@@ -690,19 +692,19 @@ class CutEnumerator {
             kcuts.push_back(cut);
         }} // end merge cuts
 
-        mgr.num_k_feasible() += kcuts.size();
+        _mgr.num_k_feasible() += kcuts.size();
 
         // Structure-based pruning
 
         // Restore the best cut from previous pass
-        // if (Cut *best = mgr.best_cut(id); best) {
+        // if (Cut *best = _mgr.best_cut(id); best) {
         //     cuts.push_back(best->clone());
         // }
 
         // Calculate the cut cost
         std::vector<CutCost> costs; costs.reserve(kcuts.size());
         for (Cut *cut : kcuts) {
-            CutCost cost = mgr.compute_cut_cost(algo, cut);
+            CutCost cost = _mgr.compute_cut_cost(algo, cut);
             cost.idx = costs.size();
             costs.push_back(cost);
         }
@@ -711,7 +713,7 @@ class CutEnumerator {
         prune_kcut(kcuts, costs);
 
         // Write kcuts into cut_set of node[id]
-        std::vector<Cut *> &cut_set = mgr.cut_set(id);
+        std::vector<Cut *> &cut_set = _mgr.cut_set(id);
         cut_set.reserve(kcuts.size() + 1); // +1 for trivial cut
         cut_set.insert(cut_set.end(), kcuts.begin(), kcuts.end());
 
@@ -720,8 +722,8 @@ class CutEnumerator {
     }
 
     // TODO: when gate size <= 8, using stack memory to allocate wide-cut.
-    void wide_cut_enum(mapper &mgr, uint id) {
-        const Config &cfg = mgr.config();
+    void wide_cut_enum(uint id) {
+        const Config &cfg = _mgr.config();
 
         std::function<bool(Cut *, Cut *)> cmp;
         if (cfg.opt_target == Config::target_t::AREA) {
@@ -737,13 +739,9 @@ class CutEnumerator {
 
         // sort the gate inputs by area-cost increasing order ?
 
-        // std::vector<Cut *> *input_cut_sets[MAX_GATE_SIZE];
-        const uint num_inputs = mgr.gate(id)->size();
-        // for (uint i = 0; i != num_inputs; ++i) {
-        //     input_cut_sets[i] = &mgr.cut_set(mgr.gate(id)->input(i));
-        // }
+        const uint num_inputs = _mgr.gate(id)->size();
 
-        std::vector<Cut *> curr_cuts(mgr.cut_set(mgr.gate(id)->input(0)));
+        std::vector<Cut *> curr_cuts(_mgr.cut_set(_mgr.gate(id)->input(0)));
 
         Prune<Cut *, prune_mode_t::Separated> prune(std::move(cmp));
         uint buffer[Cut::MAX_CUT_SIZE];
@@ -751,7 +749,7 @@ class CutEnumerator {
         while (n < num_inputs) {
             prune.reset((n + 1) * cfg.lut_size, 4);
             for (Cut *c0 : curr_cuts)
-            for (Cut *c1 : mgr.cut_set(mgr.gate(id)->input(n)))
+            for (Cut *c1 : _mgr.cut_set(_mgr.gate(id)->input(n)))
             {
                 // merge the sub-cuts
                 uint *end  = std::set_union(c0->begin(), c0->end(), c1->begin(), c1->end(), buffer);
@@ -760,7 +758,7 @@ class CutEnumerator {
                 // Or, just adding their area into a sum ?
                 Cut *wcut = Cut::alloc_wcut(buffer, end);
                 for (int i = 0; i != size; ++i) {
-                    wcut->area() += mgr.area(buffer[i]);
+                    wcut->area() += _mgr.area(buffer[i]);
                 }
                 // store the sub-cuts info
                 if (n == 1) {
@@ -797,16 +795,16 @@ class CutEnumerator {
 
         // Cost-based cut pruning
         for (uint i = 0; i != curr_cuts.size(); ++i) {
-            Cut *wcut = curr_cuts[i];
             CutCost cost;
-            Cut *kcut = agd_decompose(mgr, id, wcut, cost);
+            Cut *wcut = curr_cuts[i];
+            Cut *kcut = agd_decompose(_mgr, id, wcut, cost);
             // kcut->idx = idx;
             kcuts.push_back(kcut);
             // compute the cut cost
             // TODO: using cost library
             ForEachCutLeaf(wcut) {
-                cost.area += mgr.area(leaf);
-                cost.edge += mgr.edge(leaf);
+                cost.area += _mgr.area(leaf);
+                cost.edge += _mgr.edge(leaf);
             }
             cost.size = kcut->size;
             cost.idx  = costs.size();
@@ -819,21 +817,20 @@ class CutEnumerator {
         // Ranking and prune the k-cuts of wide-cuts
         prune_kcut(kcuts, costs);
 
+        // Assign node ids for virtual cuts
         assign_node_id(kcuts);
 
-        // Make the cuts ready
-        uint num = 0;
+        // Set the signature for each cut
         for (Cut *cut : kcuts) {
             uint sign = 0;
             ForEachCutLeaf(cut) {
                 sign |= SIGNATURE(leaf);
             }
             cut->sign = sign;
-            cut->idx  = num++;
         }
 
         // Write kcuts into cut_set of node[id]
-        std::vector<Cut *> &cut_set = mgr.cut_set(id);
+        std::vector<Cut *> &cut_set = _mgr.cut_set(id);
         cut_set.reserve(kcuts.size() + 1); // +1 for trivial cut
         cut_set.insert(cut_set.end(), kcuts.begin(), kcuts.end());
 
@@ -846,13 +843,13 @@ public:
         if (mgr.run_agdmap()) {
             if (Gate *g = mgr.gate(id); g) {
                 if (g->size() > 2) {
-                    wide_cut_enum(mgr, id);
+                    wide_cut_enum(id);
                 } else {
-                    kcut_cut_enum(mgr, id);
+                    kcut_cut_enum(id);
                 }
             }
         } else {
-            kcut_cut_enum(mgr, id);        
+            kcut_cut_enum(id);        
         }
     }
 };
@@ -911,7 +908,7 @@ protected:
     }
 
     virtual void reference_best_cuts() {
-#if 0
+    #if 0
         ForEachGraphPoV(_mgr) {
             ++_mgr.num_est_ref(_mgr.get_po(idx)[0]);
         }
@@ -926,14 +923,14 @@ protected:
             _mgr.num_area() ++;
             _mgr.num_edge() += cut->size;
         }
-#else
+    #else
         ForEachGraphPoV(_mgr) {
             uint po_fanin = _mgr.get_po(idx)[0].id();
             if (_mgr.num_est_ref(po_fanin)++ == 0 && _mgr.is_logic(po_fanin)) {
                 reference_cut_rec(po_fanin);
             }
         }
-#endif
+    #endif
     }
 
     void propagate_required() {}

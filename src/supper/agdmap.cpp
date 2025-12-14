@@ -1,4 +1,5 @@
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdlib>
@@ -6,12 +7,32 @@
 #include <vector>
 #include <map>
 
+#include "basic.hpp"
+#include "cut.hpp"
+#include "macros.hpp"
 #include "map.hpp"
 
 namespace fox::supper {
-struct Order {
-    std::vector<std::pair<uint, std::array<uint, AGD_MAX_LUT_SIZE>>> orders;
-};
+constexpr uint kMaxBinNum = MAX_GATE_SIZE + 7;
+
+// struct truth_t {
+//     uint leaves[AGD_MAX_LUT_SIZE]{0};
+//     uint size  {0}; // leaf size
+
+//     truth_t(Cut *cut) : size(cut->size) {
+//         ForEachCutLeaf(cut) {
+//             leaves[i] = leaf;
+//         }
+//     }
+
+//     Inline void merge(Cut *cut) {
+//         uint buffer[AGD_MAX_LUT_SIZE]{0};
+//         auto end = std::set_union(leaves, leaves + size, cut->begin(), cut->end(), buffer);
+//         size = end - buffer;
+//         std::copy(buffer, end, leaves);
+//     }
+
+// }
 
 struct Bin {
     union {
@@ -94,13 +115,12 @@ struct Bin {
 };
 
 class agd_decompose_mgr {
-    static constexpr uint kMaxBinNum = MAX_GATE_SIZE + 7;
-    Bin        _bins[kMaxBinNum] {}; // buffer of bins for fast acess
-    mapper    &_mgr ;
-    Cut       *_wcut;
-    uint       _id  ;
-    uint       _num ;
-    CutCost   &_cost;
+    Bin            _bins[kMaxBinNum] {}; // buffer of bins for fast acess
+    mapper        &_mgr ;
+    Cut           *_wcut;
+    uint           _id  ;
+    uint           _num ;
+    CutCost       &_cost;
 
     std::vector<Cut *> _sub_cuts;
     // TODO: optmize here
@@ -179,17 +199,44 @@ class agd_decompose_mgr {
 
             if (bin.numc == 1 && bin.numb == 0) {
                 const uint root_id = _cut_roots[bin.cuts[0]].id(); Assert(root_id < VID);
-                return root_id;
+                bin.root = root_id;
             } else {
                 ++num_virtual;
                 const uint diff = reinterpret_cast<char *>(cut) - reinterpret_cast<char *>(mem); Assert(diff < mem_size);
-                return VID + (diff);
+                bin.root = VID + diff;
             }
+
+            // Calculate the truth table for each cut
+            std::array<word, AGD_MAX_LUT_SIZE> truths = {0};
+            if (bin.numc) {
+                if (bin.numc == 1) {
+                    Cut *sub_cut = _sub_cuts[bin.cuts[0]];
+                    Lit cut_root = _cut_roots[bin.cuts[0]];
+                    truths[0] = cut_root.sign() ? ~sub_cut->fid : sub_cut->fid;
+                } else {
+                    kCut<AGD_MAX_LUT_SIZE> tmp;
+                    Cut *sub_cut = sign_cond(_sub_cuts[bin.cuts[0]], _cut_roots[bin.cuts[0]].sign());
+                    uint merged = 1;
+                    while (merged++ < bin.numc) {
+
+                    }
+                }
+            }
+
+
+            return bin.root;
         };
 
         uint rid  = rec_fn(*root_bin); Assert(ptr == end && rid == VID);
         mem->idx  = rid >= VID ? num_virtual - 1 : num_virtual;
         mem->head = 1;
+
+        // 
+        // Cut *tmp = mem;
+        // do {
+        //     if
+        // } while ((tmp = tmp->next()));
+
         return mem;
     }
 
@@ -350,6 +397,7 @@ agd_decompose(mapper &mgr, uint id, Cut *wcut, CutCost &cost) {
         Cut *cut = Cut::alloc_kcut(wcut->begin(), wcut->end(), wcut->sign);
         cost.area = 1;
         cost.edge = wcut->size;
+        cut->fid  = mgr.compute_truth(cut, id);
         return cut;
     }
 
