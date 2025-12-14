@@ -6,10 +6,7 @@
 #include <vector>
 #include <map>
 
-#include "basic.hpp"
-#include "macros.hpp"
 #include "map.hpp"
-
 
 namespace fox::supper {
 struct Order {
@@ -191,8 +188,8 @@ class agd_decompose_mgr {
         };
 
         uint rid  = rec_fn(*root_bin); Assert(ptr == end && rid == VID);
-        mem->head = 1;    
-        mem->idx  = num_virtual;
+        mem->idx  = rid >= VID ? num_virtual - 1 : num_virtual;
+        mem->head = 1;
         return mem;
     }
 

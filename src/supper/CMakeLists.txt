@@ -1,5 +1,6 @@
 add_library(supper
     map.cpp
+    cut.cpp
     agdmap.cpp
 )
 
