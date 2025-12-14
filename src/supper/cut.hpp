@@ -248,14 +248,23 @@ public:
     std::string operator*() const;
 };
 
-template <std::size_t K>
-struct kCut {
-    Cut  cut{};
-    uint leaves[K]{0};
-};
-
 #define ForEachCutLeaf(C) \
     for (uint leaf = 0, i = 0; i != (C)->size && (leaf = (C)->leaf(i)); ++i)
+
+template <std::size_t K>
+struct kCut {
+    Cut  icut      { };
+    uint leaves[K] {0};
+
+    kCut(const Cut *cut = nullptr) : icut() {
+        if (cut) {
+            icut.size = cut->size;
+            ForEachCutLeaf(cut) {
+                leaves[i] = leaf;
+            }
+        }
+    }
+};
 
 
 template <std::size_t K>

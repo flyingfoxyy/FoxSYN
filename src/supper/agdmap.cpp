@@ -164,6 +164,8 @@ class agd_decompose_mgr {
         char *ptr = (char *)mem;
         char *end = ptr + mem_size;
         
+        std::vector<kCut<AGD_MAX_LUT_SIZE>> sub_cuts; sub_cuts.reserve(_num << 1);
+
         uint num_virtual = 0;
 
         std::function<uint(Bin &)> rec_fn = [&](Bin &bin) -> uint {
@@ -206,37 +208,19 @@ class agd_decompose_mgr {
                 bin.root = VID + diff;
             }
 
-            // Calculate the truth table for each cut
-            std::array<word, AGD_MAX_LUT_SIZE> truths = {0};
-            if (bin.numc) {
-                if (bin.numc == 1) {
-                    Cut *sub_cut = _sub_cuts[bin.cuts[0]];
-                    Lit cut_root = _cut_roots[bin.cuts[0]];
-                    truths[0] = cut_root.sign() ? ~sub_cut->fid : sub_cut->fid;
-                } else {
-                    kCut<AGD_MAX_LUT_SIZE> tmp;
-                    Cut *sub_cut = sign_cond(_sub_cuts[bin.cuts[0]], _cut_roots[bin.cuts[0]].sign());
-                    uint merged = 1;
-                    while (merged++ < bin.numc) {
-
-                    }
-                }
-            }
-
+            sub_cuts.push_back(kCut<AGD_MAX_LUT_SIZE>(cut));
 
             return bin.root;
         };
 
         uint rid  = rec_fn(*root_bin); Assert(ptr == end && rid == VID);
+       
+        // Calculate the cut truth
+        word truth = compute_cut_truth<AGD_MAX_LUT_SIZE>(sub_cuts);
+        
         mem->idx  = rid >= VID ? num_virtual - 1 : num_virtual;
         mem->head = 1;
-
-        // 
-        // Cut *tmp = mem;
-        // do {
-        //     if
-        // } while ((tmp = tmp->next()));
-
+        mem->fid = truth;
         return mem;
     }
 

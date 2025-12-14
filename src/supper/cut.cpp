@@ -76,18 +76,17 @@ word compute_cut_truth(std::vector<kCut<K>> &sub_cuts) {
     std::function<kcut(Cut *, Cut *)> fn = [&](Cut *lhs, Cut *rhs) -> kcut {
         kcut res;
         auto end = std::set_union(lhs->begin(), lhs->end(), rhs->begin(), rhs->end(), res.leaves);
-        res.cut.size = end - res.leaves;
-        res.cut.fid = Cut::compute_truth((Cut *)&res, lhs, rhs);
+        res.icut.size = end - res.leaves;
+        res.icut.fid  = Cut::compute_truth((Cut *)&res, lhs, rhs);
         return res;
     };
 
     if (sub_cuts.size() == 1) {
-        const kcut &cut = sub_cuts.front();
-        return is_signed(cut.cut) ? ~cut.cut.fid : cut.cut.fid;
+        return  sub_cuts.front().icut.fid;
     }
 
     if (sub_cuts.size() == 2) {
-        return fn((Cut *)&sub_cuts[0], (Cut *)&sub_cuts[1]).cut.fid;
+        return fn((Cut *)&sub_cuts[0], (Cut *)&sub_cuts[1]).icut.fid;
     }
 
     std::vector<kcut> tmp_cuts;
@@ -102,7 +101,7 @@ word compute_cut_truth(std::vector<kCut<K>> &sub_cuts) {
             tmp_cuts.push_back(sub_cuts.back());
         }
         if (tmp_cuts.size() == 1) {
-            return tmp_cuts.front().cut.fid;
+            return tmp_cuts.front().icut.fid;
         }
         std::swap(sub_cuts, tmp_cuts);
     }

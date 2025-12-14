@@ -578,7 +578,6 @@ class CutEnumerator {
 
     void assign_node_id(std::vector<Cut *> &kcuts) {
         uint num_virtual = 0;
-        // TODO, record this value in cut.
         for (Cut *cut : kcuts) {
             if (cut->head) {
                 num_virtual += cut->idx;
@@ -603,6 +602,8 @@ class CutEnumerator {
                 } while ((cut = cut->next()));
             }
         }
+        
+        // Verify the leaf order
     }
 
     void post_enum(uint id, const CutCost &best_cost) {
