@@ -52,7 +52,7 @@ Cut::compute_truth(const Cut *cut, const Cut *lhs, const Cut *rhs, int oper)
                 continue;
             // assert(cut->leaves[i]->id() == sub->leaves[k]->id());
             if (k < i)
-                Abc_TtSwapVars(pTruth, cut->size, k, i);
+                abc::Abc_TtSwapVars(pTruth, cut->size, k, i);
             k--;
         }
         assert( k == -1 );
@@ -73,20 +73,20 @@ Cut::compute_truth(const Cut *cut, const Cut *lhs, const Cut *rhs, int oper)
 template <std::size_t K>
 word compute_cut_truth(std::vector<kCut<K>> &sub_cuts) {
     using kcut = kCut<K>;
-    std::function<kcut(Cut *, Cut *)> fn = [&](Cut *lhs, Cut *rhs) -> kcut {
+    std::function<kcut(const kcut&, const kcut&)> fn = [&](const kcut &lhs, const kcut &rhs) -> kcut {
         kcut res;
-        auto end = std::set_union(lhs->begin(), lhs->end(), rhs->begin(), rhs->end(), res.leaves);
+        auto end = std::set_union(lhs.leaves, lhs.leaves + lhs.icut.size, rhs.leaves, rhs.leaves + rhs.icut.size, res.leaves);
         res.icut.size = end - res.leaves;
-        res.icut.fid  = Cut::compute_truth((Cut *)&res, lhs, rhs);
+        res.icut.fid  = Cut::compute_truth(res.raw_cut(), lhs.raw_cut(), rhs.raw_cut());
         return res;
     };
 
     if (sub_cuts.size() == 1) {
-        return  sub_cuts.front().icut.fid;
+        return sub_cuts.front().icut.fid;
     }
 
     if (sub_cuts.size() == 2) {
-        return fn((Cut *)&sub_cuts[0], (Cut *)&sub_cuts[1]).icut.fid;
+        return fn(sub_cuts[0], sub_cuts[1]).icut.fid;
     }
 
     std::vector<kcut> tmp_cuts;
@@ -94,7 +94,7 @@ word compute_cut_truth(std::vector<kCut<K>> &sub_cuts) {
     while (true) {
         tmp_cuts.clear();
         for (uint i = 0; i + 1 < sub_cuts.size(); i += 2) {
-            const kcut res = fn((Cut *)&sub_cuts[i], (Cut *)&sub_cuts[i + 1]);
+            const kcut res = fn(sub_cuts[i], sub_cuts[i + 1]);
             tmp_cuts.push_back(res);
         }
         if (sub_cuts.size() % 2 == 1) {

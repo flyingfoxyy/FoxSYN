@@ -255,6 +255,7 @@ template <std::size_t K>
 struct kCut {
     Cut  icut      { };
     uint leaves[K] {0};
+    uint inverted  {0};
 
     kCut(const Cut *cut = nullptr) : icut() {
         if (cut) {
@@ -263,6 +264,16 @@ struct kCut {
                 leaves[i] = leaf;
             }
         }
+    }
+
+    kCut(uint id) : icut() {
+        icut.size = 1;
+        leaves[0] = id;
+    }
+
+    Inline Cut *raw_cut() const {
+        Cut *cut = this;
+        return inverted ? sign_cond(cut, inverted) : cut;
     }
 };
 
