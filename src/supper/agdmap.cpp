@@ -3,6 +3,8 @@
 #include <array>
 #include <cstddef>
 #include <cstdlib>
+#include <iostream>
+#include <iterator>
 #include <sstream>
 #include <vector>
 #include <map>
@@ -14,25 +16,6 @@
 
 namespace fox::supper {
 constexpr uint kMaxBinNum = MAX_GATE_SIZE + 7;
-
-// struct truth_t {
-//     uint leaves[AGD_MAX_LUT_SIZE]{0};
-//     uint size  {0}; // leaf size
-
-//     truth_t(Cut *cut) : size(cut->size) {
-//         ForEachCutLeaf(cut) {
-//             leaves[i] = leaf;
-//         }
-//     }
-
-//     Inline void merge(Cut *cut) {
-//         uint buffer[AGD_MAX_LUT_SIZE]{0};
-//         auto end = std::set_union(leaves, leaves + size, cut->begin(), cut->end(), buffer);
-//         size = end - buffer;
-//         std::copy(buffer, end, leaves);
-//     }
-
-// }
 
 struct Bin {
     union {
@@ -47,34 +30,6 @@ struct Bin {
     uint8    numb  {0};                   // input bins number
 
     Bin() {}
-
-    Bin(Cut *cut) : sign(cut->sign), numl(cut->size), numc(1) {
-        ForEachCutLeaf(cut) {
-            leaves[i] = leaf;
-        }
-        cuts[0] = cut->idx;
-    }
-
-    void operator*() {
-        std::stringstream ss;
-        ss << "Root " << root << ", ";
-        ss << "Leaves {";
-        for (auto it = leaf_begin(); it != leaf_end(); ++it) {
-            ss << " " << *it;
-        }
-        ss << " }, ";
-        ss << "Sub-cuts {";
-        for (auto it = cut_begin(); it != cut_end(); ++it) {
-            ss << " " << static_cast<uint>(*it);
-        }
-        ss << " }, ";
-        ss << "Bins {";
-        for (auto it = bin_begin(); it != bin_end(); ++it) {
-            ss << " " << static_cast<uint>(*it);
-        }
-        ss << " }\n";
-        std::cout << ss.str() << std::endl;
-    }
 
     Inline uint  *leaf_begin() { return leaves;        }
     Inline uint8 *cut_begin () { return cuts;          }
@@ -216,11 +171,8 @@ class agd_decompose_mgr {
                 sub_cuts.back().inverted = _cut_roots[cut_idx].sign();
             }
             for (uint i = 0; i != bin.numb; ++i) {
-                uint root_id = _bins[bin.bins[i]].root;
-                sub_cuts.emplace_back(root_id);
-                if (root_id < VID) {
-                    sub_cuts.back().inverted = _cut_roots[root_id].sign();
-                }
+                const uint root_id = _bins[bin.bins[i]].root;
+                sub_cuts.emplace_back(kCut<AGD_MAX_LUT_SIZE>(root_id));
             }
             word truth = compute_cut_truth<AGD_MAX_LUT_SIZE>(sub_cuts);
             cut->fid = truth;
@@ -280,6 +232,9 @@ class agd_decompose_mgr {
         return build_mapping_solution(root);
     }
 
+    std::string print_bin(Bin &bin);
+    void print();
+
 public:
     agd_decompose_mgr(mapper &mgr, uint id, Cut *wcut, CutCost &cost) : _mgr(mgr), _wcut(wcut), _id(id), _num(0), _cost(cost) {}
 
@@ -333,7 +288,8 @@ public:
                 }
             }
             if (!packed) {
-                new (_bins + _num++) Bin(cut);
+                Bin *bin = _bins + _num++;
+                bin->add_cut(cut->sign, ii, cut->begin(), cut->end());
             }
             ++ii;
         }
@@ -359,7 +315,7 @@ public:
         }
         else if (_num == 2) {
             uint size = _bins[0].numl + _bins[1].numl;
-            if (size == lut_size) {
+            if (size == lut_size * 2) {
                 Bin *root = _bins + _num++;
                 root->add_bin_conn(0);
                 root->add_bin_conn(1);
@@ -407,4 +363,36 @@ agd_decompose(mapper &mgr, uint id, Cut *wcut, CutCost &cost) {
     return root_kcut;
 }
 
+std::string agd_decompose_mgr::print_bin(Bin &bin) {
+    std::stringstream ss;
+    ss << "* internal cuts\n";
+    for (auto it = bin.cut_begin(); it != bin.cut_end(); ++it) {
+        ss << **_sub_cuts[*it] << "\n";
+    }
+    ss << "* bins ";
+    if (bin.numb == 0) {
+        ss << "<none>";
+    } else {
+        for (auto it = bin.bin_begin(); it != bin.bin_end(); ++it) {
+            ss << static_cast<uint>(*it) << " ";
+        }
+    }
+    ss << "\n";
+    return ss.str();
 }
+
+
+void agd_decompose_mgr::print() {
+    std::cout << "Sub-cuts\n";
+    for (int i = 0; i != _sub_cuts.size(); ++i) {
+        std::cout << *(*_sub_cuts[i]) << "\n";
+    }
+    std::cout << "\nBins\n";
+    for (int i = 0; i != _num; ++i) {
+        std::cout << "bin " << i << ":\n";
+        std::cout << print_bin(_bins[i]) << "\n";
+    }
+    std::cout << "\n";
+}
+
+} // namespace fox::supper

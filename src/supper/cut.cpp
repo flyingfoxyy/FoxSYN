@@ -17,7 +17,11 @@ Cut::operator*() const
     } else {
         ss << "W-Cut: ";
     }
-    ss << "Area: " << a << ", Size: " << size << ", DT: " << (dt == 1 ? 'w' : 'k') << ", Leaves: ";
+    if (dt == data_t::WCUT)
+        ss << "Area: " << a << ",";
+    else
+        ss << "Sign: " << sign << ",";
+    ss << " Size: " << size << ", DT: " << (dt == 1 ? 'w' : 'k') << ", Leaves: ";
     ss << "{ ";
     ForEachCutLeaf(this) {
         ss << leaf << " ";
@@ -52,7 +56,7 @@ Cut::compute_truth(const Cut *cut, const Cut *lhs, const Cut *rhs, int oper)
                 continue;
             // assert(cut->leaves[i]->id() == sub->leaves[k]->id());
             if (k < i)
-                abc::Abc_TtSwapVars(pTruth, cut->size, k, i);
+                Abc_TtSwapVars(pTruth, cut->size, k, i);
             k--;
         }
         assert( k == -1 );

@@ -271,8 +271,8 @@ struct kCut {
         leaves[0] = id;
     }
 
-    Inline Cut *raw_cut() const {
-        Cut *cut = this;
+    Inline const Cut *raw_cut() const {
+        const Cut *cut = &icut;
         return inverted ? sign_cond(cut, inverted) : cut;
     }
 };
