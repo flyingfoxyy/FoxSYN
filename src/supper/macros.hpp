@@ -62,6 +62,7 @@ using uint = uint32_t;
 // ========================================================================
 // Max LUT size for agdmap
 // ========================================================================
+#define AGD_MAX_ID       0xC0000000
 #define AGD_MAX_LUT_SIZE 6
 #define AGD_MIN_LUT_SIZE 3
 

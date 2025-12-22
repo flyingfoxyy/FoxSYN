@@ -237,6 +237,10 @@ public:
         return wdata()->sub_cuts[idx];
     }
 
+    Inline uint num_sub_cuts() const {
+        return wdata()->nums;
+    }
+
     Inline Area &area() {
         return a;
     }
@@ -259,7 +263,10 @@ struct kCut {
 
     kCut(const Cut *cut = nullptr) : icut() {
         if (cut) {
+            inverted  = is_signed(cut);
+            cut       = regular(cut);
             icut.size = cut->size;
+            icut.fid  = cut->fid;
             ForEachCutLeaf(cut) {
                 leaves[i] = leaf;
             }
@@ -268,6 +275,7 @@ struct kCut {
 
     kCut(uint id) : icut() {
         icut.size = 1;
+        icut.fid  = 0xAAAAAAAAAAAAAAAA;
         leaves[0] = id;
     }
 

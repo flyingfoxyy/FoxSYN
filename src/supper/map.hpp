@@ -25,8 +25,10 @@
 #include <print>
 #include <atomic>
 
+#include "basic.hpp"
 #include "cut.hpp"
 #include "agdmap.hpp"
+#include "macros.hpp"
 
 namespace abc {
     typedef struct Abc_Ntk_t_ Abc_Ntk_t;
@@ -221,6 +223,9 @@ public:
     Inline int logic_rbegin() const { return _nodes.size() - 1;       }
     Inline int logic_rend()   const { return num_po() + num_pi();     }
 
+    Inline int pi_begin()     const { return 1; }
+    Inline int pi_end()       const { return 1 + num_pi(); }
+
     Inline const node_t &operator[](uint i) const { return _nodes[i];        }
     Inline const node_t &operator[](Lit  i) const { return _nodes[i.id()];   }
     Inline const node_t &get_pi(uint idx)   const { return _nodes[_pi[idx]]; }
@@ -311,6 +316,7 @@ public:
     bool         verbose     {true };
     // internal
     bool         first_pass  {false};
+    bool         enum_truth  {true};
     float        epsilon     {0.005};
 
     bool area_mode()  const { return opt_target == target_t::AREA;  }
@@ -404,9 +410,11 @@ class mapper : public graph_t {
     Array<Gate *>               _gates;         // Simple gates
     Array<float>                _est_ref_agd;   // Estimated reference count for Agdmap
     std::atomic<uint>           _id_counter;    // Id counter for Agdmap virtual tree nodes
-    std::unordered_map<uint, Cut *> _virual_cuts; // Virtual cuts for Agdmap
 
-    std::vector<std::vector<Area>> _cuts_area;
+    // TODO: merge them into one struct
+    std::unordered_map<uint, Cut *> _virual_cuts; // Virtual cuts for Agdmap
+    std::unordered_map<uint, Area > _virual_area; // Virtual area for Agdmap
+    std::unordered_map<uint, Edge > _virual_edge; // Virtual edge for Agdmap
 
     mutable Timer _timer;
 
@@ -456,6 +464,10 @@ public:
 
     bool run_agdmap() const { return _cfg.map_impl == Config::AGDMAP; }
 
+    uint num_virtual_nodes() const {
+        return _id_counter.load() - VID;
+    }
+
     // reset flags
     Inline void reset_est_ref () { std::fill(_est_ref .begin(), _est_ref .end(), 0       ); }
     Inline void reset_required() { std::fill(_required.begin(), _required.end(), kMaxTime); }
@@ -465,28 +477,49 @@ public:
     static mapper *create_from_gia (void       *gia );
     static mapper *create_from_blif(const char *blif);
 
-    template<Indexable T> Inline std::vector<Cut *> &cut_set(T n) { return _cuts[n]; }
+    template<Indexable T>
+    Inline bool is_logic(T n) {
+        return n >= VID || (n >= (uint)logic_begin() && n < logic_end()); // including virtual nodes
+    }
 
-    template<Indexable T> Inline Area  &area       (T n) { return _area[n];     }
-    template<Indexable T> Inline Edge  &edge       (T n) { return _edge[n];     }
-    template<Indexable T> Inline Time  &arrival    (T n) { return _arrival[n];  }
-    template<Indexable T> Inline Time  &required   (T n) { return _required[n]; }
+    template<Indexable T>
+    Inline bool is_pi(T n) {
+        return n >= (uint)pi_begin() && n < (uint)pi_end();
+    }
+
+    template<Indexable T> Inline
+    std::vector<Cut *> &cut_set(T n) {
+        return _cuts[n];
+    }
+
+    template<Indexable T>
+    Inline Area &area(T n) {
+        Assert(is_logic(n) || is_pi(n));
+        return n >= VID ? _virual_area[n - VID] : _area[n];
+    }
+
+    template<Indexable T> Inline Edge &edge(T n) {
+        Assert(is_logic(n) || is_pi(n));
+        return n >= VID ? _virual_edge[n - VID] : _edge[n];
+    }
+
+    template<Indexable T> Inline Time &arrival(T n) { return _arrival[n]; }
+    template<Indexable T> Inline Time &required(T n) { return _required[n]; }
     template<Indexable T> Inline float &num_est_ref(T n) { return n >= VID ? _est_ref_agd[n] : _est_ref[n];  }
     template<Indexable T> Inline uint  &num_ref    (T n) { return _int_ref[n];  }
 
-    template<Indexable T> Inline bool is_logic(T n) {
-        return n >= (uint)logic_begin(); // including virtual nodes
-    }
-
-
-    template<Indexable T> Inline const Cut *best_cut(T n) {
-        Assert(n >= VID || (n >= logic_begin() && n < logic_end()));
+    template<Indexable T>
+    Inline const Cut *best_cut(T n) {
+        Assert(is_logic(n));
         return n >= VID ? _virual_cuts[n - VID] : _best_cuts[n];
     }
 
-    template<Indexable T> Inline void set_best_cut(T n, const Cut *cut) {
-        Assert(n >= logic_begin() && n < logic_end());
-        Assert(cut);
+    template<Indexable T>
+    Inline void set_best_cut(T n, const Cut *cut) {
+        ForEachCutLeaf(cut) {
+            Assert(is_pi(leaf) || is_logic(leaf));
+        }
+        Assert(is_logic(n) && cut);
         if (Cut *&best = _best_cuts[n]; best) {
             if (best->ms < cut->num_bytes()) {
                 Cut::dealloc(best);
@@ -498,8 +531,6 @@ public:
             best = Cut::copy(*cut);
         }
     }
-
-    template<Indexable T> Inline Area &cut_area(T n, uint idx) { return _cuts_area[n][idx]; }
 
     Inline uint &num_area()  { return _num_area;  }
     Inline uint &num_edge()  { return _num_edge;  }
@@ -536,9 +567,25 @@ public:
 
     // TODO: using parallel hash map.
     Inline void register_virtual_cut(uint id, Cut *cut) {
+        ForEachCutLeaf(cut) {
+            Assert(is_pi(leaf) || is_logic(leaf));
+        }
         Assert(id >= VID);
+        Assert(cut->size <= 6);
         Assert(_virual_cuts.find(id) == _virual_cuts.end() || _virual_cuts.find(id)->second == cut);
         _virual_cuts[id - VID] = cut;
+    }
+
+    Inline void register_virtual_area(uint id, Area area) {
+        Assert(id >= VID);
+        Assert(_virual_area.find(id) == _virual_area.end() || _virual_area.find(id)->second == area);
+        _virual_area[id - VID] = area;
+    }
+
+    Inline void register_virtual_edge(uint id, Edge edge) {
+        Assert(id >= VID);
+        Assert(_virual_edge.find(id) == _virual_edge.end() || _virual_edge.find(id)->second == edge);
+        _virual_edge[id - VID] = edge;
     }
 
     Timer &timer() { return _timer; }
@@ -547,7 +594,7 @@ public:
 
     graph_t *create_mapped_graph();
 
-    void *create_abc_ntk_from_mapping(bool use_truth_table = true);
+    void *create_abc_ntk_from_mapping(bool use_truth_table = true, bool use_cut_truth = true);
 
     Time calculate_delay();
 
@@ -590,24 +637,28 @@ class CutEnumerator {
         for (Cut *cut : kcuts) {
             if (cut->head) {
                 char *base = reinterpret_cast<char *>(cut);
+                char *end  = base + cut->ms;
                 do {
                     ForEachCutLeaf(cut) {
-                        if (leaf >= VID) {
-                            const uint new_id = id_start + cnt++;
+                        if (leaf >= AGD_MAX_ID) {
+                            uint  new_id   = id_start + cnt++;
+                            char *raw_cut  = base + leaf - AGD_MAX_ID;
+                            Cut  *leaf_cut = reinterpret_cast<Cut *>(raw_cut);
+                            Assert(raw_cut + leaf_cut->num_bytes() <= end);
                             cut->change_leaf(i, new_id);
-                            Cut *leaf_cut = reinterpret_cast<Cut *>(base + leaf - VID);
                             _mgr.register_virtual_cut(new_id, leaf_cut);
                         }
                     }
                 } while ((cut = cut->next()));
             }
         }
-        
-        // Verify the leaf order
+
+        Assert(num_virtual == cnt);
     }
 
     void post_enum(uint id, const CutCost &best_cost) {
         std::vector<Cut *> &cut_set = _mgr.cut_set(id);
+
         // Set the idx
         uint idx = 0;
         for (Cut *cut : cut_set) {
@@ -628,6 +679,7 @@ class CutEnumerator {
         // create trivial cut
         Cut *triv_cut = Cut::alloc_triv(id);
         triv_cut->idx = cut_set.size();
+        triv_cut->fid = 0xAAAAAAAAAAAAAAAA;
         if constexpr (algo == CutCostAlgo::PRAETOR) {
 
         }
@@ -691,6 +743,8 @@ class CutEnumerator {
             Assert(end - buffer <= k);
             Cut *cut = Cut::alloc_kcut(buffer, end, c0->sign | c1->sign);
             kcuts.push_back(cut);
+            word truth = Cut::compute_truth(cut, sign_cond(c0, f0.sign()), sign_cond(c1, f1.sign()));
+            cut->fid = truth;
         }} // end merge cuts
 
         _mgr.num_k_feasible() += kcuts.size();
@@ -740,19 +794,20 @@ class CutEnumerator {
 
         // sort the gate inputs by area-cost increasing order ?
 
-        const uint num_inputs = _mgr.gate(id)->size();
+        Gate *gate = _mgr.gate(id);
+        uint  sz   = gate->size();
+        uint  idx  = 1;
+        uint  buffer[Cut::MAX_CUT_SIZE];
 
-        std::vector<Cut *> curr_cuts(_mgr.cut_set(_mgr.gate(id)->input(0)));
-
+        std::vector<Cut *> curr_cuts(_mgr.cut_set(gate->input(0)));
         Prune<Cut *, prune_mode_t::Separated> prune(std::move(cmp));
-        uint buffer[Cut::MAX_CUT_SIZE];
-        uint n = 1;
-        while (n < num_inputs) {
-            prune.reset((n + 1) * cfg.lut_size, 4);
-            for (Cut *c0 : curr_cuts)
-            for (Cut *c1 : _mgr.cut_set(_mgr.gate(id)->input(n)))
-            {
-                // merge the sub-cuts
+
+        while (true) {
+            prune.reset((idx + 1) * cfg.lut_size, 4);
+            const auto& in_cuts = _mgr.cut_set(gate->input(idx));
+
+            for (uint ii = 0; ii != curr_cuts.size(); ++ii) { Cut *c0 = curr_cuts[ii];
+            for (uint mm = 0; mm != in_cuts  .size(); ++mm) { Cut *c1 = in_cuts[mm];
                 uint *end  = std::set_union(c0->begin(), c0->end(), c1->begin(), c1->end(), buffer);
                 uint  size = end - buffer;
                 // compute the area-cost for pruning
@@ -762,27 +817,32 @@ class CutEnumerator {
                     wcut->area() += _mgr.area(buffer[i]);
                 }
                 // store the sub-cuts info
-                if (n == 1) {
+                if (idx == 1) {
                     Assert(!c0->is_wcut() && !c1->is_wcut());
                     wcut->add_sub_cut(c0->idx);
                     wcut->add_sub_cut(c1->idx);
                 } else {
                     Assert(c0->is_wcut() && !c1->is_wcut());
+                    for (int i = 0; i != c0->num_sub_cuts(); ++i) {
+                        wcut->add_sub_cut(c0->get_sub_cut(i));
+                    }
                     wcut->add_sub_cut(c1->idx);
-                    for (int i = 0; i != c0->wdata()->nums; ++i)
-                        wcut->add_sub_cut(c0->wdata()->sub_cuts[i]);
                 }
                 prune.insert(wcut);
-            }
-            if (n != 1) {
+            }} // end for-loop
+
+            if (idx != 1) {
                 // Todo: reuse the cuts here
                 for (Cut *cut : curr_cuts)
                     Cut::dealloc(cut);
             }
+
             curr_cuts.clear();
             prune.get(curr_cuts);
-            ++n;
-        }
+    
+            if (++idx == sz)
+                break;
+        } // end while
 
         // Structure-based pruning
         // ?
@@ -850,7 +910,7 @@ public:
                 }
             }
         } else {
-            kcut_cut_enum(id);        
+            kcut_cut_enum(id);
         }
     }
 };
@@ -869,10 +929,14 @@ class ForwardFlow : public Forward {
 public:
     ForwardFlow(mapper &mgr) : Forward(mgr) {}
 
-    virtual void impl() {        
+    virtual void impl() {
+        _mgr.timer().start("forward");
+
         ForEachGraphLogicNode(_mgr) {
             CutEnumerator<CutCostAlgo::FLOW>(_mgr, idx);
         }
+
+        _mgr.timer().stop("forward");
     }
 };
 
@@ -889,7 +953,7 @@ public:
 
 // generic backword pass
 // visit nodes in reversed topological order and set the best cuts and propagate required times
-class Backword {
+class Backward {
 protected:
     mapper &_mgr;
 
@@ -937,10 +1001,11 @@ protected:
     void propagate_required() {}
 
 public:
-    Backword(mapper &mgr) : _mgr(mgr) {}
-    virtual ~Backword() = default;
+    Backward(mapper &mgr) : _mgr(mgr) {}
+    virtual ~Backward() = default;
 
     virtual void impl() {
+        _mgr.timer().start("backward");
         _mgr.reset_est_ref();
 
         if (_mgr.config().delay_mode()) {
@@ -952,13 +1017,14 @@ public:
         if (_mgr.config().delay_mode()) {
             propagate_required();
         }
+        _mgr.timer().stop("backward");
     }
 };
 
 class MappingPass {
     mapper &_mgr;
     std::unique_ptr<Forward>  _forward;
-    std::unique_ptr<Backword> _backword;
+    std::unique_ptr<Backward> _backward;
 
     void improve_mapping_exactly(mapper &mgr);
 
@@ -971,28 +1037,24 @@ public:
             _forward = std::make_unique<ForwardExact> (mgr);
         else
             assert(0);
-        _backword = std::make_unique<Backword>(mgr);
+        _backward = std::make_unique<Backward>(mgr);
 
         if (!mgr.config().first_pass) {
             // update the estimated reference number
             // do nothing, using previous pass's reference count for next cost compute
         }
 
-        _mgr.timer().start("forward");
         ///////////////////////////////////////
-        _forward ->impl();
+        _forward->impl();
         ///////////////////////////////////////
-        _mgr.timer().stop ("forward");
 
         if (_mgr.run_agdmap()) {
             _mgr.setup_agdmap_containers();
         }
 
-        _mgr.timer().start("backward");
         ///////////////////////////////////////
-        _backword->impl();
+        _backward->impl();
         ///////////////////////////////////////
-        _mgr.timer().stop("backward");
 
         TIME_STOP(T)
         if (mgr.config().verbose) {
@@ -1000,11 +1062,13 @@ public:
                 _mgr.num_merged(), _mgr.num_k_feasible(), _mgr.num_stored());
         }
 
-        _mgr.timer().start("exact_imp");
+        if (_mgr.run_agdmap()) {
+            return;
+        }
+
         ///////////////////////////////////////
         improve_mapping_exactly(mgr);
         ///////////////////////////////////////
-        _mgr.timer().stop("exact_imp");
     }
 
     ~MappingPass() {

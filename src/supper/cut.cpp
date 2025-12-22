@@ -47,7 +47,9 @@ Cut::compute_truth(const Cut *cut, const Cut *lhs, const Cut *rhs, int oper)
 {
     const bool s0 = is_signed(lhs);
     const bool s1 = is_signed(rhs);
-    auto TtExpand = [](word *pTruth, const Cut *sub, const Cut *cut) -> void
+    lhs = regular(lhs);
+    rhs = regular(rhs);
+    auto tt_expand = [](word *pTruth, const Cut *sub, const Cut *cut) -> void
     {
         int i, k;
         for (i = cut->size - 1, k = sub->size - 1; i >= 0 && k >= 0; i--)
@@ -56,7 +58,7 @@ Cut::compute_truth(const Cut *cut, const Cut *lhs, const Cut *rhs, int oper)
                 continue;
             // assert(cut->leaves[i]->id() == sub->leaves[k]->id());
             if (k < i)
-                Abc_TtSwapVars(pTruth, cut->size, k, i);
+                abc::Abc_TtSwapVars(pTruth, cut->size, k, i);
             k--;
         }
         assert( k == -1 );
@@ -65,8 +67,8 @@ Cut::compute_truth(const Cut *cut, const Cut *lhs, const Cut *rhs, int oper)
     word truth0 = lhs->fid;
     word truth1 = rhs->fid;
 
-    TtExpand(&truth0, lhs, cut);
-    TtExpand(&truth1, rhs, cut);
+    tt_expand(&truth0, lhs, cut);
+    tt_expand(&truth1, rhs, cut);
 
     if (s0) truth0 = ~truth0;
     if (s1) truth1 = ~truth1;

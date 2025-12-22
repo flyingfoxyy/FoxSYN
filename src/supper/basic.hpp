@@ -133,19 +133,10 @@ Inline static T sign_cond(T var, uint cond) {
 }
 
 // ====================================================================
-// For class with dynamic array
+// Agdmap related utility functions
 // ====================================================================
-// template <typename T, typename... Args>
-// Inline static T* allocate(uint size, Args&&... args) {
-//     return new (std::malloc(sizeof(T) + sizeof(typename T::elem_type) * size)) T(std::forward<Args>(args)...);
-// }
-
-// template <typename T>
-// Inline static void deallocate(T* item) noexcept {
-//     if (item) {
-//         item->~T();
-//         std::free(item);
-//     }
+// Inline static bool normal(uint id) {
+//     return id < VID;
 // }
 
 
