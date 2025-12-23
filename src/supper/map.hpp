@@ -479,6 +479,7 @@ public:
 
     template<Indexable T>
     Inline bool is_logic(T n) {
+        Assert(n < AGD_MAX_ID);
         return n >= VID || (n >= (uint)logic_begin() && n < logic_end()); // including virtual nodes
     }
 
@@ -487,8 +488,8 @@ public:
         return n >= (uint)pi_begin() && n < (uint)pi_end();
     }
 
-    template<Indexable T> Inline
-    std::vector<Cut *> &cut_set(T n) {
+    template<Indexable T>
+    Inline std::vector<Cut *> &cut_set(T n) {
         return _cuts[n];
     }
 
@@ -498,10 +499,23 @@ public:
         return n >= VID ? _virual_area[n - VID] : _area[n];
     }
 
-    template<Indexable T> Inline Edge &edge(T n) {
+    // template<Indexable T>
+    // Inline Area area(T n) const {
+    //     Assert(is_logic(n) || is_pi(n));
+    //     return n >= VID ? _virual_area[n - VID] : _area[n];
+    // }
+
+    template<Indexable T>
+    Inline Edge &edge(T n) {
         Assert(is_logic(n) || is_pi(n));
         return n >= VID ? _virual_edge[n - VID] : _edge[n];
     }
+
+    // template<Indexable T>
+    // Inline Edge edge(T n) const {
+    //     Assert(is_logic(n) || is_pi(n));
+    //     return n >= VID ? _virual_edge[n - VID] : _edge[n];
+    // }
 
     template<Indexable T> Inline Time &arrival(T n) { return _arrival[n]; }
     template<Indexable T> Inline Time &required(T n) { return _required[n]; }
@@ -567,23 +581,25 @@ public:
 
     // TODO: using parallel hash map.
     Inline void register_virtual_cut(uint id, Cut *cut) {
-        ForEachCutLeaf(cut) {
-            Assert(is_pi(leaf) || is_logic(leaf));
+        if constexpr (kDebugBuild) {
+            ForEachCutLeaf(cut) {
+                Assert(is_pi(leaf) || is_logic(leaf));
+            }
         }
-        Assert(id >= VID);
-        Assert(cut->size <= 6);
+        Assert(id >= VID && id < AGD_MAX_ID);
+        Assert(cut->size <= AGD_MAX_LUT_SIZE);
         Assert(_virual_cuts.find(id) == _virual_cuts.end() || _virual_cuts.find(id)->second == cut);
         _virual_cuts[id - VID] = cut;
     }
 
     Inline void register_virtual_area(uint id, Area area) {
-        Assert(id >= VID);
+        Assert(id >= VID && id < AGD_MAX_ID);
         Assert(_virual_area.find(id) == _virual_area.end() || _virual_area.find(id)->second == area);
         _virual_area[id - VID] = area;
     }
 
     Inline void register_virtual_edge(uint id, Edge edge) {
-        Assert(id >= VID);
+        Assert(id >= VID && id < AGD_MAX_ID);
         Assert(_virual_edge.find(id) == _virual_edge.end() || _virual_edge.find(id)->second == edge);
         _virual_edge[id - VID] = edge;
     }
@@ -625,32 +641,48 @@ class CutEnumerator {
 
     void assign_node_id(std::vector<Cut *> &kcuts) {
         uint num_virtual = 0;
-        for (Cut *cut : kcuts) {
-            if (cut->head) {
-                num_virtual += cut->idx;
+        for (Cut *kcut : kcuts) {
+            if (kcut->head) {
+                num_virtual += kcut->idx; // overwrite idx later.
             }
         }
 
         uint id_start = _mgr.fetch_free_id(num_virtual);
         uint cnt = 0;
 
-        for (Cut *cut : kcuts) {
-            if (cut->head) {
-                char *base = reinterpret_cast<char *>(cut);
-                char *end  = base + cut->ms;
-                do {
-                    ForEachCutLeaf(cut) {
-                        if (leaf >= AGD_MAX_ID) {
-                            uint  new_id   = id_start + cnt++;
-                            char *raw_cut  = base + leaf - AGD_MAX_ID;
-                            Cut  *leaf_cut = reinterpret_cast<Cut *>(raw_cut);
-                            Assert(raw_cut + leaf_cut->num_bytes() <= end);
-                            cut->change_leaf(i, new_id);
-                            _mgr.register_virtual_cut(new_id, leaf_cut);
-                        }
+        for (Cut *kcut : kcuts) {
+            if (!kcut->head)
+                continue;
+            char *base = reinterpret_cast<char *>(kcut);
+            char *end  = base + kcut->ms;
+            std::function<void(Cut *)> visit_cut = [&](Cut *cut) -> void {
+                ForEachCutLeaf(cut) {
+                    if (leaf >= AGD_MAX_ID) { // this is a leaf created in decomposition.
+                        char *raw_cut  = base + (leaf - AGD_MAX_ID);
+                        Cut  *leaf_cut = reinterpret_cast<Cut *>(raw_cut);
+                        Assert(raw_cut < end && raw_cut >= base);
+                        Assert(raw_cut + leaf_cut->num_bytes() <= end);
+                        visit_cut(leaf_cut);
+                        // Fetch new id after visiting children. So that the ids are in increasing order.
+                        uint new_id = id_start + cnt++;
+                        cut->change_leaf(i, new_id);
+                        // Register new_id's cut/area/edge info
+                        const CutCost cost = _mgr.compute_cut_cost(algo, leaf_cut);
+                        _mgr.register_virtual_cut (new_id, leaf_cut);
+                        _mgr.register_virtual_area(new_id, cost.area);
+                        _mgr.register_virtual_edge(new_id, cost.edge);
                     }
-                } while ((cut = cut->next()));
-            }
+                }
+                // Verifiy leaves order
+                if constexpr (kDebugBuild) {
+                    uint prev_leaf = 0;
+                    ForEachCutLeaf(cut) {
+                        Assert(leaf >= prev_leaf);
+                        prev_leaf = leaf;
+                    }
+                }
+            };
+            visit_cut(kcut);
         }
 
         Assert(num_virtual == cnt);

@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdlib>
+#include <functional>
 #include <iostream>
 #include <iterator>
 #include <sstream>
@@ -13,6 +14,17 @@
 #include "cut.hpp"
 #include "macros.hpp"
 #include "map.hpp"
+
+// int main() {
+//     // C++23 语法
+//     auto factorial = [](this auto self, int n) -> int {
+//         if (n <= 1) return 1;
+//         return n * self(n - 1);
+//     };
+
+//     std::cout << "5! = " << factorial(5) << std::endl;
+//     return 0;
+// }
 
 namespace fox::supper {
 constexpr uint kMaxBinNum = MAX_GATE_SIZE + 7;
@@ -136,7 +148,7 @@ class agd_manager {
 
         uint num_virtual = 0;
 
-        std::function<uint(Bin &)> rec_fn = [&](Bin &bin) -> uint {
+        std::function<uint(Bin &)> gen_cut_fn = [&](Bin &bin) -> uint {
             uint ms  = Cut::bytes_needed<Cut::data_t::KCUT>(bin.num_port());
             Cut *cut = (Cut *)ptr;
             ptr     += ms;
@@ -150,7 +162,7 @@ class agd_manager {
                 cut->add_leaf(*it);
             }
             for (auto it = bin.bin_begin(); it != bin.bin_end(); ++it) {
-                const uint root = rec_fn(_bins[*it]);
+                const uint root = gen_cut_fn(_bins[*it]);
                 cut->add_leaf(root);
             }
             cut->ms = 0;
@@ -168,13 +180,6 @@ class agd_manager {
             }
 
             Assert(cut->size <= AGD_MAX_LUT_SIZE);
- 
-            // Calculate cut cost
-            if (bin.root >= VID) {
-                CutCost cost = _mgr.compute_cut_cost(CutCostAlgo::FLOW, cut);
-                _mgr.register_virtual_area(bin.root, cost.area);
-                _mgr.register_virtual_edge(bin.root, cost.edge);
-            }
 
             // Calculate the cut truth
             sub_cuts.clear();
@@ -193,7 +198,7 @@ class agd_manager {
             return bin.root;
         };
 
-        uint rid  = rec_fn(*root_bin); Assert(ptr == end && rid == AGD_MAX_ID);
+        uint rid  = gen_cut_fn(*root_bin); Assert(ptr == end && rid == AGD_MAX_ID);
         mem->idx  = rid >= AGD_MAX_ID ? num_virtual - 1 : num_virtual;
         mem->head = 1;
         mem->ms   = mem_size;

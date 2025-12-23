@@ -34,6 +34,12 @@ using uint = uint32_t;
     #define Inline
 #endif
 
+#ifdef NDEBUG
+constexpr bool kDebugBuild = false;
+#else
+constexpr bool kDebugBuild = true;
+#endif
+
 // ========================================================================
 // Enable performance analysis code
 // ========================================================================

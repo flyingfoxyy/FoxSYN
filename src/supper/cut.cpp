@@ -58,7 +58,7 @@ Cut::compute_truth(const Cut *cut, const Cut *lhs, const Cut *rhs, int oper)
                 continue;
             // assert(cut->leaves[i]->id() == sub->leaves[k]->id());
             if (k < i)
-                abc::Abc_TtSwapVars(pTruth, cut->size, k, i);
+                Abc_TtSwapVars(pTruth, cut->size, k, i);
             k--;
         }
         assert( k == -1 );

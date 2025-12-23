@@ -14,6 +14,7 @@
 #include <vector>
 #include <chrono>
 #include <cassert>
+#include <cmath>
 
 #include "macros.hpp"
 
@@ -36,6 +37,10 @@ using word   = uint64_t;
 constexpr Time kMaxTime = 1234567;
 constexpr Area kMaxArea = 999988880000.0f;
 constexpr uint VID = 1u << 31;
+
+Inline constexpr float is_equal(Area a, Area b, float epsilon = 0.001f) {
+    return std::fabs(a - b) < epsilon;
+}
 
 // ====================================================================
 // Literals
