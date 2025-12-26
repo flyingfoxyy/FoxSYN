@@ -259,34 +259,6 @@ template <std::size_t K>
 struct kCut {
     Cut  icut      { };
     uint leaves[K] {0};
-    uint inverted  {0};
-
-    kCut(const Cut *cut = nullptr) : icut() {
-        if (cut) {
-            inverted  = is_signed(cut);
-            cut       = regular(cut);
-            icut.size = cut->size;
-            icut.fid  = cut->fid;
-            ForEachCutLeaf(cut) {
-                leaves[i] = leaf;
-            }
-        }
-    }
-
-    kCut(uint id) : icut() {
-        icut.size = 1;
-        icut.fid  = 0xAAAAAAAAAAAAAAAA;
-        leaves[0] = id;
-    }
-
-    Inline const Cut *raw_cut() const {
-        const Cut *cut = &icut;
-        return inverted ? sign_cond(cut, inverted) : cut;
-    }
 };
-
-
-template <std::size_t K>
-word compute_cut_truth(std::vector<kCut<K>> &sub_cuts);
 
 }

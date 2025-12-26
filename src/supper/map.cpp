@@ -1,8 +1,10 @@
 #include <cstddef>
 #include <cstdlib>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <unordered_set>
 #include <vector>
 #include <ctime>
 #include <print>
@@ -11,6 +13,7 @@
 #include "base/abc/abc.h"
 #include "basic.hpp"
 #include "cut.hpp"
+#include "macros.hpp"
 
 #include "map.hpp"
 
@@ -604,72 +607,84 @@ mapper::create_simple_gates(uint max_size)
 {
     mapper &mgr = *this;
 
-    // mgr.to_dot("graph.dot");
-    // std::system("dot -Tpdf graph.dot -o graph.pdf");
-    // std::system("cp graph.pdf /mnt/c/Users/chang/Desktop/");
-    // std::system("rm graph.dot");
-
     _timer.start("create_gate");
     _gates.resize(num_nodes(), nullptr);
 
-    // find the gate roots at first
+    // Mark the PI    
     std::fill(_gates.begin(), _gates.begin() + mgr.num_pi() + 1, (Gate *)01);
+
+    // Mark the fanin of PO
     ForEachGraphPoV(mgr) {
         _gates[n[0]] = (Gate *)01;
     }
+
+    // Mark the gate root (fanout > 1 or inverted input source node)
     ForEachGraphLogicNodeRev(mgr) {
         if (mgr.num_ref(idx) > 1) {
             _gates[idx] = (Gate *)01;
         }
-        const auto &n = mgr[idx];
-        for (int i = 0; i != n.size(); ++i) {
-            if (n[i].sign()) {
-                _gates[n[i]] = (Gate *)01;
-            }
-        }
     }
 
-    std::function<void(Lit, Array<Lit> &)> fn = [&](Lit id, Array<Lit> &inputs) {
-        if (_gates[id]) {
-            inputs.push_unique(id);
-        } else {
-            for (int i = 0; i != mgr[id].size(); ++i) {
-                if (inputs.size() >= max_size)
-                    break;
-                fn(mgr[id][i], inputs);
-            }
+    auto expend = [&](this auto self, Lit fanin, std::vector<Lit> &internal)
+    {
+        if (internal.size() >= max_size - 1) {
+            return;   
         }
+        if (mgr._gates[fanin] || fanin.sign()) {
+            return;
+        }
+        // It's ok to absorb fanin into current gate.
+        internal.push_back(fanin);
+        self(mgr[fanin][0], internal);
+        self(mgr[fanin][1], internal);
     };
 
-    // create simple gates
-    ForEachGraphLogicNodeRev(*this) {
+    std::vector<Lit> internal; internal.reserve(MAX_GATE_SIZE + 1);
+
+    ForEachGraphLogicNodeRev(mgr) {
         if (_gates[idx] == (Gate *)01) {
-            Array<Lit> inputs; inputs.reserve(max_size);
-            for (int i = 0; i != mgr[idx].size(); ++i) {
-                fn(mgr[idx][i], inputs);
+            const auto &n = mgr[idx];
+            internal.clear();
+            internal.push_back(Lit(idx));
+            expend(n[0], internal);
+            expend(n[1], internal);
+
+            // using push unique ?
+            std::unordered_set<Lit> hash_set; hash_set.reserve(internal.size());
+            for (Lit lit : internal) {
+                hash_set.insert(lit);
             }
-            for (Lit i : inputs) {
-                assert(_gates[i] == (Gate *)01);
+            std::vector<Lit> inputs; inputs.reserve(internal.size() + 1);
+            for (Lit i : internal) {
+                Assert(is_logic(i));
+                Lit fanin0 = _nodes[i.id()][0];
+                Lit fanin1 = _nodes[i.id()][1];
+                if (!hash_set.contains(fanin0)) {
+                    inputs.push_back(fanin0);
+                    _gates[fanin0] = (Gate *)01;
+                }
+                if (!hash_set.contains(fanin1)) {
+                    inputs.push_back(fanin1);
+                    _gates[fanin1] = (Gate *)01;
+                }
             }
-            Gate *gate = new Gate(std::move(inputs));
-            _gates[idx] = gate;
+            _gates[idx] = new Gate(std::move(inputs));
         }
     }
 
-    int num_gate = 0;
-    std::map<int, int> size2num;
-    // int id = 0;
-    for (Gate *gate : _gates) {
-        if (gate && gate != (Gate *)01) {
-            ++num_gate;
-            ++size2num[gate->size()];
-            // std::cout << id << "\n";
+    if (config().verbose) {
+        std::println(std::cout, "Simple gate stats:");
+        uint num_gate[MAX_GATE_SIZE + 1] = {0};
+        for (Gate *gate : _gates) {
+            if (gate && gate != (Gate *)01) {
+                ++num_gate[gate->size()];
+            }
         }
-        // ++id;
-    }
-
-    for (CREF [size, number] : size2num) {
-        LOG(std::cout, "  gate size {} : {}", size, number);
+        for (uint size = 2; size <= max_size; ++size) {
+            if (uint number = num_gate[size]; number) {
+                std::println(std::cout, "  gate size {} : {}", size, number);
+            }
+        }
     }
 
     _timer.stop("create_gate");
@@ -712,9 +727,84 @@ mapper::run_lut_mapping(const Config &cfg)
         _best_cuts[idx] = cut;
     }
 
-    // create simple gates boundry
+    // create simple gates boundary
     if (run_agdmap()) {
         create_simple_gates(8);
+        std::ofstream os("gate.v");
+        os << "module top (";
+        for (int i = 0; i != _pi_names.size(); ++i) {
+            os << "n" << (_pi[i]) << ", ";
+        }
+        for (int i = 0; i != _po_names.size(); ++i) {
+            os << "n" << (_po[i]) << ", ";
+        }
+        os << ");\n";
+        os << "input ";
+        for (int i = 0; i != _pi_names.size(); ++i) {
+            os << "n" << (_pi[i]);
+            if (i == _pi_names.size() - 1) {
+                os << ";\n";
+            } else {
+                os << ", ";
+            }
+        }
+        os << "output ";
+        for (int i = 0; i != _po_names.size(); ++i) {
+            os << "n" << (_po[i]);
+            if (i == _po_names.size() - 1) {
+                os << ";\n";
+            } else {
+                os << ", ";
+            }
+        }
+
+        os << "wire ";
+        uint id = 0;
+        bool first = true;
+        for (Gate *g : _gates) {
+            if (g && g != (Gate *)01) {
+                if (first) {
+                    os << "n" + std::to_string(id);
+                    first = false;
+                } else {
+                    os << ", n" + std::to_string(id);
+                }
+            }
+            ++id;
+        }
+        os << ";\n";
+
+        id = 0;
+        for (Gate *g : _gates) {
+            if (g && g != (Gate *)01) {
+                const auto &inputs = g->inputs();
+                os << "assign n" << id << " = ";
+                bool first = true;
+                for (Lit lit : inputs) {
+                    if (!first) {
+                       os << " & ";
+                    }
+                    first = false;
+                    if (lit.sign()) {
+                        os << "~";
+                    }
+                    os << "n" << lit.id() << " ";
+                }
+                os << ";\n";
+            }
+            ++id;
+        }
+
+        for (int i = 0; i != _po.size(); ++i) {
+            os << "assign n" << (_po[i]) << " = ";
+            const auto &n = _nodes[_po[i]];
+            if (n[0].sign()) {
+                os << "~";
+            }
+            os << "n" << n[0].id() << ";\n";
+        }
+        os << "endmodule\n";
+        os.close();
     }
 
     // according to run-time parameters, choose mapping algorithm

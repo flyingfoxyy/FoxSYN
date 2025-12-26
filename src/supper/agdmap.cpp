@@ -15,17 +15,6 @@
 #include "macros.hpp"
 #include "map.hpp"
 
-// int main() {
-//     // C++23 语法
-//     auto factorial = [](this auto self, int n) -> int {
-//         if (n <= 1) return 1;
-//         return n * self(n - 1);
-//     };
-
-//     std::cout << "5! = " << factorial(5) << std::endl;
-//     return 0;
-// }
-
 namespace fox::supper {
 constexpr uint kMaxBinNum = MAX_GATE_SIZE + 7;
 
@@ -42,6 +31,31 @@ static bool sort_cut_leaves(Cut *cut) {
     return false;
 }
 
+template <std::size_t K>
+struct BoolFunc {
+    Cut  icut    { };
+    uint vars[K] {0};
+
+    BoolFunc() { icut.ms = sizeof(Cut) + sizeof(uint) * K; }
+
+    BoolFunc &operator&=(Cut *rhs) {
+        Cut *reg_ptr = regular(rhs);
+        if (icut.size == 0) {
+            icut = *reg_ptr;
+            if (is_signed(rhs)) {
+                icut.fid = ~icut.fid;
+            }
+            return *this;
+        }
+        BoolFunc res;
+        uint *end = std::set_union(icut.begin(), icut.end(), reg_ptr->begin(), reg_ptr->end(), res.icut.begin());
+        res.icut.size = end - res.icut.begin();
+        res.icut.fid = Cut::compute_truth(&res.icut, &icut, rhs, 0);
+        return *this = res;
+    }
+
+};
+
 struct Bin {
     union {
         uint     sign {0};
@@ -51,17 +65,18 @@ struct Bin {
     uint8    numl  {0};                   // leaf size
     uint8    cuts  [AGD_MAX_LUT_SIZE]{0}; // the idx of cut, in _sub_cuts vector
     uint8    numc  {0};                   // sub-cuts number
-    uint8    bins  [AGD_MAX_LUT_SIZE]{0}; // the decomposition-tree inputs bins
+    uint8    ibins [AGD_MAX_LUT_SIZE]{0}; // the decomposition-tree inputs bins
     uint8    numb  {0};                   // input bins number
+    uint8    inv   {0};                   // root is inverted or not
 
     Bin() {}
 
     Inline uint  *leaf_begin() { return leaves;        }
     Inline uint8 *cut_begin () { return cuts;          }
-    Inline uint8 *bin_begin () { return bins;          }
+    Inline uint8 *bin_begin () { return ibins;         }
     Inline uint  *leaf_end  () { return leaves + numl; }
     Inline uint8 *cut_end   () { return cuts   + numc; }
-    Inline uint8 *bin_end   () { return bins   + numb; }
+    Inline uint8 *bin_end   () { return ibins  + numb; }
 
     Inline bool full(uint k) const {
         Assert (numl + numb  <= k);
@@ -90,7 +105,7 @@ struct Bin {
     // Connect bin to this bin's free port
     // offset <---> _bins + offset
     Inline void add_bin_conn(uint8 offset) {
-        bins[numb++] = offset;
+        ibins[numb++] = offset;
     }
 };
 
@@ -103,7 +118,7 @@ class agd_manager {
     CutCost       &_cost;
 
     std::vector<Cut *> _sub_cuts;
-    // TODO: optmize here
+    // TODO: optimize here
     Lit _cut_roots[MAX_GATE_SIZE]{Lit(0, 0)}; // indexed by cut idx
 
     //mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
@@ -139,16 +154,14 @@ class agd_manager {
         _cost.area = _num;
         _cost.edge = num_edge;
 
-        const size_t mem_size = sizeof(Cut) * _num + sizeof(uint) * (int)num_edge;
-        Cut  *mem = (Cut  *)std::calloc(1, mem_size);
+        uint  len = sizeof(Cut) * _num + sizeof(uint) * (int)num_edge;
+        Cut  *mem = (Cut  *)std::calloc(1, len);
         char *ptr = (char *)mem;
-        char *end = ptr + mem_size;
-
-        std::vector<kCut<AGD_MAX_LUT_SIZE>> sub_cuts; sub_cuts.reserve(AGD_MAX_LUT_SIZE);
+        char *end = ptr + len;
 
         uint num_virtual = 0;
 
-        std::function<uint(Bin &)> gen_cut_fn = [&](Bin &bin) -> uint {
+        auto gen_cut_fn = [&](this auto self, agd_manager &agd_mgr, Bin &bin) -> uint {
             uint ms  = Cut::bytes_needed<Cut::data_t::KCUT>(bin.num_port());
             Cut *cut = (Cut *)ptr;
             ptr     += ms;
@@ -162,46 +175,62 @@ class agd_manager {
                 cut->add_leaf(*it);
             }
             for (auto it = bin.bin_begin(); it != bin.bin_end(); ++it) {
-                const uint root = gen_cut_fn(_bins[*it]);
-                cut->add_leaf(root);
+                const uint root_id = self(agd_mgr, agd_mgr._bins[*it]);
+                cut->add_leaf(root_id);
             }
             cut->ms = 0;
 
             // Make sure leaves are ordered.
             sort_cut_leaves(cut);
 
+            // There is only one cut for this bin, then the cut root shall be the bin root. (existing logic node)
             if (bin.numc == 1 && bin.numb == 0) {
-                const uint root_id = _cut_roots[bin.cuts[0]].id(); Assert(root_id < VID);
+                const Lit  root_lit = agd_mgr._cut_roots[bin.cuts[0]];
+                const uint root_id  = root_lit.id(); Assert(root_id < VID);
                 bin.root = root_id;
+                bin.inv  = root_lit.sign();
             } else {
                 ++num_virtual;
-                const uint diff = reinterpret_cast<char *>(cut) - reinterpret_cast<char *>(mem); Assert(diff < mem_size);
+                const uint diff = reinterpret_cast<char *>(cut) - reinterpret_cast<char *>(mem); Assert(diff < len);
                 bin.root = AGD_MAX_ID + diff;
             }
 
             Assert(cut->size <= AGD_MAX_LUT_SIZE);
 
             // Calculate the cut truth
-            sub_cuts.clear();
-            for (uint i = 0; i != bin.numc; ++i) {
-                const uint8 cut_idx = bin.cuts[i];
-                sub_cuts.emplace_back(_sub_cuts[cut_idx]);
-                sub_cuts.back().inverted = _cut_roots[cut_idx].sign();
+            // For each sub-cut, gather its kCut representation, combine them one by one and get the truth.
+            // sub_cuts.clear();
+            BoolFunc<AGD_MAX_LUT_SIZE> bf;
+            for (auto it = bin.cut_begin(); it != bin.cut_end(); ++it) {
+                uint cut_idx = *it;
+                Cut *icut = agd_mgr._sub_cuts[cut_idx];
+                bool sign = agd_mgr._cut_roots[cut_idx].sign();
+                bf &= sign_cond(icut, sign);
             }
-            for (uint i = 0; i != bin.numb; ++i) {
-                const uint root_id = _bins[bin.bins[i]].root;
-                sub_cuts.emplace_back(kCut<AGD_MAX_LUT_SIZE>(root_id));
-            }
-            word truth = compute_cut_truth<AGD_MAX_LUT_SIZE>(sub_cuts);
-            cut->fid = truth;
 
+            for (uint i = 0; i != bin.numb; ++i) {
+                const Bin &fanin = agd_mgr._bins[bin.ibins[i]];
+                kCut<1> tmp_cut;
+                tmp_cut.icut.size = 1;
+                tmp_cut.leaves[0] = fanin.root;
+                tmp_cut.icut.fid  = fanin.inv ? 0x5555555555555555 : 0xAAAAAAAAAAAAAAAA;
+                Cut *cut = (Cut *)&tmp_cut;
+                bf &= cut;
+            }
+            cut->fid = bf.icut.fid;
+            // Verify
+            if constexpr (kDebugBuild) {
+                ForEachCutLeaf(cut) {
+                    Assert(leaf == bf.vars[i]);
+                }
+            }
             return bin.root;
         };
 
-        uint rid  = gen_cut_fn(*root_bin); Assert(ptr == end && rid == AGD_MAX_ID);
+        uint rid  = gen_cut_fn(*this, *root_bin); Assert(ptr == end && rid == AGD_MAX_ID);
         mem->idx  = rid >= AGD_MAX_ID ? num_virtual - 1 : num_virtual;
         mem->head = 1;
-        mem->ms   = mem_size;
+        mem->ms   = len;
         return mem;
     }
 
@@ -373,14 +402,16 @@ agd_decompose(mapper &mgr, uint id, Cut *wcut, CutCost &cost) {
         cost.edge = wcut->size;
         // Compute the cut truth
         Gate *gate = mgr.gate(id);
-        std::vector<kCut<AGD_MAX_LUT_SIZE>> kcuts; kcuts.reserve(wcut->num_sub_cuts());
+        // std::vector<kCut<AGD_MAX_LUT_SIZE>> kcuts; kcuts.reserve(wcut->num_sub_cuts());
+        BoolFunc<AGD_MAX_LUT_SIZE> bf;
         for (uint i = 0; i != wcut->num_sub_cuts(); ++i) {
             uint  cut_idx = wcut->get_sub_cut(i);
             Lit   gin     = gate->input(i);
             Cut  *sub_cut = mgr.cut_set(gin)[cut_idx];
-            kcuts.emplace_back(kCut<AGD_MAX_LUT_SIZE>(sign_cond(sub_cut, gin.sign())));
+            bf &= sign_cond(sub_cut, gin.sign());
+            // kcuts.emplace_back(kCut<AGD_MAX_LUT_SIZE>(sign_cond(sub_cut, gin.sign())));
         }
-        cut->fid = compute_cut_truth(kcuts);
+        cut->fid = bf.icut.fid;
         return cut;
     }
 

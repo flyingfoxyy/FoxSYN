@@ -93,6 +93,7 @@ public:
             // TODO: using self-implemented insert sorting for better performance
             std::ranges::sort(vec, _cmp);
             if (vec.size() > _capacity[item->size]) {
+                // TODO: Cut::dealloc(vec.back());
                 // TODO: using self-implemented vector, pop_back is slow. --size is ok
                 vec.pop_back();
             }
@@ -264,10 +265,6 @@ public:
 #define ForEachGraphLogicNode(mgr)                                         \
     for (int idx = (mgr).logic_begin(); idx != (mgr).logic_end(); ++idx)   \
         if (!(mgr)[idx].is_logic()) [[unlikely]] {} else
-
-#define ForEachGraphLut(mgr)                                               \
-    for (int idx = (mgr).logic_begin(); idx != (mgr).logic_end(); ++idx)   \
-        if ((mgr).num_est_ref(idx))
 
 #define ForEachGraphNodeRev(mgr)                                           \
     for (int idx = (mgr).rbegin(); idx != (mgr).rend(); --idx)             \
@@ -453,6 +450,20 @@ public:
     }
 
     ~mapper() {
+        if (run_agdmap()) {
+            ForEachGraphLogicNode(*this) {
+                auto &cut_set = _cuts[idx];
+                for (Cut *cut : cut_set) {
+                    Cut::dealloc(cut);
+                }
+            }
+
+            for (Gate *gate : _gates) {
+                if (gate && gate != (Gate *)01)
+                    delete gate;
+            }
+        }
+
         for (Cut *cut : _best_cuts) {
             Cut::dealloc(cut);
         }
@@ -499,23 +510,11 @@ public:
         return n >= VID ? _virual_area[n - VID] : _area[n];
     }
 
-    // template<Indexable T>
-    // Inline Area area(T n) const {
-    //     Assert(is_logic(n) || is_pi(n));
-    //     return n >= VID ? _virual_area[n - VID] : _area[n];
-    // }
-
     template<Indexable T>
     Inline Edge &edge(T n) {
         Assert(is_logic(n) || is_pi(n));
         return n >= VID ? _virual_edge[n - VID] : _edge[n];
     }
-
-    // template<Indexable T>
-    // Inline Edge edge(T n) const {
-    //     Assert(is_logic(n) || is_pi(n));
-    //     return n >= VID ? _virual_edge[n - VID] : _edge[n];
-    // }
 
     template<Indexable T> Inline Time &arrival(T n) { return _arrival[n]; }
     template<Indexable T> Inline Time &required(T n) { return _required[n]; }
@@ -667,13 +666,13 @@ class CutEnumerator {
                         uint new_id = id_start + cnt++;
                         cut->change_leaf(i, new_id);
                         // Register new_id's cut/area/edge info
-                        const CutCost cost = _mgr.compute_cut_cost(algo, leaf_cut);
+                        CutCost cost = _mgr.compute_cut_cost(algo, leaf_cut);
                         _mgr.register_virtual_cut (new_id, leaf_cut);
                         _mgr.register_virtual_area(new_id, cost.area);
                         _mgr.register_virtual_edge(new_id, cost.edge);
                     }
                 }
-                // Verifiy leaves order
+                // Verify leaves order
                 if constexpr (kDebugBuild) {
                     uint prev_leaf = 0;
                     ForEachCutLeaf(cut) {
@@ -748,7 +747,7 @@ class CutEnumerator {
         std::swap(kcuts, saved);
     }
 
-    void kcut_cut_enum(uint id) {
+    void enumerate_kcut(uint id) {
         const Config &cfg = _mgr.config();
 
         Lit f0 = _mgr[id][0];
@@ -809,7 +808,7 @@ class CutEnumerator {
     }
 
     // TODO: when gate size <= 8, using stack memory to allocate wide-cut.
-    void wide_cut_enum(uint id) {
+    void enumerate_wcut(uint id) {
         const Config &cfg = _mgr.config();
 
         std::function<bool(Cut *, Cut *)> cmp;
@@ -868,12 +867,11 @@ class CutEnumerator {
                 for (Cut *cut : curr_cuts)
                     Cut::dealloc(cut);
             }
-
             curr_cuts.clear();
             prune.get(curr_cuts);
-    
-            if (++idx == sz)
+            if (++idx == sz) {
                 break;
+            }
         } // end while
 
         // Structure-based pruning
@@ -936,13 +934,13 @@ public:
         if (mgr.run_agdmap()) {
             if (Gate *g = mgr.gate(id); g) {
                 if (g->size() > 2) {
-                    wide_cut_enum(id);
+                    enumerate_wcut(id);
                 } else {
-                    kcut_cut_enum(id);
+                    enumerate_kcut(id);
                 }
             }
         } else {
-            kcut_cut_enum(id);
+            enumerate_kcut(id);
         }
     }
 };
@@ -1104,7 +1102,9 @@ public:
     }
 
     ~MappingPass() {
-        _mgr.free_cuts();
+        if (!_mgr.run_agdmap()) { // if agdmap is running, some non-best cuts are referenced by fanouts' best cuts.
+            _mgr.free_cuts();
+        }
         _mgr.num_area()       = 0;
         _mgr.num_edge()       = 0;
         _mgr.num_merged()     = 0;

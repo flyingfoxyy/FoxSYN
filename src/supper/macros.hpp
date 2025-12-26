@@ -98,13 +98,6 @@ Inline uint get_signature(uint x) { if constexpr (BITNUM & (BITNUM - 1)) return 
 #define INFO3  "Ex LUT {:>6}   Edge {:>6}   Time {}"
 
 // ========================================================================
-// Shorthands
-// ========================================================================
-#define LOG    std::println
-#define CREF   const auto &
-#define REF    auto &
-
-// ========================================================================
 // Shorthands for time measurement
 // ========================================================================
 #define TIME_START(name)                                        \
