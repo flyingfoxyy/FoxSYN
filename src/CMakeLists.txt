@@ -1,10 +1,36 @@
 cmake_minimum_required(VERSION 3.10)
 
+# Add option to enable clang-20 compiler
+option(USE_CLANG20 "Use clang-20 compiler" OFF)
+
+# Set up compiler based on option
+if(USE_CLANG20)
+    # Check if clang-20 is available
+    find_program(CLANG20_COMPILER "clang-20")
+    find_program(CLANGXX20_COMPILER "clang++-20")
+    
+    if(CLANG20_COMPILER AND CLANGXX20_COMPILER)
+        message(STATUS "Using clang-20 compiler: ${CLANG20_COMPILER}")
+        message(STATUS "Using clang++-20 compiler: ${CLANGXX20_COMPILER}")
+        
+        set(CMAKE_C_COMPILER "${CLANG20_COMPILER}")
+        set(CMAKE_CXX_COMPILER "${CLANGXX20_COMPILER}")
+    else()
+        message(FATAL_ERROR "clang-20 and/or clang++-20 not found, but USE_CLANG20 is ON")
+    endif()
+endif()
+
 project(FoxSYN)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Add clang-specific options when using clang-20
+if(USE_CLANG20)
+    add_compile_options(-fexperimental-library)
+    message(STATUS "Adding clang-20 specific compile options")
+endif()
 
 add_compile_options(-Wno-unused-variable)
 
