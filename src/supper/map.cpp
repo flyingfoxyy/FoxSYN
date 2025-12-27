@@ -20,8 +20,8 @@
 using namespace abc;
 
 namespace fox::supper {
-template <typename  T, prune_mode_t M> void
-Prune<T, M>::print() const
+template <typename  T, prune_mode_t M, typename Dealloc> void
+Prune<T, M, Dealloc>::print() const
 {
     auto &ss = std::cout;
     ss << "Prune stats:\n";
@@ -536,7 +536,7 @@ create_lut_obj_rec(
 
     word truth = 0ul;
     if (use_cut_truth)
-        truth = cut->fid;
+        truth = cut->fid();
     else
         truth = mgr.compute_truth(cut, id);
 
@@ -708,8 +708,8 @@ mapper::run_lut_mapping(const Config &cfg)
             Cut *cut        = reinterpret_cast<Cut *>(p);
             cut->sign       = SIGNATURE(id);
             cut->size       = 1;
-            cut->fid        = 0xAAAAAAAAAAAAAAAA;
             cut->begin()[0] = id;
+            cut->set_fid(0xAAAAAAAAAAAAAAAA);
             _cuts[id].push_back(cut);
             p += kTrivCutMemSize;
         }

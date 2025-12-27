@@ -26,7 +26,7 @@ struct cut_data_w {
     }
 };
 
-class Cut {
+class alignas(4) Cut {
 public:
     static constexpr std::size_t BIT_NUM_SIZE = 7;
     static constexpr std::size_t MAX_CUT_SIZE = (1 << BIT_NUM_SIZE) - 1;
@@ -44,13 +44,14 @@ public:
     uint      head :  1; // the first cut in a cut-array
     uint      dt   :  2; // data type
     uint      idx  : 10; // cut id, i.e., its position in cut list.
-    uint      ms   : 11; // the number of bytes pointed by this cut
-    word      fid;       // truth table (num. var <= 5) or functional id
+    uint      ms   : 10; // the number of bytes pointed by this cut
+    uint      fid_h {0};
+    uint      fid_l {0};
 private:
     uint      data[0];   // cut-data. Leaves or extended data.
 public:
 
-    Cut() : sign(0), size(0), crs(0), tail(0), head(0), dt(0), idx(0), ms(0), fid(0) {}
+    Cut() : sign(0), size(0), crs(0), tail(0), head(0), dt(0), idx(0), ms(0) {}
 
     Inline Cut &operator=(const Cut &cut) {
         if (&cut == this)
@@ -61,6 +62,22 @@ public:
         std::memcpy((void *)this, &cut, cut.num_bytes());
         ms = ms_tmp; // restore ms
         return *this;
+    }
+
+    Inline word fid() const {
+        word result;
+        static_assert(sizeof(result) == sizeof(fid_h) + sizeof(fid_l));
+        std::memcpy(&result, &fid_h, sizeof(result));
+        return result;
+    }
+
+    Inline void set_fid(word value) {
+        std::memcpy(&fid_h, &value, sizeof(value));
+    }
+
+    Inline void flop_fid() {
+        fid_h = ~fid_h;
+        fid_l = ~fid_l;
     }
 
     /**
@@ -89,7 +106,7 @@ public:
     }
 
     /**
-     * @brief Get the number of bytes used by the cut.
+     * @brief Get the number of bytes needed by the cut.
      */
     Inline std::size_t num_bytes() const {
         if (dt == data_t::KCUT)

@@ -90,8 +90,9 @@ class MffcInfo;
 //==----------------------------------------------------------------==//
 //                              Cut class                             //
 //==----------------------------------------------------------------==//
-struct Cut
+class Cut
 {
+public:
     static LutCostLib *s_lut_cost_lib;
 
     word   truth     ; // truth table

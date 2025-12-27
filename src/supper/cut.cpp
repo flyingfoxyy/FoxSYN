@@ -59,14 +59,14 @@ Cut::compute_truth(const Cut *cut, const Cut *lhs, const Cut *rhs, int oper)
                 continue;
             // assert(cut->leaves[i]->id() == sub->leaves[k]->id());
             if (k < i)
-                abc::Abc_TtSwapVars(pTruth, cut->size, k, i);
+                Abc_TtSwapVars(pTruth, cut->size, k, i);
             k--;
         }
         assert( k == -1 );
     };
 
-    word truth0 = lhs->fid;
-    word truth1 = rhs->fid;
+    word truth0 = lhs->fid();
+    word truth1 = rhs->fid();
 
     tt_expand(&truth0, lhs, cut);
     tt_expand(&truth1, rhs, cut);

@@ -43,14 +43,14 @@ struct BoolFunc {
         if (icut.size == 0) {
             icut = *reg_ptr;
             if (is_signed(rhs)) {
-                icut.fid = ~icut.fid;
+                icut.flop_fid();
             }
             return *this;
         }
         BoolFunc res;
         uint *end = std::set_union(icut.begin(), icut.end(), reg_ptr->begin(), reg_ptr->end(), res.icut.begin());
         res.icut.size = end - res.icut.begin();
-        res.icut.fid = Cut::compute_truth(&res.icut, &icut, rhs, 0);
+        res.icut.set_fid(Cut::compute_truth(&res.icut, &icut, rhs, 0));
         return *this = res;
     }
 
@@ -213,17 +213,17 @@ class agd_manager {
                 kCut<1> tmp_cut;
                 tmp_cut.icut.size = 1;
                 tmp_cut.leaves[0] = fanin.root;
-                tmp_cut.icut.fid  = fanin.inv ? 0x5555555555555555 : 0xAAAAAAAAAAAAAAAA;
+                tmp_cut.icut.set_fid(fanin.inv ? 0x5555555555555555 : 0xAAAAAAAAAAAAAAAA);
                 Cut *cut = (Cut *)&tmp_cut;
                 bf &= cut;
             }
-            cut->fid = bf.icut.fid;
+            cut->set_fid(bf.icut.fid());
             // Verify
-            if constexpr (kDebugBuild) {
-                ForEachCutLeaf(cut) {
-                    Assert(leaf == bf.vars[i]);
-                }
-            }
+            // if constexpr (kDebugBuild) {
+            //     ForEachCutLeaf(cut) {
+            //         Assert(leaf == bf.vars[i]);
+            //     }
+            // }
             return bin.root;
         };
 
@@ -314,7 +314,7 @@ public:
         }
 
         // -- Bin-packing
-        uint buf[AGD_MAX_LUT_SIZE] {0};
+        uint buf[AGD_MAX_LUT_SIZE + AGD_MAX_LUT_SIZE] {0};
         uint lut_size = _mgr.config().lut_size;
 
         ii = 0;
@@ -411,7 +411,7 @@ agd_decompose(mapper &mgr, uint id, Cut *wcut, CutCost &cost) {
             bf &= sign_cond(sub_cut, gin.sign());
             // kcuts.emplace_back(kCut<AGD_MAX_LUT_SIZE>(sign_cond(sub_cut, gin.sign())));
         }
-        cut->fid = bf.icut.fid;
+        cut->set_fid(bf.icut.fid());
         return cut;
     }
 

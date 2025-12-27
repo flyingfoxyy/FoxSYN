@@ -41,14 +41,18 @@ enum class prune_mode_t {
     Separated
 };
 
+struct noop_dealloc {
+    template<typename U>
+    void operator()(U) const noexcept {} 
+};
 
-template <typename  T, prune_mode_t M>
+template <typename  T, prune_mode_t M, typename Dealloc = noop_dealloc>
 class Prune {
-    std::vector<std::vector<T>> _separated_set;
-    std::vector<T>              _unified_set;
-    std::vector<uint>           _capacity;
-    std::function<bool(T, T)>   _cmp;
-    Area                        _diff;
+    std::vector<std::vector<T>>    _separated_set;
+    std::vector<T>                 _unified_set;
+    std::vector<uint>              _capacity;
+    std::function<bool(T, T)>      _cmp;
+    Area                           _diff;
 
 public:
     Prune(std::function<bool(T, T)> &&cmp) : _cmp(cmp), _diff(1.0) {}
@@ -93,8 +97,9 @@ public:
             // TODO: using self-implemented insert sorting for better performance
             std::ranges::sort(vec, _cmp);
             if (vec.size() > _capacity[item->size]) {
-                // TODO: Cut::dealloc(vec.back());
-                // TODO: using self-implemented vector, pop_back is slow. --size is ok
+                if (std::is_pointer_v<T>) {
+                    Dealloc{}(vec.back());
+                }
                 vec.pop_back();
             }
         }
@@ -135,6 +140,8 @@ public:
                 }
             }
             std::ranges::reverse(set);
+        } else {
+            Assert(0);
         }
     }
 
@@ -710,7 +717,7 @@ class CutEnumerator {
         // create trivial cut
         Cut *triv_cut = Cut::alloc_triv(id);
         triv_cut->idx = cut_set.size();
-        triv_cut->fid = 0xAAAAAAAAAAAAAAAA;
+        triv_cut->set_fid(0xAAAAAAAAAAAAAAAA);
         if constexpr (algo == CutCostAlgo::PRAETOR) {
 
         }
@@ -775,7 +782,7 @@ class CutEnumerator {
             Cut *cut = Cut::alloc_kcut(buffer, end, c0->sign | c1->sign);
             kcuts.push_back(cut);
             word truth = Cut::compute_truth(cut, sign_cond(c0, f0.sign()), sign_cond(c1, f1.sign()));
-            cut->fid = truth;
+            cut->set_fid(truth);
         }} // end merge cuts
 
         _mgr.num_k_feasible() += kcuts.size();
@@ -831,7 +838,9 @@ class CutEnumerator {
         uint  buffer[Cut::MAX_CUT_SIZE];
 
         std::vector<Cut *> curr_cuts(_mgr.cut_set(gate->input(0)));
-        Prune<Cut *, prune_mode_t::Separated> prune(std::move(cmp));
+
+        auto free_lambda = [](Cut *cut) { Cut::dealloc(cut); };
+        Prune<Cut *, prune_mode_t::Separated, decltype(free_lambda)> prune(std::move(cmp));
 
         while (true) {
             prune.reset((idx + 1) * cfg.lut_size, 4);

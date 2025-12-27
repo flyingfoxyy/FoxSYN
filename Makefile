@@ -13,6 +13,12 @@ debug:
 	(cd debug && cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON ../src) && \
 	(cd debug && make -j8)
 
+# ASan
+asan:
+	@mkdir -p release && \
+	(cd release && cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_FLAGS="-fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer" ../src) && \
+	(cd release && make -j8)
+
 clean:
 	@rm -rf release debug
 
