@@ -979,8 +979,9 @@ CutEnumerator<algo>::enumerate_kcut(uint id) {
     
     std::vector<Cut *> kcuts; kcuts.reserve(num_pair / 2);
 
-    kcut_t cut_pool[MAX_COMBINE_NUM + 1]; // +1 for the last cut leaves overflow.
-    uint   buffer[MAX_LUT_SIZE << 1] {0};
+    constexpr uint kPoolCutNum = 65;
+    kcut_t cut_pool[kPoolCutNum];
+    uint buffer[MAX_LUT_SIZE << 1];
 
     uint k  = cfg.cut_size;
     uint ix = 0;
@@ -994,10 +995,8 @@ CutEnumerator<algo>::enumerate_kcut(uint id) {
         if (end - buffer > k) {
             continue;
         }
-        Cut *cut = reinterpret_cast<Cut *>(&cut_pool[ix++]);
-        Assert(cut->ms == 0);
-        // Setup this cut.
-        Cut::alloc_kcut(buffer, end, c0->sign | c1->sign, cut);
+        Cut *cut = Cut::alloc_kcut(buffer, end, c0->sign | c1->sign,
+                                   ix == kPoolCutNum ? nullptr : reinterpret_cast<Cut *>(&cut_pool[ix++]));
         cut->set_fid(Cut::compute_truth(cut, sign_cond(c0, f0.sign()), sign_cond(c1, f1.sign())));
         kcuts.push_back(cut);
     }} // end merge cuts
@@ -1015,7 +1014,6 @@ CutEnumerator<algo>::enumerate_kcut(uint id) {
     std::vector<CutCost> costs; costs.resize(kcuts.size());
     ix = 0;
     for (Cut *cut: kcuts) {
-        Assert(cut->ms == 0);
         CutCost &cost = costs[ix];
         cost = _mgr.compute_cut_cost(algo, cut);
         cost.idx = ix++;
@@ -1028,7 +1026,7 @@ CutEnumerator<algo>::enumerate_kcut(uint id) {
     std::vector<Cut *> &cut_set = _mgr.cut_set(id);
     cut_set.reserve(kcuts.size() + 1); // +1 for trivial cut
     for (Cut *cut : kcuts) {
-        cut_set.push_back(Cut::copy(cut));
+        cut_set.push_back(cut->ms ? cut : Cut::copy(cut));
     }
 
     // Create trivial cut, set the area/edge info for gate.

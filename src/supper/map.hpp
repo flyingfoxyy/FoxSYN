@@ -196,7 +196,6 @@ public:
 
     bool area_mode()  const { return opt_target == target_t::AREA;  }
     bool delay_mode() const { return opt_target == target_t::DELAY; }
-    // bool edge_mode()  const { return opt_target == target_t::EDGE;  }
 };
 
 // ========================================================================
