@@ -2,6 +2,7 @@ add_library(supper
     cut.cpp
     prune.cpp
     map.cpp
+    graph.cpp
     agdmap.cpp
 )
 
