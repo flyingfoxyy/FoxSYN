@@ -27,9 +27,9 @@
 
 #include "basic.hpp"
 
-#include "prune.hpp"
 #include "cut.hpp"
 #include "agdmap.hpp"
+
 namespace abc {
     typedef struct Abc_Ntk_t_ Abc_Ntk_t;
 }
@@ -381,12 +381,12 @@ public:
         if (Cut *&best = _best_cuts[n]; best) {
             if (best->ms < cut->num_bytes()) {
                 Cut::dealloc(best);
-                best = Cut::copy(*cut);
+                best = Cut::copy(cut);
             } else {
                 *best = *cut; // copy
             }
         } else {
-            best = Cut::copy(*cut);
+            best = Cut::copy(cut);
         }
     }
 
@@ -488,6 +488,8 @@ class CutEnumerator {
 
     // TODO: when gate size <= 8, using stack memory to allocate wide-cut.
     void enumerate_wcut(uint id);
+
+    using kcut_t = kCut<MAX_LUT_SIZE>;
 
 public:
     CutEnumerator(mapper &mgr, uint id) : _mgr(mgr), _cfg(mgr.config())

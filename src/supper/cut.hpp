@@ -149,24 +149,29 @@ public:
     Inline bool is_kcut() const { return dt == data_t::KCUT; }
 
     // For cut copy
-    static Inline Cut *copy(const Cut &cut) {
-        const std::size_t num_bytes = cut.num_bytes();
+    static Inline Cut *copy(const Cut *cut) {
+        uint num_bytes = cut->num_bytes();
         void *ptr = std::malloc(num_bytes);
-        Cut *pcut = (Cut *)std::memcpy(ptr, &cut, num_bytes);
-        pcut->ms = num_bytes; // restore ms
+        Cut *pcut = (Cut *)std::memcpy(ptr, cut, num_bytes);
+        pcut->ms  = num_bytes;
         return pcut;
     }
 
-    // Allocate a k-cut with given cut leaves
-    static Inline Cut *alloc_kcut(uint *begin, uint *end, Sign s, uint crs = 0) {
-        const size_t num_bytes = bytes_needed<data_t::KCUT>(end - begin);
-        Cut *ptr  = static_cast<Cut *>(std::calloc(1, num_bytes));
+    // Allocate a k-cut with given cut leaves. For general k-cut enumeration.
+    static Inline Cut *alloc_kcut(uint *begin, uint *end, Sign s, Cut *cut = nullptr) {
+        Cut *ptr = nullptr;
+        if (cut) {
+            ptr = cut;
+        } else {
+            const size_t num_bytes = bytes_needed<data_t::KCUT>(end - begin);
+            ptr = static_cast<Cut *>(std::calloc(1, num_bytes));
+            ptr->ms = num_bytes;
+        }
         ptr->sign = s;
         ptr->size = end - begin;
-        ptr->crs  = crs;
+        ptr->crs  = 0;
         ptr->dt   = data_t::KCUT;
-        ptr->ms   = num_bytes;
-        std::copy(begin, end, ptr->data);
+        std::memcpy(ptr->data, begin, sizeof(uint) * ptr->size);
         return ptr;
     }
 
@@ -203,7 +208,8 @@ public:
     }
 
     static Inline void dealloc(Cut *cut) {
-        if (cut) [[likely]] {
+        // if ms is 0, this cut does not own a heap memory chunk.
+        if (cut && cut->ms) [[likely]] {
             std::free(cut);
         }
     }
@@ -248,6 +254,10 @@ template <std::size_t K>
 struct kCut {
     Cut  icut      { };
     uint leaves[K] {0};
+
+    Inline void clear() {
+        std::memset(this, 0, sizeof(kCut<K>));
+    }
 };
 
 }

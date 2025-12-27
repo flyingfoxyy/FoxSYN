@@ -1,9 +1,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <fstream>
-#include <iomanip>
 #include <iostream>
-#include <sstream>
 #include <unordered_set>
 #include <vector>
 #include <ctime>
@@ -11,9 +9,11 @@
 #include <map>
 
 #include "base/abc/abc.h"
+
 #include "basic.hpp"
 #include "cut.hpp"
 #include "macros.hpp"
+#include "prune.hpp"
 
 #include "map.hpp"
 
@@ -973,27 +973,33 @@ CutEnumerator<algo>::enumerate_kcut(uint id) {
 
     const std::vector<Cut *> &cuts0 = _mgr.cut_set(f0);
     const std::vector<Cut *> &cuts1 = _mgr.cut_set(f1);
-    const uint k = cfg.cut_size;
 
-    uint  merge_num_upper = cuts0.size() * cuts1.size();
-    uint  buffer[MAX_LUT_SIZE + MAX_LUT_SIZE] {0};
-    uint *end;
+    uint num_pair = cuts0.size() * cuts1.size();
+    _mgr.num_merged() += num_pair;
+    
+    std::vector<Cut *> kcuts; kcuts.reserve(num_pair / 2);
 
-    _mgr.num_merged() += merge_num_upper;
+    kcut_t cut_pool[MAX_COMBINE_NUM + 1]; // +1 for the last cut leaves overflow.
+    uint   buffer[MAX_LUT_SIZE << 1] {0};
 
-    std::vector<Cut *> kcuts; kcuts.reserve(merge_num_upper + 1);
+    uint k  = cfg.cut_size;
+    uint ix = 0;
 
-    for (int i0 = 0; i0 != cuts0.size(); ++i0) { Cut *c0 = cuts0[i0];
-    for (int i1 = 0; i1 != cuts1.size(); ++i1) { Cut *c1 = cuts1[i1];
-        if (c0->size + c1->size > k && popcount(c0->sign | c1->sign) > k)
+    for (uint i0 = 0, num0 = cuts0.size(); i0 != num0; ++i0) { Cut *c0 = cuts0[i0];
+    for (uint i1 = 0, num1 = cuts1.size(); i1 != num1; ++i1) { Cut *c1 = cuts1[i1];
+        if (c0->size + c1->size > k && popcount(c0->sign | c1->sign) > k) {
             continue;
-        if (end = std::set_union(c0->begin(), c0->end(), c1->begin(), c1->end(), buffer); end - buffer > k)
+        }
+        auto end = std::set_union(c0->begin(), c0->end(), c1->begin(), c1->end(), buffer);
+        if (end - buffer > k) {
             continue;
-        Assert(end - buffer <= k);
-        Cut *cut = Cut::alloc_kcut(buffer, end, c0->sign | c1->sign);
+        }
+        Cut *cut = reinterpret_cast<Cut *>(&cut_pool[ix++]);
+        Assert(cut->ms == 0);
+        // Setup this cut.
+        Cut::alloc_kcut(buffer, end, c0->sign | c1->sign, cut);
+        cut->set_fid(Cut::compute_truth(cut, sign_cond(c0, f0.sign()), sign_cond(c1, f1.sign())));
         kcuts.push_back(cut);
-        word truth = Cut::compute_truth(cut, sign_cond(c0, f0.sign()), sign_cond(c1, f1.sign()));
-        cut->set_fid(truth);
     }} // end merge cuts
 
     _mgr.num_k_feasible() += kcuts.size();
@@ -1006,11 +1012,13 @@ CutEnumerator<algo>::enumerate_kcut(uint id) {
     // }
 
     // Calculate the cut cost
-    std::vector<CutCost> costs; costs.reserve(kcuts.size());
-    for (Cut *cut : kcuts) {
-        CutCost cost = _mgr.compute_cut_cost(algo, cut);
-        cost.idx = costs.size();
-        costs.push_back(cost);
+    std::vector<CutCost> costs; costs.resize(kcuts.size());
+    ix = 0;
+    for (Cut *cut: kcuts) {
+        Assert(cut->ms == 0);
+        CutCost &cost = costs[ix];
+        cost = _mgr.compute_cut_cost(algo, cut);
+        cost.idx = ix++;
     }
 
     // Cost-based cut pruning
@@ -1019,7 +1027,9 @@ CutEnumerator<algo>::enumerate_kcut(uint id) {
     // Write kcuts into cut_set of node[id]
     std::vector<Cut *> &cut_set = _mgr.cut_set(id);
     cut_set.reserve(kcuts.size() + 1); // +1 for trivial cut
-    cut_set.insert(cut_set.end(), kcuts.begin(), kcuts.end());
+    for (Cut *cut : kcuts) {
+        cut_set.push_back(Cut::copy(cut));
+    }
 
     // Create trivial cut, set the area/edge info for gate.
     post_enum(id, costs[0]);

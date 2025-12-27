@@ -54,6 +54,7 @@ constexpr bool kDebugBuild = true;
 // Max cut number stored for each gate
 // ========================================================================
 #define MAX_CUT_NUM 16
+#define MAX_COMBINE_NUM (MAX_CUT_NUM + 1) * (MAX_CUT_NUM + 1)
 
 // ========================================================================
 // Enable more debug info
