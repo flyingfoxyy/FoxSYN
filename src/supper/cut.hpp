@@ -33,19 +33,18 @@ public:
         Area  a   ;      // area-cost. Used for wide-cut enumeration on-the-fly pruning
     };
     uint      size :  7; // cut-set size
-    uint      crs  :  1; // compressed leaf array (first leaf -> id, diff21, diff32 ... )
     uint      tail :  1; // the last  cut in a cut-array
     uint      head :  1; // the first cut in a cut-array
     uint      dt   :  2; // data type
     uint      idx  : 10; // cut id, i.e., its position in cut list.
-    uint      ms   : 10; // the number of bytes pointed by this cut
+    uint      ms   : 11; // the number of bytes pointed by this cut
     uint      fid_h {0}; // truth table high part.
     uint      fid_l {0}; // truth table low  part.
 private:
     uint      data[0];   // cut-data. Leaves or extended data.
 public:
 
-    Cut() : sign(0), size(0), crs(0), tail(0), head(0), dt(0), idx(0), ms(0) {}
+    Cut() : sign(0), size(0), tail(0), head(0), dt(0), idx(0), ms(0) {}
 
     Inline Cut &operator=(const Cut &cut) {
         if (&cut == this)
@@ -96,10 +95,7 @@ public:
      * @brief Get the number of bytes needed by the cut.
      */
     Inline std::size_t num_bytes() const {
-        if (dt == data_t::KCUT)
-            return bytes_needed<data_t::KCUT>(size);
-        else
-            return bytes_needed<data_t::WCUT>(size);
+        return dt == data_t::KCUT ? bytes_needed<data_t::KCUT>(size) : bytes_needed<data_t::WCUT>(size);
     }
 
     Inline cut_data_w *wdata() {
@@ -113,34 +109,15 @@ public:
     }
 
     Inline uint *begin() {
-        switch (dt) {
-        case data_t::KCUT:
-            return data;
-        case data_t::WCUT:
-            return wdata()->leaves;
-        }
-        return nullptr;
+        return dt == data_t::KCUT ? data : wdata()->leaves;
     }
 
     Inline const uint *begin() const {
-        switch (dt) {
-        case data_t::KCUT:
-            return data;
-        case data_t::WCUT:
-            return wdata()->leaves;
-        }
-        return nullptr;
+        return dt == data_t::KCUT ? data : wdata()->leaves;
     }
 
-    // TODO: crs, end is unknown
     Inline uint *end() {
-        switch (dt) {
-        case data_t::KCUT:
-            return data + size;
-        case data_t::WCUT:
-            return wdata()->leaves + size;
-        }
-        return nullptr;
+        return dt == data_t::KCUT ? data + size : wdata()->leaves + size;
     }
 
     Inline uint leaf(uint p) const { return begin()[p]; }
@@ -169,7 +146,6 @@ public:
         }
         ptr->sign = s;
         ptr->size = end - begin;
-        ptr->crs  = 0;
         ptr->dt   = data_t::KCUT;
         std::memcpy(ptr->data, begin, sizeof(uint) * ptr->size);
         return ptr;

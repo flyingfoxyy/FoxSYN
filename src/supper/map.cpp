@@ -979,7 +979,7 @@ CutEnumerator<algo>::enumerate_kcut(uint id) {
     
     std::vector<Cut *> kcuts; kcuts.reserve(num_pair / 2);
 
-    constexpr uint kPoolCutNum = 65;
+    constexpr uint kPoolCutNum = 82;
     kcut_t cut_pool[kPoolCutNum];
     uint buffer[MAX_LUT_SIZE << 1];
 
