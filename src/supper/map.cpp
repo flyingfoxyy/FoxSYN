@@ -20,38 +20,6 @@
 using namespace abc;
 
 namespace fox::supper {
-template <typename  T, prune_mode_t M, typename Dealloc> void
-Prune<T, M, Dealloc>::print() const
-{
-    auto &ss = std::cout;
-    ss << "Prune stats:\n";
-    if constexpr (M == prune_mode_t::Unified) {
-        ss << " unified set size : " << _unified_set.size();
-        for (const T &item : _unified_set) {
-            if constexpr (std::is_pointer_v<T>) {
-                ss << "  " << **item << "\n";
-            } else {
-                ss << "  " << *item << "\n";
-            }
-        }
-    } else {
-        ss << " separated set size : " << _separated_set.size() - 1 << "\n";
-        for (int i = 2; i != _separated_set.size(); ++i) {
-            ss << "[" << i << "]\n";
-            for (const T &item : _separated_set[i]) {
-                if constexpr (std::is_pointer_v<T>) {
-                    ss << "  " << **item << "\n";
-                } else {
-                    ss << "  " << *item << "\n";
-                }
-            }
-        }
-    }
-}
-
-template class Prune<Cut *, prune_mode_t::Unified  >;
-template class Prune<Cut *, prune_mode_t::Separated>;
-
 bool
 graph_t::is_topologically_sorted() const
 {
@@ -304,6 +272,58 @@ MappingPass::improve_mapping_exactly(mapper &mgr)
         std::println(std::cout, INFO3, mgr.num_area(), mgr.num_edge(), Timer::formatted_time(cpu_T, 5));
     }
     _mgr.timer().stop("exact_imp");
+}
+
+mapper::mapper(uint max_node_num, uint num_pi, uint num_po) : graph_t(max_node_num, num_pi, num_po)
+{
+    constexpr uint kMax = std::numeric_limits<uint>::max() / 2;
+    if (max_node_num > kMax) [[unlikely]] {
+        std::println("Node number exceeds maximum limit {}, quit.", kMax);
+        std::exit(1);
+    }
+
+    _int_ref .resize(max_node_num, 0);
+    _est_ref .resize(max_node_num, 0);
+    _area    .resize(max_node_num, 0);
+    _edge    .resize(max_node_num, 0);
+    _arrival .resize(max_node_num, 0);
+    _required.resize(max_node_num, kMaxTime);
+    _cuts    .resize(max_node_num, {});
+
+    // Agdmap related initialization
+    _id_counter = VID;
+    _est_ref_agd.set_offset(VID);
+}
+
+mapper::~mapper()
+{
+    if (run_agdmap()) {
+        ForEachGraphLogicNode(*this) {
+            auto &cut_set = _cuts[idx];
+            for (Cut *cut : cut_set) {
+                Cut::dealloc(cut);
+            }
+        }
+
+        for (Gate *gate : _gates) {
+            if (gate && gate != (Gate *)01)
+                delete gate;
+        }
+    }
+
+    for (Cut *cut : _best_cuts) {
+        Cut::dealloc(cut);
+    }
+}
+
+void
+mapper::free_cuts() {
+    ForEachGraphLogicNode(*this) {
+        for (Cut *cut : _cuts[idx]) {
+            Cut::dealloc(cut);
+        }
+        _cuts[idx].clear();
+    }
 }
 
 void
@@ -832,6 +852,303 @@ mapper::run_lut_mapping(const Config &cfg)
     return mapped_g;
 }
 
+template <CutCostAlgo algo> void
+CutEnumerator<algo>::assign_node_id(std::vector<Cut *> &kcuts) {
+    uint num_virtual = 0;
+    for (Cut *kcut : kcuts) {
+        if (kcut->head) {
+            num_virtual += kcut->idx; // overwrite idx later.
+        }
+    }
+
+    uint id_start = _mgr.fetch_free_id(num_virtual);
+    uint cnt = 0;
+
+    for (Cut *kcut : kcuts) {
+        if (!kcut->head)
+            continue;
+        char *base = reinterpret_cast<char *>(kcut);
+        char *end  = base + kcut->ms;
+        std::function<void(Cut *)> visit_cut = [&](Cut *cut) -> void {
+            ForEachCutLeaf(cut) {
+                if (leaf >= AGD_MAX_ID) { // this is a leaf created in decomposition.
+                    char *raw_cut  = base + (leaf - AGD_MAX_ID);
+                    Cut  *leaf_cut = reinterpret_cast<Cut *>(raw_cut);
+                    Assert(raw_cut < end && raw_cut >= base);
+                    Assert(raw_cut + leaf_cut->num_bytes() <= end);
+                    visit_cut(leaf_cut);
+                    // Fetch new id after visiting children. So that the ids are in increasing order.
+                    uint new_id = id_start + cnt++;
+                    cut->change_leaf(i, new_id);
+                    // Register new_id's cut/area/edge info
+                    CutCost cost = _mgr.compute_cut_cost(algo, leaf_cut);
+                    _mgr.register_virtual_cut (new_id, leaf_cut);
+                    _mgr.register_virtual_area(new_id, cost.area);
+                    _mgr.register_virtual_edge(new_id, cost.edge);
+                }
+            }
+            // Verify leaves order
+            if constexpr (kDebugBuild) {
+                uint prev_leaf = 0;
+                ForEachCutLeaf(cut) {
+                    Assert(leaf >= prev_leaf);
+                    prev_leaf = leaf;
+                }
+            }
+        };
+        visit_cut(kcut);
+    }
+
+    Assert(num_virtual == cnt);
+}
+
+template <CutCostAlgo algo> void
+CutEnumerator<algo>::post_enum(uint id, const CutCost &best_cost) {
+    std::vector<Cut *> &cut_set = _mgr.cut_set(id);
+
+    // Set the idx
+    uint idx = 0;
+    for (Cut *cut : cut_set) {
+        cut->idx = idx++;
+    }
+
+    // Save the best cut
+    _mgr.set_best_cut(id, cut_set.front());
+
+    // Set the node area/edge/arr info
+    const float ratio = 1.0 / std::max(1.0f, float(_mgr.num_est_ref(id)));
+    _mgr.area(id) = best_cost.area * ratio;
+    _mgr.edge(id) = best_cost.edge * ratio;
+
+    // Statics
+    _mgr.num_stored() += cut_set.size();
+
+    // create trivial cut
+    Cut *triv_cut = Cut::alloc_triv(id);
+    triv_cut->idx = cut_set.size();
+    triv_cut->set_fid(0xAAAAAAAAAAAAAAAA);
+    if constexpr (algo == CutCostAlgo::PRAETOR) {
+
+    }
+    cut_set.push_back(triv_cut);
+}
+
+template <CutCostAlgo algo> void
+CutEnumerator<algo>::prune_kcut(std::vector<Cut *> &kcuts, std::vector<CutCost> &costs) {
+    float epsilon = _cfg.epsilon;
+    CutCost::rank_fn fn = CutCost::GetRankFn(_mgr.config().opt_target);
+    auto fn_wrap = [epsilon, fn](const CutCost &lhs, const CutCost &rhs) -> bool {
+        return fn(lhs, rhs, epsilon) == CutCost::cmp_res::LWIN;
+    };
+
+    if (costs.size() > _cfg.max_cut_num) {
+        std::sort(costs.begin(), costs.end(), fn_wrap);
+    } else {
+        auto best_itr = std::min_element(costs.begin(), costs.end(), fn_wrap);
+        std::iter_swap(costs.begin(), best_itr);
+    }
+
+    // Mapping cost ranking back to cuts
+    const size_t num_saved = std::min((size_t)_cfg.max_cut_num, costs.size());
+    std::vector<Cut *> saved; saved.reserve(num_saved);
+    while (saved.size() < num_saved) {
+        Cut *&cut = kcuts[costs[saved.size()].idx];
+        saved.push_back(cut);
+        cut = nullptr;
+    }
+
+    for (Cut *cut : kcuts) {
+        Cut::dealloc(cut);
+    }
+
+    std::swap(kcuts, saved);
+}
+
+template <CutCostAlgo algo> void
+CutEnumerator<algo>::enumerate_kcut(uint id) {
+    const Config &cfg = _mgr.config();
+
+    Lit f0 = _mgr[id][0];
+    Lit f1 = _mgr[id][1];
+
+    const std::vector<Cut *> &cuts0 = _mgr.cut_set(f0);
+    const std::vector<Cut *> &cuts1 = _mgr.cut_set(f1);
+    const uint k = cfg.cut_size;
+
+    uint  merge_num_upper = cuts0.size() * cuts1.size();
+    uint  buffer[MAX_LUT_SIZE + MAX_LUT_SIZE] {0};
+    uint *end;
+
+    _mgr.num_merged() += merge_num_upper;
+
+    std::vector<Cut *> kcuts; kcuts.reserve(merge_num_upper + 1);
+
+    for (int i0 = 0; i0 != cuts0.size(); ++i0) { Cut *c0 = cuts0[i0];
+    for (int i1 = 0; i1 != cuts1.size(); ++i1) { Cut *c1 = cuts1[i1];
+        if (c0->size + c1->size > k && popcount(c0->sign | c1->sign) > k)
+            continue;
+        if (end = std::set_union(c0->begin(), c0->end(), c1->begin(), c1->end(), buffer); end - buffer > k)
+            continue;
+        Assert(end - buffer <= k);
+        Cut *cut = Cut::alloc_kcut(buffer, end, c0->sign | c1->sign);
+        kcuts.push_back(cut);
+        word truth = Cut::compute_truth(cut, sign_cond(c0, f0.sign()), sign_cond(c1, f1.sign()));
+        cut->set_fid(truth);
+    }} // end merge cuts
+
+    _mgr.num_k_feasible() += kcuts.size();
+
+    // Structure-based pruning
+
+    // Restore the best cut from previous pass
+    // if (Cut *best = _mgr.best_cut(id); best) {
+    //     cuts.push_back(best->clone());
+    // }
+
+    // Calculate the cut cost
+    std::vector<CutCost> costs; costs.reserve(kcuts.size());
+    for (Cut *cut : kcuts) {
+        CutCost cost = _mgr.compute_cut_cost(algo, cut);
+        cost.idx = costs.size();
+        costs.push_back(cost);
+    }
+
+    // Cost-based cut pruning
+    prune_kcut(kcuts, costs);
+
+    // Write kcuts into cut_set of node[id]
+    std::vector<Cut *> &cut_set = _mgr.cut_set(id);
+    cut_set.reserve(kcuts.size() + 1); // +1 for trivial cut
+    cut_set.insert(cut_set.end(), kcuts.begin(), kcuts.end());
+
+    // Create trivial cut, set the area/edge info for gate.
+    post_enum(id, costs[0]);
+}
+
+// TODO: when gate size <= 8, using stack memory to allocate wide-cut.
+template <CutCostAlgo algo> void
+CutEnumerator<algo>::enumerate_wcut(uint id) {
+    const Config &cfg = _mgr.config();
+
+    std::function<bool(Cut *, Cut *)> cmp;
+    if (cfg.opt_target == Config::target_t::AREA) {
+        cmp = [](Cut *lhs, Cut *rhs) -> bool {
+            return lhs->area() < rhs->area();
+        };
+    } else {
+        Assert(0);
+        cmp = [](Cut *lhs, Cut *rhs) -> bool {
+            return lhs->size < rhs->size;
+        };
+    }
+
+    // sort the gate inputs by area-cost increasing order ?
+
+    Gate *gate = _mgr.gate(id);
+    uint  sz   = gate->size();
+    uint  idx  = 1;
+    uint  buffer[Cut::MAX_CUT_SIZE];
+
+    std::vector<Cut *> curr_cuts(_mgr.cut_set(gate->input(0)));
+
+    auto free_lambda = [](Cut *cut) { Cut::dealloc(cut); };
+    Prune<Cut *, PMT::Separated, decltype(free_lambda)> prune(std::move(cmp));
+
+    while (true) {
+        prune.reset((idx + 1) * cfg.lut_size, 4);
+        const auto& in_cuts = _mgr.cut_set(gate->input(idx));
+
+        for (uint ii = 0; ii != curr_cuts.size(); ++ii) { Cut *c0 = curr_cuts[ii];
+        for (uint mm = 0; mm != in_cuts  .size(); ++mm) { Cut *c1 = in_cuts[mm];
+            uint *end  = std::set_union(c0->begin(), c0->end(), c1->begin(), c1->end(), buffer);
+            uint  size = end - buffer;
+            // compute the area-cost for pruning
+            // Or, just adding their area into a sum ?
+            Cut *wcut = Cut::alloc_wcut(buffer, end);
+            for (int i = 0; i != size; ++i) {
+                wcut->area() += _mgr.area(buffer[i]);
+            }
+            // store the sub-cuts info
+            if (idx == 1) {
+                Assert(!c0->is_wcut() && !c1->is_wcut());
+                wcut->add_sub_cut(c0->idx);
+                wcut->add_sub_cut(c1->idx);
+            } else {
+                Assert(c0->is_wcut() && !c1->is_wcut());
+                for (int i = 0; i != c0->num_sub_cuts(); ++i) {
+                    wcut->add_sub_cut(c0->get_sub_cut(i));
+                }
+                wcut->add_sub_cut(c1->idx);
+            }
+            prune.insert(wcut);
+        }} // end for-loop
+
+        if (idx != 1) {
+            // Todo: reuse the cuts here
+            for (Cut *cut : curr_cuts)
+                Cut::dealloc(cut);
+        }
+        curr_cuts.clear();
+        prune.get(curr_cuts);
+        if (++idx == sz) {
+            break;
+        }
+    } // end while
+
+    // Structure-based pruning
+    // ?
+
+    // Now curr_cuts contains all the final survived wide cuts
+    // Decomposing them into k-feasible cuts
+    std::vector<Cut *>   kcuts; kcuts.reserve(curr_cuts.size());
+    std::vector<CutCost> costs; costs.reserve(curr_cuts.size());
+
+    extern Cut *agd_decompose(mapper &mgr, uint id, Cut *wcut, CutCost &cost);
+
+    // Cost-based cut pruning
+    for (uint i = 0; i != curr_cuts.size(); ++i) {
+        CutCost cost;
+        Cut *wcut = curr_cuts[i];
+        Cut *kcut = agd_decompose(_mgr, id, wcut, cost);
+        // kcut->idx = idx;
+        kcuts.push_back(kcut);
+        // compute the cut cost
+        // TODO: using cost library
+        ForEachCutLeaf(wcut) {
+            cost.area += _mgr.area(leaf);
+            cost.edge += _mgr.edge(leaf);
+        }
+        cost.size = kcut->size;
+        cost.idx  = costs.size();
+        costs.push_back(cost);
+        Cut::dealloc(wcut);
+    }
+
+    std::vector<Cut *>().swap(curr_cuts); // clear the wide cuts
+
+    // Ranking and prune the k-cuts of wide-cuts
+    prune_kcut(kcuts, costs);
+
+    // Assign node ids for virtual cuts
+    assign_node_id(kcuts);
+
+    // Set the signature for each cut
+    for (Cut *cut : kcuts) {
+        uint sign = 0;
+        ForEachCutLeaf(cut) {
+            sign |= SIGNATURE(leaf);
+        }
+        cut->sign = sign;
+    }
+
+    // Write kcuts into cut_set of node[id]
+    std::vector<Cut *> &cut_set = _mgr.cut_set(id);
+    cut_set.reserve(kcuts.size() + 1); // +1 for trivial cut
+    cut_set.insert(cut_set.end(), kcuts.begin(), kcuts.end());
+
+    // Create trivial cut, set the area/edge info for gate.
+    post_enum(id, costs.front());
+}
 
 Abc_Ntk_t *PerformSupperMap(Abc_Ntk_t *pNtk, const Config &cfg)
 {

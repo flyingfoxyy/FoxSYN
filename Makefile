@@ -15,9 +15,9 @@ debug:
 
 # ASan
 asan:
-	@mkdir -p release && \
-	(cd release && cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_FLAGS="-fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer" ../src) && \
-	(cd release && make -j8)
+	@mkdir -p asan && \
+	(cd asan && cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_FLAGS="-fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer" ../src) && \
+	(cd asan && make -j8)
 
 clean:
 	@rm -rf release debug

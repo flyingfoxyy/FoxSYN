@@ -1,18 +1,14 @@
 
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <cstdlib>
-#include <functional>
 #include <iostream>
-#include <iterator>
 #include <sstream>
 #include <vector>
 #include <map>
 
 #include "basic.hpp"
 #include "cut.hpp"
-#include "macros.hpp"
 #include "map.hpp"
 
 namespace fox::supper {
@@ -397,19 +393,20 @@ agd_decompose(mapper &mgr, uint id, Cut *wcut, CutCost &cost) {
     // Wide cut is already k-feasible. No need to decompose.
     if (wcut->size <= mgr.config().lut_size) {
         Cut *cut  = Cut::alloc_kcut(wcut->begin(), wcut->end(), 0);
-        cut->sign = cut->compute_sign();
+        uint sign = 0;
+        ForEachCutLeaf(cut) {
+            sign |= SIGNATURE(leaf);
+        }
+        cut->sign = sign;
         cost.area = 1;
         cost.edge = wcut->size;
         // Compute the cut truth
         Gate *gate = mgr.gate(id);
-        // std::vector<kCut<AGD_MAX_LUT_SIZE>> kcuts; kcuts.reserve(wcut->num_sub_cuts());
         BoolFunc<AGD_MAX_LUT_SIZE> bf;
         for (uint i = 0; i != wcut->num_sub_cuts(); ++i) {
-            uint  cut_idx = wcut->get_sub_cut(i);
-            Lit   gin     = gate->input(i);
-            Cut  *sub_cut = mgr.cut_set(gin)[cut_idx];
+            Lit  gin = gate->input(i);
+            Cut *sub_cut = mgr.cut_set(gin)[wcut->get_sub_cut(i)];
             bf &= sign_cond(sub_cut, gin.sign());
-            // kcuts.emplace_back(kCut<AGD_MAX_LUT_SIZE>(sign_cond(sub_cut, gin.sign())));
         }
         cut->set_fid(bf.icut.fid());
         return cut;

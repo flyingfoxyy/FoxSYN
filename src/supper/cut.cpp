@@ -9,6 +9,18 @@
 
 namespace fox::supper {
 std::string
+cut_data_w::operator*() const {
+    std::string str = "<";
+    for (int i = 0; i != nums; ++i) {
+        str += std::to_string(sub_cuts[i]);
+        if (i != nums - 1)
+            str += " ";
+    }
+    str += ">";
+    return str;
+}
+
+std::string
 Cut::operator*() const
 {
     std::stringstream ss;
@@ -32,15 +44,6 @@ Cut::operator*() const
         ss << " " << **wdata();
     }
     return ss.str();
-}
-
-uint
-Cut::compute_sign() const {
-    uint sign = 0;
-    ForEachCutLeaf(this) {
-        sign |= SIGNATURE(leaf);
-    }
-    return sign;
 }
 
 word

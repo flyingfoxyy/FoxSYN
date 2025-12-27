@@ -7,25 +7,19 @@
 
 namespace fox::supper {
 // ========================================================================
-// Cut
+// Cut data for wide cut
 // ========================================================================
 struct cut_data_w {
-    uint8_t  sub_cuts[MAX_GATE_SIZE];
-    uint     nums; // num of sub-cut
-    uint     leaves[0];
+    uint8  sub_cuts[MAX_GATE_SIZE]; // sub-cut idx
+    uint   nums;                    // num of sub-cut
+    uint   leaves[0];               // cut leaves
 
-    Inline std::string operator*() const {
-        std::string str = "<";
-        for (int i = 0; i != nums; ++i) {
-            str += std::to_string(sub_cuts[i]);
-            if (i != nums - 1)
-                str += " ";
-        }
-        str += ">";
-        return str;
-    }
+    std::string operator*() const;
 };
 
+// ========================================================================
+// Cut
+// ========================================================================
 class alignas(4) Cut {
 public:
     static constexpr std::size_t BIT_NUM_SIZE = 7;
@@ -45,8 +39,8 @@ public:
     uint      dt   :  2; // data type
     uint      idx  : 10; // cut id, i.e., its position in cut list.
     uint      ms   : 10; // the number of bytes pointed by this cut
-    uint      fid_h {0};
-    uint      fid_l {0};
+    uint      fid_h {0}; // truth table high part.
+    uint      fid_l {0}; // truth table low  part.
 private:
     uint      data[0];   // cut-data. Leaves or extended data.
 public:
@@ -79,13 +73,6 @@ public:
         fid_h = ~fid_h;
         fid_l = ~fid_l;
     }
-
-    /**
-     * @brief Calculate the signature of the cut.
-     * 
-     * @return uint 
-     */
-    uint compute_sign() const;
 
     void change_leaf(uint idx, uint new_id) {
         begin()[idx] = new_id;
@@ -178,10 +165,7 @@ public:
         ptr->size = end - begin;
         ptr->crs  = crs;
         ptr->dt   = data_t::KCUT;
-     // ptr->idx  = 0;
         ptr->ms   = num_bytes;
-     // ptr->root = 0;
-     // ptr->fid  = 0;
         std::copy(begin, end, ptr->data);
         return ptr;
     }
@@ -190,15 +174,9 @@ public:
     static Inline Cut *alloc_kcut(uint leaf_size) {
         const size_t num_bytes = bytes_needed<data_t::KCUT>(leaf_size);
         Cut *ptr  = static_cast<Cut *>(std::calloc(1, num_bytes));
-     // ptr->sign = 0;
         ptr->size = 0;
-     // ptr->crs  = 0;
         ptr->dt   = data_t::KCUT;
-     // ptr->idx  = 0;
         ptr->ms   = num_bytes;
-     // ptr->root = 0;
-     // ptr->fid  = 0;
-     // std::copy(begin(), end(), ptr->data);
         return ptr;
     }
 
@@ -208,12 +186,7 @@ public:
         Cut *ptr  = static_cast<Cut *>(std::calloc(1, num_bytes));
         ptr->sign = SIGNATURE(id);
         ptr->size = 1;
-     // ptr->crs  = 0;
-     // ptr->dt   = data_t::KCUT;
-     // ptr->idx  = 0;
         ptr->ms   = num_bytes;
-     // ptr->root = 0;
-     // ptr->fid  = 0;
         ptr->data[0] = id;
         return ptr;
     }
@@ -222,14 +195,9 @@ public:
     static Inline Cut *alloc_wcut(uint *begin, uint *end) {
         const size_t num_bytes = bytes_needed<data_t::WCUT>(end - begin);
         Cut *ptr  = static_cast<Cut *>(std::calloc(1, num_bytes));
-     // ptr->sign = 0;
         ptr->size = end - begin;
-     // ptr->crs  = 0;
         ptr->dt   = data_t::WCUT;
-     // ptr->idx  = 0;
         ptr->ms   = num_bytes;
-     // ptr->root = 0;
-     // ptr->fid  = 0;
         std::copy(begin, end, ptr->wdata()->leaves);
         return ptr;
     }
@@ -269,9 +237,13 @@ public:
     std::string operator*() const;
 };
 
-#define ForEachCutLeaf(C) \
-    for (uint leaf = 0, i = 0; i != (C)->size && (leaf = (C)->leaf(i)); ++i)
+#define ForEachCutLeaf(C)                 \
+    const auto _cut_begin = (C)->begin(); \
+    for (uint leaf = 0, i = 0; i != (C)->size && (leaf = _cut_begin[i]); ++i)
 
+// ========================================================================
+// Special kCut for direct using.
+// ========================================================================
 template <std::size_t K>
 struct kCut {
     Cut  icut      { };
