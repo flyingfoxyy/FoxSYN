@@ -231,6 +231,37 @@ struct kCut {
     Cut  icut      { };
     uint leaves[K] {0};
 
+    kCut() {}
+
+    kCut(uint var, bool inv) {
+        icut.size = 1;
+        icut.set_fid(inv ? 0x5555555555555555 : 0xAAAAAAAAAAAAAAAA);
+        leaves[0] = var;
+    }
+
+    Inline kCut &operator=(const kCut &rhs) {
+        if (&rhs == this)
+            return *this;
+        std::memcpy(this, &rhs, sizeof(rhs));
+        return *this;
+    }
+
+    kCut &operator&=(Cut *rhs) {
+        Cut *reg_ptr = regular(rhs);
+        if (icut.size == 0) {
+            icut = *reg_ptr;
+            if (is_signed(rhs)) {
+                icut.flop_fid();
+            }
+            return *this;
+        }
+        kCut<K> res;
+        uint *end = std::set_union(icut.begin(), icut.end(), reg_ptr->begin(), reg_ptr->end(), res.icut.begin());
+        res.icut.size = end - res.icut.begin();
+        res.icut.set_fid(Cut::compute_truth(&res.icut, &icut, rhs, 0));
+        return *this = res;
+    }
+
     Inline void clear() {
         std::memset(this, 0, sizeof(kCut<K>));
     }

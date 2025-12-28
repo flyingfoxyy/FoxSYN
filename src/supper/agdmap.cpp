@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <sstream>
 #include <vector>
@@ -26,31 +27,6 @@ static bool sort_cut_leaves(Cut *cut) {
     }
     return false;
 }
-
-template <std::size_t K>
-struct BoolFunc {
-    Cut  icut    { };
-    uint vars[K] {0};
-
-    BoolFunc() { icut.ms = sizeof(Cut) + sizeof(uint) * K; }
-
-    BoolFunc &operator&=(Cut *rhs) {
-        Cut *reg_ptr = regular(rhs);
-        if (icut.size == 0) {
-            icut = *reg_ptr;
-            if (is_signed(rhs)) {
-                icut.flop_fid();
-            }
-            return *this;
-        }
-        BoolFunc res;
-        uint *end = std::set_union(icut.begin(), icut.end(), reg_ptr->begin(), reg_ptr->end(), res.icut.begin());
-        res.icut.size = end - res.icut.begin();
-        res.icut.set_fid(Cut::compute_truth(&res.icut, &icut, rhs, 0));
-        return *this = res;
-    }
-
-};
 
 struct Bin {
     union {
@@ -196,24 +172,20 @@ class agd_manager {
             // Calculate the cut truth
             // For each sub-cut, gather its kCut representation, combine them one by one and get the truth.
             // sub_cuts.clear();
-            BoolFunc<AGD_MAX_LUT_SIZE> bf;
+            kCut<AGD_MAX_LUT_SIZE> func;
             for (auto it = bin.cut_begin(); it != bin.cut_end(); ++it) {
                 uint cut_idx = *it;
                 Cut *icut = agd_mgr._sub_cuts[cut_idx];
                 bool sign = agd_mgr._cut_roots[cut_idx].sign();
-                bf &= sign_cond(icut, sign);
+                func &= sign_cond(icut, sign);
             }
 
             for (uint i = 0; i != bin.numb; ++i) {
                 const Bin &fanin = agd_mgr._bins[bin.ibins[i]];
-                kCut<1> tmp_cut;
-                tmp_cut.icut.size = 1;
-                tmp_cut.leaves[0] = fanin.root;
-                tmp_cut.icut.set_fid(fanin.inv ? 0x5555555555555555 : 0xAAAAAAAAAAAAAAAA);
-                Cut *cut = (Cut *)&tmp_cut;
-                bf &= cut;
+                kCut<1> var_cut(fanin.root, fanin.inv);
+                func &= reinterpret_cast<Cut *>(&var_cut);
             }
-            cut->set_fid(bf.icut.fid());
+            cut->set_fid(func.icut.fid());
             // Verify
             // if constexpr (kDebugBuild) {
             //     ForEachCutLeaf(cut) {
@@ -402,13 +374,13 @@ agd_decompose(mapper &mgr, uint id, Cut *wcut, CutCost &cost) {
         cost.edge = wcut->size;
         // Compute the cut truth
         Gate *gate = mgr.gate(id);
-        BoolFunc<AGD_MAX_LUT_SIZE> bf;
+        kCut<AGD_MAX_LUT_SIZE> func;
         for (uint i = 0; i != wcut->num_sub_cuts(); ++i) {
             Lit  gin = gate->input(i);
             Cut *sub_cut = mgr.cut_set(gin)[wcut->get_sub_cut(i)];
-            bf &= sign_cond(sub_cut, gin.sign());
+            func &= sign_cond(sub_cut, gin.sign());
         }
-        cut->set_fid(bf.icut.fid());
+        cut->set_fid(func.icut.fid());
         return cut;
     }
 
