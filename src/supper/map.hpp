@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -29,6 +30,7 @@
 #include "graph.hpp"
 #include "cut.hpp"
 #include "agdmap.hpp"
+#include "macros.hpp"
 
 namespace abc {
     typedef struct Abc_Ntk_t_ Abc_Ntk_t;
@@ -65,7 +67,7 @@ public:
     uint         max_cut_num {8};
     bool         verbose     {true };
     // internal
-    bool         first_pass  {false};
+    bool         first_pass  {true};
     bool         enum_truth  {true};
     float        epsilon     {0.005};
 
@@ -188,7 +190,7 @@ public:
     mapper(uint max_node_num, uint num_pi = 0, uint num_po = 0);
     ~mapper();
 
-    const Config &config() const { return _cfg; }
+    Config &config() { return _cfg; }
 
     void initialize();
 
@@ -248,8 +250,10 @@ public:
 
     template<Indexable T>
     void set_best_cut(T n, const Cut *cut) {
-        ForEachCutLeaf(cut) {
-            Assert(is_pi(leaf) || is_logic(leaf));
+        if constexpr (kDebugBuild) {
+            ForEachCutLeaf(cut) {
+                Assert(is_pi(leaf) || is_logic(leaf));
+            }
         }
         Assert(is_logic(n) && cut);
         if (Cut *&best = _best_cuts[n]; best) {
@@ -395,6 +399,72 @@ public:
     virtual ~Forward() = default;
 
     virtual void impl() = 0;
+
+    void reprioritize(CutCostAlgo algo) {
+        _mgr.timer().start("forward");
+
+        /*
+        auto recompute_cut_list_cost = [&](CutCostAlgo algo, Cut *cut) -> CutCost {
+            if (cut->head == 0) {
+                return _mgr.compute_cut_cost(algo, cut);
+            }
+            // Cut-list from agdmap.
+            std::vector<Cut *> cuts; cuts.reserve(20);
+            do {
+                cuts.push_back(cut);
+            } while ((cut = cut->next()));
+            Assert(cuts.back()->tail);
+            uint *root_array = cuts.back()->get_root_ptr();
+            for (int i = cuts.size() - 1; i >= 0; --i) {
+                cut = cuts[i];
+                CutCost cost = _mgr.compute_cut_cost(algo, cut); 
+                uint root = root_array[i];
+                _mgr.area(root) = cost.area;
+                _mgr.edge(root) = cost.edge;
+                if (i == 0) {
+                    return cost;
+                }
+            }
+            [[unreachable]];
+            return CutCost();
+        };
+
+        bool agdmap = _mgr.run_agdmap();
+        ForEachGraphLogicNode(_mgr) {
+            auto &cuts = _mgr.cut_set(idx);
+            // Simple gates. Their cut candidates are cut-list.
+            if (agdmap && _mgr.gate(idx) && _mgr.gate(idx)->size() > 2) {
+                uint best_idx = 0;
+                CutCost best_cost = recompute_cut_list_cost(algo, cuts[0]);
+                for (uint i = 1; i != cuts.size() - 1; ++i) {
+                    CutCost cost = recompute_cut_list_cost(algo, cuts[i]);
+                    if (_mgr.compare(cost, best_cost) == CutCost::cmp_res::LWIN) {
+                        best_cost = cost;
+                        best_idx  = i;
+                    }
+                }
+                _mgr.area(idx) = best_cost.area / std::max(1.0f, _mgr.num_est_ref(idx));
+                _mgr.edge(idx) = best_cost.edge / std::max(1.0f, _mgr.num_est_ref(idx));
+                _mgr.set_best_cut(idx, cuts[best_idx]);
+            } else if (cuts.size()) {
+                uint best_idx = 0;
+                CutCost best_cost = _mgr.compute_cut_cost(algo, cuts[0]);
+                for (uint i = 1; i != cuts.size() - 1; ++i) {
+                    CutCost cost = _mgr.compute_cut_cost(algo, cuts[i]);
+                    if (_mgr.compare(cost, best_cost) == CutCost::cmp_res::LWIN) {
+                        best_cost = cost;
+                        best_idx  = i;
+                    }
+                }
+                _mgr.area(idx) = best_cost.area / std::max(1.0f, _mgr.num_est_ref(idx));
+                _mgr.edge(idx) = best_cost.edge / std::max(1.0f, _mgr.num_est_ref(idx));
+                _mgr.set_best_cut(idx, cuts[best_idx]);
+            }
+        }
+        */
+
+        _mgr.timer().stop("forward");
+    }
 };
 
 class ForwardFlow : public Forward {
@@ -500,14 +570,21 @@ public:
             assert(0);
         _backward = std::make_unique<Backward>(mgr);
 
-        if (!mgr.config().first_pass) {
+        if (mgr.config().first_pass) {
+
+        } else {
             // update the estimated reference number
             // do nothing, using previous pass's reference count for next cost compute
         }
 
-        ///////////////////////////////////////
-        _forward->impl();
-        ///////////////////////////////////////
+        if (mgr.run_agdmap() && !mgr.config().first_pass) {
+            _forward->reprioritize(algo);
+        } else {
+            ///////////////////////////////////////
+            _forward->impl();
+            ///////////////////////////////////////
+        }
+
 
         if (_mgr.run_agdmap()) {
             _mgr.setup_agdmap_containers();
@@ -522,6 +599,8 @@ public:
             std::println(std::cout, INFO1, pass, mgr.num_area(), mgr.num_edge(), Timer::formatted_time(cpu_T, 5),
                 _mgr.num_merged(), _mgr.num_k_feasible(), _mgr.num_stored());
         }
+
+        mgr.config().first_pass = false;
 
         if (_mgr.run_agdmap()) {
             return;

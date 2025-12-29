@@ -249,7 +249,7 @@ struct kCut {
     kCut &operator&=(Cut *rhs) {
         Cut *reg_ptr = regular(rhs);
         if (icut.size == 0) {
-            icut = *reg_ptr;
+            std::memcpy(this, reg_ptr, reg_ptr->num_bytes());
             if (is_signed(rhs)) {
                 icut.flop_fid();
             }
