@@ -15,6 +15,7 @@
 
 #include "fox/foxmap.hpp"
 #include "supper/map.hpp"
+#include "partsyn/partsyn.hpp"
 
 extern "C"
 {
@@ -255,12 +256,86 @@ usage:
     return 1;
 }
 
+int PartSyn_Command(Abc_Frame_t *pAbc, int argc, char **argv)
+{
+    using namespace fox::partsyn;
+    Config cfg;
+    Abc_Ntk_t *pResult = nullptr;
+    Abc_Ntk_t *pAig = nullptr;
+
+    // Print usage if requested
+    if (argc > 1 && !strcmp(argv[1], "-h"))
+    {
+        goto usage;
+    }
+
+    // Parse command line arguments
+    for (int i = 1; i != argc; ++i)
+    {
+        const char arg = *(argv[i] + 1);
+        switch (arg)
+        {
+        case 'n':
+            cfg.num_parts = std::atoi(argv[++i]);
+            if (cfg.num_parts < 2)
+            {
+                printf("partsyn: invalid partition number %d (must be >= 2)\n", cfg.num_parts);
+                return 1;
+            }
+            break;
+        case 'v':
+            cfg.verbose ^= 1;
+            break;
+        case 'h':
+            goto usage;
+        default:
+            std::cout << "partsyn: unknown argument -" << arg << "\n";
+            goto usage;
+        }
+    }
+
+    // Get the current network
+    pAig = Abc_FrameReadNtk(pAbc);
+    if (!pAig)
+    {
+        printf("partsyn: current network is empty\n");
+        return 1;
+    }
+
+    if (!Abc_NtkIsStrash(pAig))
+    {
+        printf("partsyn: current network is not an AIG\n");
+        return 1;
+    }
+
+    // Perform partition-based synthesis
+    pResult = PerformPartSyn(pAig, cfg);
+    if (!pResult)
+    {
+        printf("partsyn: partition-based synthesis failed\n");
+        return 1;
+    }
+
+    // Replace current network
+    Abc_FrameReplaceCurrentNetwork(pAbc, pResult);
+    return 0;
+
+usage:
+    Abc_Print(-2, "usage: partsyn [-n num] [-v]\n");
+    Abc_Print(-2, "\t           performs partition-based parallel synthesis\n");
+    Abc_Print(-2, "\t-n num   : number of partitions (num >= 2) [default = %d]\n", cfg.num_parts);
+    Abc_Print(-2, "\t-v       : toggles verbose output\n");
+    Abc_Print(-2, "\n");
+    return 1;
+}
+
 struct CmdRegister
 {
     CmdRegister()
     {
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "foxmap", Foxmap_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "smap",   Suppermap_Command, 1);
+        Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "partsyn", PartSyn_Command, 1);
     }
 } regiter;
 

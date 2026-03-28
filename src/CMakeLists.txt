@@ -39,6 +39,7 @@ include_directories(/home/longfei/taskflow)
 add_subdirectory(abc)
 add_subdirectory(fox)
 add_subdirectory(supper)
+add_subdirectory(partsyn)
 
 add_compile_options(-fexceptions)
 
@@ -49,6 +50,7 @@ target_link_libraries(FoxSYN PRIVATE
     libabc
     fox
     supper
+    partsyn
 )
 
 # Add test_dot executable to demonstrate the DOT file generation
