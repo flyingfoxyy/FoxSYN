@@ -126,19 +126,24 @@ class agd_manager {
         _cost.area = _num;
         _cost.edge = num_edge;
 
-        uint  len = sizeof(Cut) * _num + sizeof(uint) * (int)num_edge;
-        Cut  *mem = (Cut  *)std::calloc(1, len);
-        char *ptr = (char *)mem;
-        char *end = ptr + len;
+        uint  cut_len = sizeof(Cut) * _num + sizeof(uint) * (int)num_edge;
+        uint  rid_len = sizeof(uint) * _num;
+        uint  len     = cut_len + rid_len;
+        Cut  *mem     = (Cut  *)std::calloc(1, len);
+        char *ptr     = (char *)mem;
+        char *cut_end = ptr + cut_len;
 
-        uint num_virtual = 0;
+        uint *root_id_arr = reinterpret_cast<uint *>(cut_end);
+        uint  cut_order   = 0;
+        uint  num_virtual = 0;
 
         auto gen_cut_fn = [&](this auto self, agd_manager &agd_mgr, Bin &bin) -> uint {
+            uint my_order = cut_order++;
             uint ms  = Cut::bytes_needed<Cut::data_t::KCUT>(bin.num_port());
             Cut *cut = (Cut *)ptr;
             ptr     += ms;
 
-            if (ptr == end) {
+            if (ptr == cut_end) {
                 cut->tail = 1;
             }
 
@@ -163,9 +168,11 @@ class agd_manager {
                 bin.inv  = root_lit.sign();
             } else {
                 ++num_virtual;
-                const uint diff = reinterpret_cast<char *>(cut) - reinterpret_cast<char *>(mem); Assert(diff < len);
+                const uint diff = reinterpret_cast<char *>(cut) - reinterpret_cast<char *>(mem); Assert(diff < cut_len);
                 bin.root = AGD_MAX_ID + diff;
             }
+
+            root_id_arr[my_order] = bin.root;
 
             Assert(cut->size <= AGD_MAX_LUT_SIZE);
 
@@ -186,16 +193,11 @@ class agd_manager {
                 func &= reinterpret_cast<Cut *>(&var_cut);
             }
             cut->set_fid(func.icut.fid());
-            // Verify
-            // if constexpr (kDebugBuild) {
-            //     ForEachCutLeaf(cut) {
-            //         Assert(leaf == bf.vars[i]);
-            //     }
-            // }
             return bin.root;
         };
 
-        uint rid  = gen_cut_fn(*this, *root_bin); Assert(ptr == end && rid == AGD_MAX_ID);
+        uint rid  = gen_cut_fn(*this, *root_bin); Assert(ptr == cut_end && rid == AGD_MAX_ID);
+        Assert(cut_order == _num);
         mem->idx  = rid >= AGD_MAX_ID ? num_virtual - 1 : num_virtual;
         mem->head = 1;
         mem->ms   = len;

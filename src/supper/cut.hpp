@@ -216,6 +216,27 @@ public:
         return tail ? nullptr : reinterpret_cast<Cut *>(reinterpret_cast<uintptr_t>(this) + num_bytes());
     }
 
+    // For cut-lists (head=1): root ID array is appended after the tail cut.
+    Inline uint *get_root_ids() const {
+        Assert(head);
+        const Cut *cur = this;
+        while (!cur->tail) {
+            cur = reinterpret_cast<const Cut *>(reinterpret_cast<uintptr_t>(cur) + cur->num_bytes());
+        }
+        return reinterpret_cast<uint *>(reinterpret_cast<uintptr_t>(cur) + cur->num_bytes());
+    }
+
+    Inline uint num_chain_cuts() const {
+        Assert(head);
+        uint count = 1;
+        const Cut *cur = this;
+        while (!cur->tail) {
+            cur = reinterpret_cast<const Cut *>(reinterpret_cast<uintptr_t>(cur) + cur->num_bytes());
+            ++count;
+        }
+        return count;
+    }
+
     std::string operator*() const;
 };
 

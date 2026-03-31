@@ -403,65 +403,70 @@ public:
     void reprioritize(CutCostAlgo algo) {
         _mgr.timer().start("forward");
 
-        /*
-        auto recompute_cut_list_cost = [&](CutCostAlgo algo, Cut *cut) -> CutCost {
-            if (cut->head == 0) {
-                return _mgr.compute_cut_cost(algo, cut);
+        auto recompute_cut_list_cost = [&](Cut *root_cut) -> CutCost {
+            if (!root_cut->head) {
+                return _mgr.compute_cut_cost(algo, root_cut);
             }
-            // Cut-list from agdmap.
-            std::vector<Cut *> cuts; cuts.reserve(20);
-            do {
-                cuts.push_back(cut);
-            } while ((cut = cut->next()));
-            Assert(cuts.back()->tail);
-            uint *root_array = cuts.back()->get_root_ptr();
-            for (int i = cuts.size() - 1; i >= 0; --i) {
-                cut = cuts[i];
-                CutCost cost = _mgr.compute_cut_cost(algo, cut); 
-                uint root = root_array[i];
-                _mgr.area(root) = cost.area;
-                _mgr.edge(root) = cost.edge;
-                if (i == 0) {
-                    return cost;
+            std::vector<Cut *> chain; chain.reserve(10);
+            Cut *cur = root_cut;
+            do { chain.push_back(cur); } while ((cur = cur->next()));
+            Assert(chain.back()->tail);
+            uint *root_ids = reinterpret_cast<uint *>(
+                reinterpret_cast<char *>(chain.back()) + chain.back()->num_bytes());
+            // Bottom-up: update virtual sub-cuts before computing root cost
+            CutCost root_cost;
+            for (int j = (int)chain.size() - 1; j >= 0; --j) {
+                CutCost cost = _mgr.compute_cut_cost(algo, chain[j]);
+                if (j > 0) {
+                    uint vid = root_ids[j];
+                    if (vid >= VID) {
+                        Assert(vid < AGD_MAX_ID);
+                        float r = 1.0f / std::max(1.0f, _mgr.num_est_ref(vid));
+                        _mgr.area(vid) = cost.area * r;
+                        _mgr.edge(vid) = cost.edge * r;
+                    }
+                } else {
+                    root_cost = cost;
                 }
             }
-            [[unreachable]];
-            return CutCost();
+            return root_cost;
         };
 
         bool agdmap = _mgr.run_agdmap();
         ForEachGraphLogicNode(_mgr) {
             auto &cuts = _mgr.cut_set(idx);
-            // Simple gates. Their cut candidates are cut-list.
+            if (cuts.empty()) continue;
+
             if (agdmap && _mgr.gate(idx) && _mgr.gate(idx)->size() > 2) {
                 uint best_idx = 0;
-                CutCost best_cost = recompute_cut_list_cost(algo, cuts[0]);
-                for (uint i = 1; i != cuts.size() - 1; ++i) {
-                    CutCost cost = recompute_cut_list_cost(algo, cuts[i]);
+                CutCost best_cost = recompute_cut_list_cost(cuts[0]);
+                for (uint i = 1; i < cuts.size() - 1; ++i) {
+                    CutCost cost = recompute_cut_list_cost(cuts[i]);
                     if (_mgr.compare(cost, best_cost) == CutCost::cmp_res::LWIN) {
                         best_cost = cost;
                         best_idx  = i;
                     }
                 }
-                _mgr.area(idx) = best_cost.area / std::max(1.0f, _mgr.num_est_ref(idx));
-                _mgr.edge(idx) = best_cost.edge / std::max(1.0f, _mgr.num_est_ref(idx));
+                float ratio = 1.0f / std::max(1.0f, _mgr.num_est_ref(idx));
+                _mgr.area(idx) = best_cost.area * ratio;
+                _mgr.edge(idx) = best_cost.edge * ratio;
                 _mgr.set_best_cut(idx, cuts[best_idx]);
             } else if (cuts.size()) {
                 uint best_idx = 0;
                 CutCost best_cost = _mgr.compute_cut_cost(algo, cuts[0]);
-                for (uint i = 1; i != cuts.size() - 1; ++i) {
+                for (uint i = 1; i < cuts.size() - 1; ++i) {
                     CutCost cost = _mgr.compute_cut_cost(algo, cuts[i]);
                     if (_mgr.compare(cost, best_cost) == CutCost::cmp_res::LWIN) {
                         best_cost = cost;
                         best_idx  = i;
                     }
                 }
-                _mgr.area(idx) = best_cost.area / std::max(1.0f, _mgr.num_est_ref(idx));
-                _mgr.edge(idx) = best_cost.edge / std::max(1.0f, _mgr.num_est_ref(idx));
+                float ratio = 1.0f / std::max(1.0f, _mgr.num_est_ref(idx));
+                _mgr.area(idx) = best_cost.area * ratio;
+                _mgr.edge(idx) = best_cost.edge * ratio;
                 _mgr.set_best_cut(idx, cuts[best_idx]);
             }
         }
-        */
 
         _mgr.timer().stop("forward");
     }

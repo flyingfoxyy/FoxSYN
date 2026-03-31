@@ -631,7 +631,7 @@ mapper::run_lut_mapping(const Config &cfg)
     int num_pass_exact = 0;
 
     if (run_agdmap()) {
-        num_pass_flow = 1;
+        num_pass_flow = 3;
     }
 
     for (int i = 0; i != num_pass_flow; ++i) {
@@ -667,6 +667,8 @@ CutEnumerator<algo>::assign_node_id(std::vector<Cut *> &kcuts) {
             continue;
         char *base = reinterpret_cast<char *>(kcut);
         char *end  = base + kcut->ms;
+        uint *root_ids = kcut->get_root_ids();
+        uint  nchain   = kcut->num_chain_cuts();
         std::function<void(Cut *)> visit_cut = [&](Cut *cut) -> void {
             ForEachCutLeaf(cut) {
                 if (leaf >= AGD_MAX_ID) { // this is a leaf created in decomposition.
@@ -678,6 +680,13 @@ CutEnumerator<algo>::assign_node_id(std::vector<Cut *> &kcuts) {
                     // Fetch new id after visiting children. So that the ids are in increasing order.
                     uint new_id = id_start + cnt++;
                     cut->change_leaf(i, new_id);
+                    // Resolve the same temporary ID in root_ids array
+                    for (uint ri = 0; ri < nchain; ++ri) {
+                        if (root_ids[ri] == leaf) {
+                            root_ids[ri] = new_id;
+                            break;
+                        }
+                    }
                     // Register new_id's cut/area/edge info
                     CutCost cost = _mgr.compute_cut_cost(algo, leaf_cut);
                     _mgr.register_virtual_cut (new_id, leaf_cut);
@@ -937,6 +946,13 @@ CutEnumerator<algo>::enumerate_wcut(uint id) {
 
     // Assign node ids for virtual cuts
     assign_node_id(kcuts);
+
+    // Set root_ids[0] = gate node id for each cut-list
+    for (Cut *kcut : kcuts) {
+        if (kcut->head) {
+            kcut->get_root_ids()[0] = id;
+        }
+    }
 
     // Set the signature for each cut
     for (Cut *cut : kcuts) {
