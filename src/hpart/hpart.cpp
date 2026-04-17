@@ -317,6 +317,17 @@ void PrintSummary( Abc_Ntk_t *pNtk, const Config &cfg )
     }
 }
 
+int CountCutSize( Abc_Ntk_t *pNtk )
+{
+    Abc_Obj_t *pObj;
+    int i;
+    int CutSize = 0;
+
+    Abc_NtkForEachObj( pNtk, pObj, i )
+        CutSize += Abc_ObjIsCutNet( pObj );
+    return CutSize;
+}
+
 } // namespace
 
 const char *ToolName( Tool tool )
@@ -415,6 +426,7 @@ bool ApplyPartitioning( Abc_Ntk_t *pNtk, const Config &cfg )
     for ( std::size_t i = 0; i < hypergraph.vertices.size(); ++i )
         Abc_ObjSetPartId( hypergraph.vertices[i], partitions[i] );
     Abc_NtkUpdateCutNets( pNtk );
+    Abc_NtkSetPartStats( pNtk, cfg.num_parts, CountCutSize( pNtk ) );
 
     PrintSummary( pNtk, cfg );
     return true;
