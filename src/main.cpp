@@ -16,6 +16,7 @@
 #include "fox/foxmap.hpp"
 #include "supper/map.hpp"
 #include "partsyn/partsyn.hpp"
+#include "hpart/hpart.hpp"
 
 extern "C"
 {
@@ -329,6 +330,96 @@ usage:
     return 1;
 }
 
+int HPart_Command(Abc_Frame_t *pAbc, int argc, char **argv)
+{
+    using namespace fox::hpart;
+    Config cfg;
+    Abc_Ntk_t *pNtk = nullptr;
+
+    if (argc > 1 && !strcmp(argv[1], "-h"))
+    {
+        goto usage;
+    }
+
+    for (int i = 1; i != argc; ++i)
+    {
+        if (argv[i][0] != '-')
+        {
+            std::cout << "hpart: unexpected argument " << argv[i] << "\n";
+            goto usage;
+        }
+
+        const char arg = *(argv[i] + 1);
+        switch (arg)
+        {
+        case 'T':
+            if (i + 1 >= argc)
+            {
+                printf("hpart: -T requires a partitioner name\n");
+                return 1;
+            }
+            ++i;
+            if (!strcmp(argv[i], "hmetis"))
+            {
+                cfg.tool = Tool::HMetis;
+            }
+            else if (!strcmp(argv[i], "shmetis"))
+            {
+                cfg.tool = Tool::SHMetis;
+            }
+            else if (!strcmp(argv[i], "kmetis"))
+            {
+                cfg.tool = Tool::KMetis;
+            }
+            else
+            {
+                printf("hpart: invalid partitioner %s (expected hmetis/shmetis/kmetis)\n", argv[i]);
+                return 1;
+            }
+            break;
+        case 'N':
+            if (i + 1 >= argc)
+            {
+                printf("hpart: -N requires a partition count\n");
+                return 1;
+            }
+            cfg.num_parts = std::atoi(argv[++i]);
+            if (cfg.num_parts < 2 || cfg.num_parts > ABC_PART_ID_NONE)
+            {
+                printf("hpart: invalid partition number %d (must be between 2 and 255)\n", cfg.num_parts);
+                return 1;
+            }
+            break;
+        case 'v':
+            cfg.verbose ^= 1;
+            break;
+        case 'h':
+            goto usage;
+        default:
+            std::cout << "hpart: unknown argument -" << arg << "\n";
+            goto usage;
+        }
+    }
+
+    pNtk = Abc_FrameReadNtk(pAbc);
+    if (!pNtk)
+    {
+        printf("hpart: current network is empty\n");
+        return 1;
+    }
+
+    return ApplyPartitioning(pNtk, cfg) ? 0 : 1;
+
+usage:
+    Abc_Print(-2, "usage: hpart [-T hmetis|shmetis|kmetis] [-N num] [-v]\n");
+    Abc_Print(-2, "\t           partitions the current network structurally and creates a pdb\n");
+    Abc_Print(-2, "\t-T name  : partitioner name [default = %s]\n", ToolName(cfg.tool));
+    Abc_Print(-2, "\t-N num   : number of partitions (2 <= num <= 255) [default = %d]\n", cfg.num_parts);
+    Abc_Print(-2, "\t-v       : toggles partitioner log output\n");
+    Abc_Print(-2, "\n");
+    return 1;
+}
+
 struct CmdRegister
 {
     CmdRegister()
@@ -336,6 +427,7 @@ struct CmdRegister
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "foxmap", Foxmap_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "smap",   Suppermap_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "partsyn", PartSyn_Command, 1);
+        Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "hpart", HPart_Command, 1);
     }
 } regiter;
 
