@@ -67,3 +67,4 @@ regression/*
 build-clang
 .claude
 .codex
+.worktrees/
