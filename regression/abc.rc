@@ -150,3 +150,4 @@ alias recadd3     "st; rec_add3; b; rec_add3; dc2; rec_add3; if -K 8; bidec; st;
 # FoxSYN
 alias opt	  "resyn; resyn2"
 alias g  	  "&get"
+alias unit        "read alu4.v;opt;if -K 6"

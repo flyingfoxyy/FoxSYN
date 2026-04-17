@@ -310,10 +310,16 @@ void PrintSummary( Abc_Ntk_t *pNtk, const Config &cfg )
     }
 
     Abc_Print( 1, "tool = %s, parts = %d, cut size = %d\n", ToolName( cfg.tool ), cfg.num_parts, cut_size );
+    const int part_width = static_cast<int>( std::to_string( std::max( cfg.num_parts - 1, 0 ) ).size() );
+    const int count_width = static_cast<int>( std::to_string( *std::max_element( counts.begin(), counts.end() ) ).size() );
     for ( int part = 0; part < cfg.num_parts; ++part )
     {
         double ratio = total_count == 0 ? 0.0 : 100.0 * counts[part] / total_count;
-        Abc_Print( 1, "part %d node count = %d ( %.1f%% )\n", part, counts[part], ratio );
+        Abc_Print( 1, "PART %*d -> %*d (%4.1f%% )", part_width, part, count_width, counts[part], ratio );
+        if ( part % 4 == 3 || part + 1 == cfg.num_parts )
+            Abc_Print( 1, "\n" );
+        else
+            Abc_Print( 1, "  " );
     }
 }
 
