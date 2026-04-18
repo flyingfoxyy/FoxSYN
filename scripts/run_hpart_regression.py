@@ -374,8 +374,8 @@ def main() -> int:
         return 1
 
     specs: list[RunSpec] = []
-    for flow, command in (("base", args.base), ("sota", args.sota)):
-        for parts in parts_list:
+    for parts in parts_list:
+        for flow, command in (("base", args.base), ("sota", args.sota)):
             specs.append(RunSpec(flow=flow, command=command, parts=parts))
 
     jobs: list[Job] = []
