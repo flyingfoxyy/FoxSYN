@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -187,6 +188,10 @@ def parse_stats_line(output: str) -> tuple[str, str, str]:
     if stats_lines:
         stats_line = stats_lines[-1]
         area_match = re.search(r"\barea =\s*([0-9.]+)", stats_line)
+        if area_match is None:
+            area_match = re.search(r"\bnd =\s*([0-9.]+)", stats_line)
+        if area_match is None:
+            area_match = re.search(r"\band =\s*([0-9.]+)", stats_line)
         edge_match = re.search(r"\bedge =\s*([0-9.]+)", stats_line)
         hop_match = re.search(r"\bhop =\s*([0-9.]+)", stats_line)
         if area_match:
@@ -207,6 +212,20 @@ def parse_stats_line(output: str) -> tuple[str, str, str]:
                 area = format_num(last.group("area"))
             if edge == "-":
                 edge = format_num(last.group("edge"))
+    if area == "-" or edge == "-":
+        for stats_line in reversed(stats_lines):
+            if area == "-":
+                area_match = re.search(r"\bnd =\s*([0-9.]+)", stats_line)
+                if area_match is None:
+                    area_match = re.search(r"\band =\s*([0-9.]+)", stats_line)
+                if area_match:
+                    area = format_num(area_match.group(1))
+            if edge == "-":
+                edge_match = re.search(r"\bedge =\s*([0-9.]+)", stats_line)
+                if edge_match:
+                    edge = format_num(edge_match.group(1))
+            if area != "-" and edge != "-":
+                break
     if hop == "-":
         hop_match = re.search(r"\bhop =\s*([0-9.]+)", clean)
         if hop_match:
@@ -293,6 +312,15 @@ def build_tables(
         return f"{area:>{area_width}} {edge:>{edge_width}} {hop:>{hop_width}} {cut:>{cut_width}}"
 
     metrics_width = len(format_metric_row("Area", "Edge", "Hop", "Cutsize"))
+    terminal_width = shutil.get_terminal_size((160, 24)).columns
+    max_cases_fit = cases_per_table
+    while max_cases_fit > 1:
+        table_width = setting_width + 3 + max_cases_fit * metrics_width + (max_cases_fit - 1) * 4
+        if table_width <= terminal_width:
+            break
+        max_cases_fit -= 1
+    cases_per_table = max(1, min(cases_per_table, max_cases_fit))
+
     tables: list[str] = []
     for case_chunk in chunked(case_order, cases_per_table):
         header_top = f"{'setting':<{setting_width}} | " + " || ".join(
@@ -318,7 +346,8 @@ def build_tables(
                     row_cells.append(format_metric_row(result.area, result.edge, result.hop, result.cut))
             lines.append(f"{f'{spec.flow} N={spec.parts:>2}':<{setting_width}} | " + " || ".join(row_cells))
 
-        tables.append("\n".join(lines))
+        border = "-" * max(len(line) for line in lines)
+        tables.append("\n".join([border, *lines, border]))
     return tables
 
 
