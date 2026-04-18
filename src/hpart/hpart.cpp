@@ -112,7 +112,6 @@ bool IsHyperNode( Abc_Obj_t *pObj )
 {
     return pObj != nullptr
         && ( Abc_ObjIsPi( pObj )
-          || Abc_ObjIsPo( pObj )
           || Abc_ObjIsNode( pObj )
           || Abc_ObjIsLatch( pObj )
           || Abc_ObjType( pObj ) == ABC_OBJ_CONST1 );
@@ -179,7 +178,7 @@ Hypergraph BuildHypergraph( Abc_Ntk_t *pNtk, VertexTraits &traits )
     int i;
     std::vector<int> obj_to_vertex( Abc_NtkObjNumMax( pNtk ), -1 );
 
-    hypergraph.vertices.reserve( Abc_NtkPiNum( pNtk ) + Abc_NtkPoNum( pNtk ) + Abc_NtkNodeNum( pNtk ) + Abc_NtkLatchNum( pNtk ) + 1 );
+    hypergraph.vertices.reserve( Abc_NtkPiNum( pNtk ) + Abc_NtkNodeNum( pNtk ) + Abc_NtkLatchNum( pNtk ) + 1 );
     Abc_NtkForEachObj( pNtk, pObj, i )
     {
         if ( Abc_ObjIsLatch( pObj ) )
@@ -295,6 +294,7 @@ void PrintSummary( Abc_Ntk_t *pNtk, const Config &cfg )
     Abc_Obj_t *pObj;
     int i;
     int cut_size = 0;
+    int hop_num = 0;
     int total_count = 0;
 
     Abc_NtkForEachObj( pNtk, pObj, i )
@@ -305,11 +305,11 @@ void PrintSummary( Abc_Ntk_t *pNtk, const Config &cfg )
             counts[part] += 1;
             total_count += 1;
         }
-        if ( Abc_ObjIsCutNet( pObj ) )
-            cut_size += 1;
     }
 
-    Abc_Print( 1, "tool = %s, parts = %d, cut size = %d\n", ToolName( cfg.tool ), cfg.num_parts, cut_size );
+    Abc_NtkGetPartStats( pNtk, NULL, &cut_size, &hop_num, NULL, NULL, NULL );
+
+    Abc_Print( 1, "tool = %s, parts = %d, cut size = %d, hop num = %d\n", ToolName( cfg.tool ), cfg.num_parts, cut_size, hop_num );
     const int part_width = static_cast<int>( std::to_string( std::max( cfg.num_parts - 1, 0 ) ).size() );
     const int count_width = static_cast<int>( std::to_string( *std::max_element( counts.begin(), counts.end() ) ).size() );
     for ( int part = 0; part < cfg.num_parts; ++part )
@@ -321,17 +321,6 @@ void PrintSummary( Abc_Ntk_t *pNtk, const Config &cfg )
         else
             Abc_Print( 1, "  " );
     }
-}
-
-int CountCutSize( Abc_Ntk_t *pNtk )
-{
-    Abc_Obj_t *pObj;
-    int i;
-    int CutSize = 0;
-
-    Abc_NtkForEachObj( pNtk, pObj, i )
-        CutSize += Abc_ObjIsCutNet( pObj );
-    return CutSize;
 }
 
 } // namespace
@@ -362,6 +351,11 @@ bool ApplyPartitioning( Abc_Ntk_t *pNtk, const Config &cfg )
         Abc_Print( -1, "hpart: invalid partition number %d (must be between 2 and 255)\n", cfg.num_parts );
         return false;
     }
+    if ( Abc_NtkLatchNum( pNtk ) > 0 )
+    {
+        Abc_Print( -1, "hpart: latch objects are not supported when computing partition statistics\n" );
+        return false;
+    }
 
     const std::filesystem::path exe_path = FindExecutable( ToolName( cfg.tool ) );
     if ( exe_path.empty() )
@@ -382,9 +376,6 @@ bool ApplyPartitioning( Abc_Ntk_t *pNtk, const Config &cfg )
         Abc_Print( -1, "hpart: current network has no hyperedges to partition\n" );
         return false;
     }
-    if ( traits.saw_latch )
-        Abc_Print( 1, "hpart: warning: network contains latch objects; they are included as hypergraph vertices\n" );
-
     TempDir temp_dir = CreateTempDir();
     if ( !temp_dir.valid )
     {
@@ -432,7 +423,13 @@ bool ApplyPartitioning( Abc_Ntk_t *pNtk, const Config &cfg )
     for ( std::size_t i = 0; i < hypergraph.vertices.size(); ++i )
         Abc_ObjSetPartId( hypergraph.vertices[i], partitions[i] );
     Abc_NtkUpdateCutNets( pNtk );
-    Abc_NtkSetPartStats( pNtk, cfg.num_parts, CountCutSize( pNtk ) );
+    {
+        const int CutSize = Abc_NtkComputeCutSize( pNtk );
+        const int HopNum = Abc_NtkComputeHopNum( pNtk );
+        if ( CutSize < 0 || HopNum < 0 )
+            return false;
+        Abc_NtkSetPartStats( pNtk, cfg.num_parts, CutSize, HopNum );
+    }
 
     PrintSummary( pNtk, cfg );
     return true;

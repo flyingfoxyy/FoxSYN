@@ -66,3 +66,8 @@ add_executable(test_verilog "test_verilog.cpp")
 target_link_libraries(test_verilog PRIVATE
     supper
 )
+
+add_executable(test_hop "test_hop.cpp")
+target_link_libraries(test_hop PRIVATE
+    libabc
+)
