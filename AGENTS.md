@@ -3,6 +3,8 @@
 ## Project Structure & Module Organization
 `src/` contains the active codebase. `src/main.cpp` builds the `FoxSYN` executable and registers ABC commands. Core modules live in `src/fox/`, `src/supper/`, and `src/partsyn/`, each with its own `CMakeLists.txt`. `src/test_dot.cpp` and `src/test_verilog.cpp` build small verification binaries for graph export paths. `src/abc/` is maintained as a separate subrepository so ABC can be updated from upstream while still carrying project-specific changes. Supporting notes live in `docs/`, while build trees are generated into `release/`, `debug/`, `asan/`, or `build_clang/`.
 
+Repository-specific note: place new helper or automation scripts under `scripts/`. Regression inputs remain under `regression/`, and scripts may be invoked from `regression/` when they operate on those datasets.
+
 ## Build, Test, and Development Commands
 Use the top-level `Makefile` as the entry point. From `/home/longfei/FoxSYN`, run:
 

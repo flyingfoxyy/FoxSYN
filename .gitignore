@@ -68,3 +68,4 @@ build-clang
 .claude
 .codex
 .worktrees/
+scripts/__pycache__
