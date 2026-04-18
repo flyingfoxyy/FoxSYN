@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 #include "base/abc/abc.h"
+#include "base/abc/abcPdb.hpp"
 
 ABC_NAMESPACE_IMPL_START
 
@@ -29,7 +30,6 @@ struct Hypergraph {
 
 struct VertexTraits {
     bool saw_latch = false;
-    bool warned_unknown = false;
 };
 
 struct TempDir {
@@ -134,16 +134,6 @@ bool ShouldTraverseInterconnect( Abc_Obj_t *pObj )
           || Abc_ObjIsBo( pObj ) );
 }
 
-void WarnUnexpectedObject( Abc_Obj_t *pObj, VertexTraits &traits )
-{
-    if ( pObj == nullptr || traits.warned_unknown )
-        return;
-    if ( Abc_ObjIsNone( pObj ) || Abc_ObjIsNet( pObj ) || Abc_ObjIsBi( pObj ) || Abc_ObjIsBo( pObj ) )
-        return;
-    Abc_Print( 1, "hpart: warning: skipping unsupported object type %u (obj id %d)\n", Abc_ObjType( pObj ), Abc_ObjId( pObj ) );
-    traits.warned_unknown = true;
-}
-
 void CollectSinks( Abc_Obj_t *pObj, const std::vector<int> &obj_to_vertex, std::vector<int> &sinks, std::vector<char> &visited )
 {
     Abc_Obj_t *pObjR = Abc_ObjRegular( pObj );
@@ -190,8 +180,6 @@ Hypergraph BuildHypergraph( Abc_Ntk_t *pNtk, VertexTraits &traits )
             hypergraph.vertices.push_back( pObj );
             continue;
         }
-
-        WarnUnexpectedObject( pObj, traits );
     }
 
     hypergraph.edges.reserve( hypergraph.vertices.size() );
@@ -366,6 +354,8 @@ bool ApplyPartitioning( Abc_Ntk_t *pNtk, const Config &cfg )
 
     VertexTraits traits;
     Hypergraph hypergraph = BuildHypergraph( pNtk, traits );
+    Abc_Print( 1, "hpart: PI = %d  PO = %d  Node = %d\n", Abc_NtkPiNum( pNtk ), Abc_NtkPoNum( pNtk ), Abc_NtkNodeNum( pNtk ) );
+    Abc_Print( 1, "hpart: hypergraph nodes = %zu  hyperedges = %zu\n", hypergraph.vertices.size(), hypergraph.edges.size() );
     if ( hypergraph.vertices.empty() )
     {
         Abc_Print( -1, "hpart: current network has no hypergraph vertices to partition\n" );
@@ -420,8 +410,9 @@ bool ApplyPartitioning( Abc_Ntk_t *pNtk, const Config &cfg )
     }
 
     Abc_NtkClearPartIds( pNtk );
+    pNtk->pPdb = new Pdb( Abc_NtkObjNumMax(pNtk) );
     for ( std::size_t i = 0; i < hypergraph.vertices.size(); ++i )
-        Abc_ObjSetPartId( hypergraph.vertices[i], partitions[i] );
+        pNtk->pPdb->set( hypergraph.vertices[i]->Id, partitions[i] );
     Abc_NtkUpdateCutNets( pNtk );
     {
         const int CutSize = Abc_NtkComputeCutSize( pNtk );

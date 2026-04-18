@@ -150,19 +150,23 @@ bool TestPoDoesNotAffectCutOrHop()
     return Ok;
 }
 
-bool TestInvalidPartIdFails()
+bool TestInvalidPartIdIsIgnored()
 {
     HopTestNtk Test = CreateHopTestNtk();
     Abc_Ntk_t * pNtk = Test.pNtk;
     AssignHopTestParts( Test );
     Abc_ObjClearPartId( Test.pN2 );
 
+    const int CutSize = Abc_NtkComputeCutSize( pNtk );
     const int HopNum = Abc_NtkComputeHopNum( pNtk );
+    bool Ok = true;
+    Ok &= ExpectEqual( "cut size skips invalid part id", CutSize, 1 );
+    Ok &= ExpectEqual( "hop skips invalid part id", HopNum, 1 );
     Abc_NtkDelete( pNtk );
-    return ExpectEqual( "invalid part id should fail", HopNum, -1 );
+    return Ok;
 }
 
-bool TestGetPartStatsFailsOnInvalidHop()
+bool TestGetPartStatsSkipsInvalidHopSources()
 {
     int NumParts = -1;
     int CutSize = -1;
@@ -177,16 +181,20 @@ bool TestGetPartStatsFailsOnInvalidHop()
     Abc_ObjClearPartId( Test.pN2 );
 
     const bool StatsOk = Abc_NtkGetPartStats( pNtk, &NumParts, &CutSize, &HopNum, &AvgSize, &MinSize, &MaxSize ) != 0;
+    bool Ok = true;
+    Ok &= ExpectTrue( "part stats should succeed when hop skips invalid nodes", StatsOk );
+    Ok &= ExpectEqual( "stored cut size with invalid node skipped", CutSize, 1 );
+    Ok &= ExpectEqual( "stored hop with invalid node skipped", HopNum, 1 );
     Abc_NtkDelete( pNtk );
-    return ExpectFalse( "part stats should fail when hop fails", StatsOk );
+    return Ok;
 }
 
-bool TestLatchFails()
+bool TestLatchReturnsZero()
 {
     Abc_Ntk_t * pNtk = CreateLatchTestNtk();
     const int HopNum = Abc_NtkComputeHopNum( pNtk );
     Abc_NtkDelete( pNtk );
-    return ExpectEqual( "latch should fail", HopNum, -1 );
+    return ExpectEqual( "latch returns zero when no valid part ids exist", HopNum, 0 );
 }
 
 } // namespace
@@ -196,8 +204,8 @@ int main()
     bool Ok = true;
     Ok &= TestHopCountAndStats();
     Ok &= TestPoDoesNotAffectCutOrHop();
-    Ok &= TestInvalidPartIdFails();
-    Ok &= TestGetPartStatsFailsOnInvalidHop();
-    Ok &= TestLatchFails();
+    Ok &= TestInvalidPartIdIsIgnored();
+    Ok &= TestGetPartStatsSkipsInvalidHopSources();
+    Ok &= TestLatchReturnsZero();
     return Ok ? 0 : 1;
 }

@@ -101,7 +101,6 @@ The following ABC objects are treated as hypergraph vertices:
 
 The following objects are not hypergraph vertices:
 
-- `PO`
 - `NET`
 - `BI`
 - `BO`
@@ -127,27 +126,26 @@ Traversal rules:
   - `BI`
   - `BO`
 - stop when another hypergraph vertex is reached
-- ignore `PO`
 
 An edge is emitted only when it has at least two pins:
 
 - the carrier vertex itself
 - at least one reachable sink vertex
 
-This means `PO` is excluded both from partitioning and from later partition
-statistics.
+`PO` is ignored during hypergraph construction.
 
 ## Writeback Flow
 
 After the partition file is read:
 
 1. clear all existing `part_id`
-2. assign the new `part_id` to each hypergraph vertex
-3. recompute `fCutNet`
-4. compute `cut size`
-5. compute `hop number`
-6. store `{num_parts, cut_size, hop_num}` into `Pdb`
-7. print a summary
+2. create one `Pdb` object sized by `Abc_NtkObjNumMax()`
+3. assign the new `part_id` to each hypergraph vertex
+4. traverse the network once to recompute `fCutNet`
+5. traverse the network once to compute `hop number`
+6. derive `cut size` from the marked `fCutNet`
+7. store `{num_parts, cut_size, hop_num}` into `Pdb`
+8. print a summary
 
 The logical network itself is not rewritten. `hpart` only updates physical
 partition metadata.
@@ -181,74 +179,56 @@ The following objects do not participate:
 
 ### `fCutNet`
 
-`fCutNet` is maintained on participating source objects.
+`fCutNet` is maintained on fanin objects.
 
-A source object is marked as cut when:
+A fanin object is marked as cut when:
 
-- the source has a valid `part_id`
-- at least one reachable participating sink also has a valid `part_id`
-- the sink partition differs from the source partition
+- the current object has a valid `part_id`
+- one of its fanins also has a valid `part_id`
+- the fanin partition differs from the current object partition
 
-`PO` never causes `fCutNet` to be set.
+This is checked directly on explicit fanin edges. There is no recursive sink
+collection in the current implementation. `PO` is skipped, so a `PO` boundary
+does not mark its driver as cut.
 
 ### Cut Size
 
-`cut size` is the number of participating source objects whose fanout cone
-contains at least one participating sink in a different partition.
-
-Equivalent view:
-
-- count one cut source once
-- even if it reaches multiple sinks in other partitions, it still contributes
-  only one to `cut size`
-
-Example:
-
-- `a` drives `b` and `c`
-- `a`, `b` are in `part0`
-- `c` is in `part1`
-
-Then:
-
-- `a` is a cut source
-- `a` contributes `1` to `cut size`
+`cut size` is the number of participating `PI/NODE/CONST1` objects whose
+`fCutNet` bit is set after the direct fanin scan.
 
 ### Hop Number
 
-`hop number` is the maximum hop count among all paths in the participating
-netlist.
+`hop number` is computed with one forward dynamic-programming pass over the
+network.
 
-A single edge contributes one hop when:
+Each object stores one local hop level, initialized to `0`.
 
-- the source and sink are both participating objects
-- both have valid `part_id`
-- their partitions are different
+For every participating object:
+
+- inspect all fanins with valid `part_id`
+- compute:
+  - `fanin_hop + 1` if fanin partition differs from current object partition
+  - `fanin_hop + 0` otherwise
+- the current object hop level is the maximum candidate over all fanins
+- the network hop number is the maximum hop level seen over all objects
 
 Example:
 
-- `a` drives `b` and `c`
+- `a -> b -> c`
 - `a`, `b` are in `part0`
 - `c` is in `part1`
 
 Then:
 
-- edge `a -> b` contributes `0`
-- edge `a -> c` contributes `1`
-
-For a longer path, hop count is accumulated along the path. The network hop
-number is the maximum accumulated value.
+- `hop(a) = 0`
+- `hop(b) = 0`
+- `hop(c) = 1`
 
 ### Error Conditions
 
-`Abc_NtkComputeCutSize()` and `Abc_NtkComputeHopNum()` fail if:
-
-- a participating object has an invalid `part_id`
-- a latch is encountered
-- an unsupported object type is encountered in the traversal
-- a combinational cycle is detected during hop computation
-
-When dynamic recomputation fails, `Abc_NtkGetPartStats()` also reports failure
-instead of returning a fake `-1` stat value.
+The current implementation does not treat missing `part_id` as an error.
+Objects without a valid `part_id` are skipped by `cut size` and `hop number`
+computation.
 
 ## Summary Output
 
@@ -279,12 +259,7 @@ Where:
 ## Current Limitations
 
 - latches are not supported
-- `PO` is intentionally excluded from:
-  - hypergraph vertices
-  - cut size computation
-  - hop number computation
-- unsupported object types are skipped during hypergraph construction, with at
-  most one warning
+- `PO` does not participate in hypergraph construction, `cut size`, or `hop`
 - the command depends on an external partitioner executable instead of an
   in-process partitioning library
 
