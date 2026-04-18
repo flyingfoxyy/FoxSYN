@@ -48,6 +48,7 @@ class JobResult:
     cut: str = "-"
     area: str = "-"
     edge: str = "-"
+    hop: str = "-"
     tool: str = "-"
     sec: str = "-"
     status: str = "FAIL"
@@ -172,23 +173,32 @@ def make_display_case(cases_root: Path, case_path: Path) -> str:
     return rel[: -len(suffix)] if suffix else rel
 
 
-def parse_stats_line(output: str) -> tuple[str, str]:
+def parse_stats_line(output: str) -> tuple[str, str, str]:
     clean = strip_ansi(output)
     lines = [line.rstrip() for line in clean.splitlines()]
     stats_lines = [
         line for line in lines
         if ":" in line and not line.startswith("ABC command line:") and not line.lstrip().startswith("pdb")
     ]
+    pdb_lines = [line for line in lines if line.lstrip().startswith("pdb")]
     area = "-"
     edge = "-"
+    hop = "-"
     if stats_lines:
         stats_line = stats_lines[-1]
         area_match = re.search(r"\barea =\s*([0-9.]+)", stats_line)
         edge_match = re.search(r"\bedge =\s*([0-9.]+)", stats_line)
+        hop_match = re.search(r"\bhop =\s*([0-9.]+)", stats_line)
         if area_match:
             area = format_num(area_match.group(1))
         if edge_match:
             edge = format_num(edge_match.group(1))
+        if hop_match:
+            hop = format_num(hop_match.group(1))
+    if hop == "-" and pdb_lines:
+        hop_match = re.search(r"\bhop =\s*([0-9.]+)", pdb_lines[-1])
+        if hop_match:
+            hop = format_num(hop_match.group(1))
     if area == "-" or edge == "-":
         verbose_matches = list(IF_VERBOSE_RE.finditer(clean))
         if verbose_matches:
@@ -197,7 +207,11 @@ def parse_stats_line(output: str) -> tuple[str, str]:
                 area = format_num(last.group("area"))
             if edge == "-":
                 edge = format_num(last.group("edge"))
-    return area, edge
+    if hop == "-":
+        hop_match = re.search(r"\bhop =\s*([0-9.]+)", clean)
+        if hop_match:
+            hop = format_num(hop_match.group(1))
+    return area, edge, hop
 
 
 def run_job(foxsyn: Path, workdir: Path, tool: str, timeout: int, job: Job) -> JobResult:
@@ -238,7 +252,7 @@ def run_job(foxsyn: Path, workdir: Path, tool: str, timeout: int, job: Job) -> J
         result.tool = summary.group("tool")
         result.cut = summary.group("cut")
 
-    result.area, result.edge = parse_stats_line(output)
+    result.area, result.edge, result.hop = parse_stats_line(output)
 
     error = ERROR_RE.search(strip_ansi(output))
     if error:
@@ -253,7 +267,7 @@ def run_job(foxsyn: Path, workdir: Path, tool: str, timeout: int, job: Job) -> J
 def print_progress(done: int, total: int, result: JobResult) -> None:
     print(
         f"[{done:>3}/{total}] {result.row_label:<10} {result.case}"
-        f" -> {result.status} cut={result.cut} area={result.area} edge={result.edge} time={result.sec}s",
+        f" -> {result.status} cut={result.cut} area={result.area} edge={result.edge} hop={result.hop} time={result.sec}s",
         file=sys.stderr,
         flush=True,
     )
@@ -271,20 +285,21 @@ def build_tables(
 ) -> list[str]:
     area_width = 10
     edge_width = 11
+    hop_width = 5
     cut_width = 8
     setting_width = max(len("setting"), max(len(f"{spec.flow} N={spec.parts:>2}") for spec in specs))
 
-    def format_metric_triplet(area: str, edge: str, cut: str) -> str:
-        return f"{area:>{area_width}} {edge:>{edge_width}} {cut:>{cut_width}}"
+    def format_metric_row(area: str, edge: str, hop: str, cut: str) -> str:
+        return f"{area:>{area_width}} {edge:>{edge_width}} {hop:>{hop_width}} {cut:>{cut_width}}"
 
-    metrics_width = len(format_metric_triplet("Area", "Edge", "Cutsize"))
+    metrics_width = len(format_metric_row("Area", "Edge", "Hop", "Cutsize"))
     tables: list[str] = []
     for case_chunk in chunked(case_order, cases_per_table):
         header_top = f"{'setting':<{setting_width}} | " + " || ".join(
             f"{case_name:^{metrics_width}}" for case_name in case_chunk
         )
         header_bottom = f"{'':<{setting_width}} | " + " || ".join(
-            format_metric_triplet("Area", "Edge", "Cutsize") for _ in case_chunk
+            format_metric_row("Area", "Edge", "Hop", "Cutsize") for _ in case_chunk
         )
         separator = f"{'-' * setting_width}-+-" + "-||-".join(
             "-" * metrics_width for _ in case_chunk
@@ -296,11 +311,11 @@ def build_tables(
             for case_name in case_chunk:
                 result = results.get((case_name, spec.flow, spec.parts))
                 if result is None:
-                    row_cells.append(format_metric_triplet("-", "-", "-"))
+                    row_cells.append(format_metric_row("-", "-", "-", "-"))
                 elif result.status != "OK":
-                    row_cells.append(format_metric_triplet("ERR", "ERR", "ERR"))
+                    row_cells.append(format_metric_row("ERR", "ERR", "ERR", "ERR"))
                 else:
-                    row_cells.append(format_metric_triplet(result.area, result.edge, result.cut))
+                    row_cells.append(format_metric_row(result.area, result.edge, result.hop, result.cut))
             lines.append(f"{f'{spec.flow} N={spec.parts:>2}':<{setting_width}} | " + " || ".join(row_cells))
 
         tables.append("\n".join(lines))
