@@ -249,7 +249,7 @@ std::string BuildCommand( const std::filesystem::path &exe_path, const std::file
     if ( cfg.tool == Tool::KMetis )
         oss << ' ' << cfg.num_parts;
     else
-        oss << ' ' << cfg.num_parts << " 2 10 1 1 0 0 0";
+        oss << ' ' << cfg.num_parts << ' ' << cfg.balance_pct << " 10 1 1 0 0 0";
 
     if ( !cfg.verbose )
         oss << " > /dev/null 2>&1";
@@ -420,6 +420,7 @@ bool ApplyPartitioning( Abc_Ntk_t *pNtk, const Config &cfg )
         if ( CutSize < 0 || HopNum < 0 )
             return false;
         Abc_NtkSetPartStats( pNtk, cfg.num_parts, CutSize, HopNum );
+        pNtk->pPdb->set_balance_pct( cfg.balance_pct );
     }
 
     PrintSummary( pNtk, cfg );

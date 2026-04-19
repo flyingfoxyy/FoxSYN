@@ -41,6 +41,8 @@ add_subdirectory(fox)
 add_subdirectory(supper)
 add_subdirectory(partsyn)
 add_subdirectory(hpart)
+add_subdirectory(timer)
+add_subdirectory(cpr)
 
 add_compile_options(-fexceptions)
 
@@ -53,6 +55,8 @@ target_link_libraries(FoxSYN PRIVATE
     supper
     partsyn
     hpart
+    timer
+    cpr
 )
 
 # Add test_dot executable to demonstrate the DOT file generation

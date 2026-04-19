@@ -15,6 +15,7 @@ enum class Tool {
 struct Config {
     Tool tool = Tool::HMetis;
     int num_parts = 4;
+    int balance_pct = 2;
     bool verbose = false;
 };
 

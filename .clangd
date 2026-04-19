@@ -3,4 +3,4 @@ CompileFlags:
     - -std=c++23
     - -xc++
 Index:
-  Background: true
+  Background: Build

@@ -17,6 +17,8 @@
 #include "supper/map.hpp"
 #include "partsyn/partsyn.hpp"
 #include "hpart/hpart.hpp"
+#include "timer/timer.hpp"
+#include "cpr/cpr.hpp"
 
 extern "C"
 {
@@ -330,6 +332,216 @@ usage:
     return 1;
 }
 
+int Timer_Command(Abc_Frame_t *pAbc, int argc, char **argv)
+{
+    fox::timer::Config cfg;
+    Abc_Ntk_t *pNtk = Abc_FrameReadNtk(pAbc);
+
+    if (argc > 1 && !strcmp(argv[1], "-h"))
+    {
+        goto usage;
+    }
+
+    for (int i = 1; i != argc; ++i)
+    {
+        if (argv[i][0] != '-')
+        {
+            std::cout << "timer: unexpected argument " << argv[i] << "\n";
+            goto usage;
+        }
+        const char arg = *(argv[i] + 1);
+        switch (arg)
+        {
+        case 'N':
+            if (i + 1 >= argc)
+            {
+                printf("timer: -N requires a number\n");
+                return 1;
+            }
+            cfg.top_n = std::atoi(argv[++i]);
+            if (cfg.top_n < 1)
+            {
+                printf("timer: invalid path count %d (must be >= 1)\n", cfg.top_n);
+                return 1;
+            }
+            break;
+        case 'v':
+            cfg.verbose ^= 1;
+            break;
+        case 'h':
+            goto usage;
+        default:
+            std::cout << "timer: unknown argument -" << arg << "\n";
+            goto usage;
+        }
+    }
+
+    if (!pNtk)
+    {
+        printf("timer: current network is empty\n");
+        return 1;
+    }
+
+    return fox::timer::RunTimer(pNtk, cfg) ? 0 : 1;
+
+usage:
+    Abc_Print(-2, "usage: timer [-N num] [-v]\n");
+    Abc_Print(-2, "\t           simple hop-aware STA report on the current network\n");
+    Abc_Print(-2, "\t-N num  : print top num critical paths [default = %d]\n", cfg.top_n);
+    Abc_Print(-2, "\t-v      : toggles verbose output\n");
+    Abc_Print(-2, "\n");
+    return 1;
+}
+
+int Cpr_Command(Abc_Frame_t *pAbc, int argc, char **argv)
+{
+    fox::cpr::Config cfg;
+    Abc_Ntk_t *pNtk = Abc_FrameReadNtk(pAbc);
+
+    if (argc > 1 && !strcmp(argv[1], "-h"))
+    {
+        goto usage;
+    }
+
+    for (int i = 1; i != argc; ++i)
+    {
+        if (argv[i][0] != '-')
+        {
+            std::cout << "cpr: unexpected argument " << argv[i] << "\n";
+            goto usage;
+        }
+        const char arg = *(argv[i] + 1);
+        switch (arg)
+        {
+        case 'B':
+            if (i + 1 >= argc)
+            {
+                printf("cpr: -B requires a balance percentage\n");
+                return 1;
+            }
+            cfg.balance_pct = std::atoi(argv[++i]);
+            if (cfg.balance_pct < 1 || cfg.balance_pct > 99)
+            {
+                printf("cpr: invalid balance percentage %d (must be between 1 and 99)\n", cfg.balance_pct);
+                return 1;
+            }
+            break;
+        case 'G':
+            if (i + 1 >= argc)
+            {
+                printf("cpr: -G requires a growth percentage\n");
+                return 1;
+            }
+            cfg.replicate_growth_pct = std::atoi(argv[++i]);
+            if (cfg.replicate_growth_pct < 0 || cfg.replicate_growth_pct > 100)
+            {
+                printf("cpr: invalid growth percentage %d (must be between 0 and 100)\n", cfg.replicate_growth_pct);
+                return 1;
+            }
+            break;
+        case 'C':
+            if (i + 1 >= argc)
+            {
+                printf("cpr: -C requires a cutsize growth percentage\n");
+                return 1;
+            }
+            cfg.cutsize_growth_pct = std::atoi(argv[++i]);
+            if (cfg.cutsize_growth_pct < 0 || cfg.cutsize_growth_pct > 999)
+            {
+                printf("cpr: invalid cutsize growth percentage %d (must be between 0 and 999)\n", cfg.cutsize_growth_pct);
+                return 1;
+            }
+            break;
+        case 'r':
+            if (i + 1 >= argc)
+            {
+                printf("cpr: -r requires a round count\n");
+                return 1;
+            }
+            cfg.relocate_max_rounds = std::atoi(argv[++i]);
+            if (cfg.relocate_max_rounds < 0)
+            {
+                printf("cpr: invalid relocate round count %d\n", cfg.relocate_max_rounds);
+                return 1;
+            }
+            break;
+        case 's':
+            if (i + 1 >= argc)
+            {
+                printf("cpr: -s requires a stall limit\n");
+                return 1;
+            }
+            cfg.relocate_stall_limit = std::atoi(argv[++i]);
+            if (cfg.relocate_stall_limit < 1)
+            {
+                printf("cpr: invalid relocate stall limit %d (must be >= 1)\n", cfg.relocate_stall_limit);
+                return 1;
+            }
+            break;
+        case 'R':
+            if (i + 1 >= argc)
+            {
+                printf("cpr: -R requires a round count\n");
+                return 1;
+            }
+            cfg.replicate_max_rounds = std::atoi(argv[++i]);
+            if (cfg.replicate_max_rounds < 0)
+            {
+                printf("cpr: invalid replicate round count %d\n", cfg.replicate_max_rounds);
+                return 1;
+            }
+            break;
+        case 'S':
+            if (i + 1 >= argc)
+            {
+                printf("cpr: -S requires a stall limit\n");
+                return 1;
+            }
+            cfg.replicate_stall_limit = std::atoi(argv[++i]);
+            if (cfg.replicate_stall_limit < 1)
+            {
+                printf("cpr: invalid replicate stall limit %d (must be >= 1)\n", cfg.replicate_stall_limit);
+                return 1;
+            }
+            break;
+        case 'v':
+            cfg.verbose ^= 1;
+            break;
+        case 'h':
+            goto usage;
+        default:
+            std::cout << "cpr: unknown argument -" << arg << "\n";
+            goto usage;
+        }
+    }
+
+    if (!pNtk)
+    {
+        printf("cpr: current network is empty\n");
+        return 1;
+    }
+
+    if (!fox::cpr::ApplyCpr(pNtk, cfg))
+        return 1;
+
+    return 0;
+
+usage:
+    Abc_Print(-2, "usage: cpr [-B pct] [-G pct] [-C pct] [-r num] [-s num] [-R num] [-S num] [-v]\n");
+    Abc_Print(-2, "\t           critical-path delay reduction using partition info\n");
+    Abc_Print(-2, "\t           relocate phase runs first, then replicate\n");
+    Abc_Print(-2, "\t-B pct  : balance imbalance percent, enforced at end (-1 = inherit pdb) [default = %d]\n", cfg.balance_pct);
+    Abc_Print(-2, "\t-G pct  : max node growth from replication, in percent of initial nodes [default = %d]\n", cfg.replicate_growth_pct);
+    Abc_Print(-2, "\t-C pct  : max cutsize growth across the whole run, in percent [default = %d]\n", cfg.cutsize_growth_pct);
+    Abc_Print(-2, "\t-r num  : max relocate rounds (>= 0) [default = %d]\n", cfg.relocate_max_rounds);
+    Abc_Print(-2, "\t-s num  : quit relocate after N consecutive rounds without timing gain (>= 1) [default = %d]\n", cfg.relocate_stall_limit);
+    Abc_Print(-2, "\t-R num  : max replicate rounds (>= 0) [default = %d]\n", cfg.replicate_max_rounds);
+    Abc_Print(-2, "\t-S num  : quit replicate after N consecutive rounds without timing gain (>= 1) [default = %d]\n", cfg.replicate_stall_limit);
+    Abc_Print(-2, "\t-v      : toggles verbose output\n");
+    Abc_Print(-2, "\n");
+    return 1;
+}
+
 int HPart_Command(Abc_Frame_t *pAbc, int argc, char **argv)
 {
     using namespace fox::hpart;
@@ -390,6 +602,19 @@ int HPart_Command(Abc_Frame_t *pAbc, int argc, char **argv)
                 return 1;
             }
             break;
+        case 'B':
+            if (i + 1 >= argc)
+            {
+                printf("hpart: -B requires a balance percentage\n");
+                return 1;
+            }
+            cfg.balance_pct = std::atoi(argv[++i]);
+            if (cfg.balance_pct < 1 || cfg.balance_pct > 49)
+            {
+                printf("hpart: invalid balance percentage %d (must be between 1 and 49)\n", cfg.balance_pct);
+                return 1;
+            }
+            break;
         case 'v':
             cfg.verbose ^= 1;
             break;
@@ -411,10 +636,11 @@ int HPart_Command(Abc_Frame_t *pAbc, int argc, char **argv)
     return ApplyPartitioning(pNtk, cfg) ? 0 : 1;
 
 usage:
-    Abc_Print(-2, "usage: hpart [-T hmetis|shmetis|kmetis] [-N num] [-v]\n");
+    Abc_Print(-2, "usage: hpart [-T hmetis|shmetis|kmetis] [-N num] [-B pct] [-v]\n");
     Abc_Print(-2, "\t           partitions the current network structurally and creates a pdb\n");
     Abc_Print(-2, "\t-T name  : partitioner name [default = %s]\n", ToolName(cfg.tool));
     Abc_Print(-2, "\t-N num   : number of partitions (2 <= num <= 255) [default = %d]\n", cfg.num_parts);
+    Abc_Print(-2, "\t-B pct   : balance imbalance percent (1 <= pct <= 49) [default = %d]\n", cfg.balance_pct);
     Abc_Print(-2, "\t-v       : toggles partitioner log output\n");
     Abc_Print(-2, "\n");
     return 1;
@@ -428,6 +654,8 @@ struct CmdRegister
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "smap",   Suppermap_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "partsyn", PartSyn_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "hpart", HPart_Command, 1);
+        Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "timer", Timer_Command, 1);
+        Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "cpr", Cpr_Command, 1);
     }
 } regiter;
 
