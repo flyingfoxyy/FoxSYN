@@ -75,3 +75,10 @@ add_executable(test_hop "test_hop.cpp")
 target_link_libraries(test_hop PRIVATE
     libabc
 )
+
+add_executable(test_cpr "test_cpr.cpp")
+target_link_libraries(test_cpr PRIVATE
+    libabc
+    timer
+    cpr
+)
