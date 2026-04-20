@@ -121,7 +121,6 @@ void AssignBasicRelocateParts(const BasicRelocateNtk &test)
     Abc_ObjSetPartId(test.pN3, 1);
     Abc_ObjSetPartId(test.pN4, 1);
     Abc_ObjSetPartId(test.pN5, 2);
-    Abc_NtkUpdateCutNets(test.pNtk);
 }
 
 void AssignSplitRelocateParts(const SplitRelocateNtk &test)
@@ -136,7 +135,6 @@ void AssignSplitRelocateParts(const SplitRelocateNtk &test)
     Abc_ObjSetPartId(test.pExtra0, 0);
     Abc_ObjSetPartId(test.pExtra1, 2);
     Abc_ObjSetPartId(test.pExtra2, 2);
-    Abc_NtkUpdateCutNets(test.pNtk);
 }
 
 bool TestRelocateMovesWholeSegmentToSink()

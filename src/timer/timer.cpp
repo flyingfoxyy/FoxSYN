@@ -340,3 +340,15 @@ bool RunTimer(Abc_Ntk_t *pNtk, const Config &cfg)
 }
 
 } // namespace fox::timer
+
+extern "C" int Fox_TimerTryMaxArrival(Abc_Ntk_t *pNtk, float *pMaxArrival)
+{
+    if (!pNtk || !pNtk->pPdb || Abc_NtkIsStrash(pNtk))
+        return 0;
+
+    fox::timer::SimpleTimer timer(pNtk);
+    timer.compute_arrival();
+    if (pMaxArrival)
+        *pMaxArrival = timer.max_arrival();
+    return 1;
+}

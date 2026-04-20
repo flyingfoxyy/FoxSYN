@@ -20,14 +20,6 @@ bool ExpectTrue( const char *label, bool actual )
     return false;
 }
 
-bool ExpectFalse( const char *label, bool actual )
-{
-    if ( !actual )
-        return true;
-    std::fprintf( stderr, "%s: expected false, got true\n", label );
-    return false;
-}
-
 struct HopTestNtk
 {
     Abc_Ntk_t * pNtk = nullptr;
@@ -75,14 +67,12 @@ void AssignHopTestParts( const HopTestNtk & Test )
     Abc_ObjSetPartId( Test.pN2, 1 );
     Abc_ObjSetPartId( Test.pN3, 2 );
     Abc_ObjSetPartId( Test.pPo, 2 );
-    Abc_NtkUpdateCutNets( Test.pNtk );
 }
 
 void AssignHopTestPartsPoSeparated( const HopTestNtk & Test )
 {
     AssignHopTestParts( Test );
     Abc_ObjSetPartId( Test.pPo, 1 );
-    Abc_NtkUpdateCutNets( Test.pNtk );
 }
 
 Abc_Ntk_t * CreateLatchTestNtk()
@@ -144,7 +134,6 @@ bool TestPoDoesNotAffectCutOrHop()
     bool Ok = true;
     Ok &= ExpectEqual( "cut size ignores po", ComputedCutSize, 3 );
     Ok &= ExpectEqual( "hop num ignores po", ComputedHopNum, 2 );
-    Ok &= ExpectFalse( "po-only driver is not cut net", Abc_ObjIsCutNet( Test.pN3 ) != 0 );
 
     Abc_NtkDelete( pNtk );
     return Ok;

@@ -55,6 +55,63 @@ struct SegmentMove {
     int new_cut = 0;
 };
 
+static bool is_part_stat_vertex(Abc_Obj_t *pObj)
+{
+    return pObj
+        && (Abc_ObjIsPi(pObj)
+         || Abc_ObjIsNode(pObj)
+         || Abc_ObjType(pObj) == ABC_OBJ_CONST1);
+}
+
+struct LocalCutNetState {
+    std::vector<char> is_cut_net;
+    int cut_size = 0;
+
+    void recompute(Abc_Ntk_t *pNtk)
+    {
+        cut_size = 0;
+        if (!pNtk)
+        {
+            is_cut_net.clear();
+            return;
+        }
+
+        is_cut_net.assign(Abc_NtkObjNumMax(pNtk), 0);
+        int i, k;
+        Abc_Obj_t *pObj;
+        Abc_Obj_t *pFanin;
+        Abc_NtkForEachObj(pNtk, pObj, i)
+        {
+            if (!is_part_stat_vertex(pObj))
+                continue;
+            part_id obj_part = Abc_ObjGetPartId(pObj);
+            if (obj_part == ABC_PART_ID_NONE)
+                continue;
+
+            Abc_ObjForEachFanin(pObj, pFanin, k)
+            {
+                if (!is_part_stat_vertex(pFanin))
+                    continue;
+                part_id fanin_part = Abc_ObjGetPartId(pFanin);
+                if (fanin_part == ABC_PART_ID_NONE || fanin_part == obj_part)
+                    continue;
+                if (!is_cut_net[pFanin->Id])
+                {
+                    is_cut_net[pFanin->Id] = 1;
+                    cut_size += 1;
+                }
+            }
+        }
+    }
+
+    bool is_cut(Abc_Obj_t *pObj) const
+    {
+        return pObj && pObj->Id >= 0
+            && static_cast<size_t>(pObj->Id) < is_cut_net.size()
+            && is_cut_net[pObj->Id] != 0;
+    }
+};
+
 static int get_num_parts(Abc_Ntk_t *pNtk)
 {
     if (!pNtk->pPdb)
@@ -177,9 +234,6 @@ static Abc_Obj_t *duplicate_node(Abc_Ntk_t *pNtk, Abc_Obj_t *pObj)
     return pDup;
 }
 
-// Returns how many duplicates were added (0 if none improved or budget hit).
-// Each accepted duplicate is appended to `pLedger` (if non-null) so the
-// caller can roll the whole round back on a cut-net cap breach.
 // Count objects in each partition, using the same accounting as hpart
 // (every object with a valid part_id).
 static void partition_sizes(Abc_Ntk_t *pNtk, int num_parts, std::vector<int> &sz)
@@ -381,11 +435,10 @@ static void apply_segment_move(const SegmentMove &move)
         Abc_ObjSetPartId(move.nodes[i], move.new_parts[i]);
 }
 
-static void revert_segment_move(Abc_Ntk_t *pNtk, const SegmentMove &move)
+static void revert_segment_move(const SegmentMove &move)
 {
     for (size_t i = 0; i < move.nodes.size(); ++i)
         Abc_ObjSetPartId(move.nodes[i], move.old_parts[i]);
-    Abc_NtkUpdateCutNets(pNtk);
 }
 
 static bool is_better_segment_move(const SegmentMove &cand, const SegmentMove &best)
@@ -421,9 +474,10 @@ static bool evaluate_segment_move(Abc_Ntk_t *pNtk, const SegmentMove &shape,
 {
     evaluated = shape;
     apply_segment_move(shape);
-    Abc_NtkUpdateCutNets(pNtk);
 
-    const int cur_cut = Abc_NtkComputeCutSize(pNtk);
+    LocalCutNetState cut_nets;
+    cut_nets.recompute(pNtk);
+    const int cur_cut = cut_nets.cut_size;
     bool ok = false;
     if (cur_cut <= max_allowed_cutsize)
     {
@@ -454,7 +508,7 @@ static bool evaluate_segment_move(Abc_Ntk_t *pNtk, const SegmentMove &shape,
         }
     }
 
-    revert_segment_move(pNtk, shape);
+    revert_segment_move(shape);
     return ok;
 }
 
@@ -508,7 +562,7 @@ static bool find_best_segment_move(Abc_Ntk_t *pNtk,
     return found;
 }
 
-static void revert_replicate_round(Abc_Ntk_t *pNtk, std::vector<ReplicateEntry> &entries)
+static void revert_replicate_round(std::vector<ReplicateEntry> &entries)
 {
     for (auto it = entries.rbegin(); it != entries.rend(); ++it)
     {
@@ -517,16 +571,16 @@ static void revert_replicate_round(Abc_Ntk_t *pNtk, std::vector<ReplicateEntry> 
         Abc_NtkDeleteObj(it->pDup);
     }
     entries.clear();
-    Abc_NtkUpdateCutNets(pNtk);
 }
 
 static bool try_replicate_on_path(Abc_Obj_t *pObj, Abc_Obj_t *pSucc, std::vector<int> &path_ids,
                                   int path_idx, Abc_Ntk_t *pNtk, int budget,
-                                  int &path_hops, std::vector<ReplicateEntry> *pLedger)
+                                  LocalCutNetState &cut_nets, int &path_hops,
+                                  std::vector<ReplicateEntry> *pLedger)
 {
     if (budget <= 0 || !pObj || !pSucc)
         return false;
-    if (!Abc_ObjIsCutNet(pObj))
+    if (!cut_nets.is_cut(pObj))
         return false;
 
     part_id my_part = Abc_ObjGetPartId(pObj);
@@ -564,6 +618,7 @@ static bool try_replicate_on_path(Abc_Obj_t *pObj, Abc_Obj_t *pSucc, std::vector
     {
         path_hops = new_hops;
         path_ids.swap(new_path_ids);
+        cut_nets.recompute(pNtk);
         if (pLedger)
             pLedger->push_back({pObj, pDup, fanouts});
         return true;
@@ -572,6 +627,7 @@ static bool try_replicate_on_path(Abc_Obj_t *pObj, Abc_Obj_t *pSucc, std::vector
     for (Abc_Obj_t *pF : fanouts)
         Abc_ObjPatchFanin(pF, pDup, pObj);
     Abc_NtkDeleteObj(pDup);
+    cut_nets.recompute(pNtk);
     return false;
 }
 
@@ -599,8 +655,9 @@ static void run_relocate_phase(Abc_Ntk_t *pNtk, SimpleTimer &timer, int num_part
         if (segments.size() < 2)
             break;
 
-        Abc_NtkUpdateCutNets(pNtk);
-        int base_cut = Abc_NtkComputeCutSize(pNtk);
+        LocalCutNetState base_cut_nets;
+        base_cut_nets.recompute(pNtk);
+        int base_cut = base_cut_nets.cut_size;
         std::vector<int> base_sizes;
         partition_sizes(pNtk, num_parts, base_sizes);
 
@@ -619,11 +676,12 @@ static void run_relocate_phase(Abc_Ntk_t *pNtk, SimpleTimer &timer, int num_part
 
         apply_segment_move(best);
         timer.compute_arrival();
-        Abc_NtkUpdateCutNets(pNtk);
-        int cur_cut = Abc_NtkComputeCutSize(pNtk);
+        LocalCutNetState cur_cut_nets;
+        cur_cut_nets.recompute(pNtk);
+        int cur_cut = cur_cut_nets.cut_size;
         if (cur_cut > max_allowed_cutsize)
         {
-            revert_segment_move(pNtk, best);
+            revert_segment_move(best);
             timer.compute_arrival();
             if (cfg.verbose)
                 printf("cpr: relocate round %d breached cut cap (%d>%d); reverted, stopping phase\n",
@@ -668,6 +726,8 @@ static void run_replicate_phase(Abc_Ntk_t *pNtk, SimpleTimer &timer, const Confi
         int prev_hops = count_path_hops(pNtk, path_ids);
         if (prev_hops <= 0)
             break;
+        LocalCutNetState cut_nets;
+        cut_nets.recompute(pNtk);
 
         std::vector<ReplicateEntry> entries;
         int round_adds = 0;
@@ -683,7 +743,7 @@ static void run_replicate_phase(Abc_Ntk_t *pNtk, SimpleTimer &timer, const Confi
             if (!pObj || !Abc_ObjIsNode(pObj))
                 continue;
 
-            if (try_replicate_on_path(pObj, pSucc, path_ids, idx, pNtk, remaining,
+            if (try_replicate_on_path(pObj, pSucc, path_ids, idx, pNtk, remaining, cut_nets,
                                       cur_hops, &entries))
             {
                 extra_nodes += 1;
@@ -691,12 +751,12 @@ static void run_replicate_phase(Abc_Ntk_t *pNtk, SimpleTimer &timer, const Confi
             }
         }
 
-        Abc_NtkUpdateCutNets(pNtk);
-        int cur_cut = Abc_NtkComputeCutSize(pNtk);
+        int cur_cut = cut_nets.cut_size;
         if (cur_cut > max_allowed_cutsize)
         {
-            revert_replicate_round(pNtk, entries);
+            revert_replicate_round(entries);
             extra_nodes -= round_adds;
+            cut_nets.recompute(pNtk);
             timer.compute_arrival();
             if (cfg.verbose)
                 printf("cpr: replicate round %d breached cut cap (%d>%d); reverted, stopping phase\n",
@@ -771,8 +831,9 @@ bool ApplyCpr(Abc_Ntk_t *pNtk, const Config &cfg)
     int extra_nodes = 0;
 
     // Baseline cut-net count and absolute cap.
-    Abc_NtkUpdateCutNets(pNtk);
-    const int initial_cutsize = Abc_NtkComputeCutSize(pNtk);
+    LocalCutNetState initial_cut_nets;
+    initial_cut_nets.recompute(pNtk);
+    const int initial_cutsize = initial_cut_nets.cut_size;
     int max_allowed_cutsize = initial_cutsize < 0
         ? std::numeric_limits<int>::max()
         : static_cast<int>(static_cast<long long>(initial_cutsize)
@@ -802,12 +863,13 @@ bool ApplyCpr(Abc_Ntk_t *pNtk, const Config &cfg)
     // when picking nodes to move.
     timer.compute_arrival();
     enforce_balance(pNtk, num_parts, balance_pct, timer.get_arrival(), cfg.verbose);
-    Abc_NtkUpdateCutNets(pNtk);
 
     // Final timing report.
     timer.compute_arrival();
     float final_max = timer.max_arrival();
-    int   final_cut = Abc_NtkComputeCutSize(pNtk);
+    LocalCutNetState final_cut_nets;
+    final_cut_nets.recompute(pNtk);
+    int   final_cut = final_cut_nets.cut_size;
     if (cfg.verbose)
     {
         printf("cpr: final max arrival = %.2f  (added %d node(s), +%.2f%%)\n",
