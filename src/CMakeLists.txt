@@ -43,6 +43,7 @@ add_subdirectory(partsyn)
 add_subdirectory(hpart)
 add_subdirectory(timer)
 add_subdirectory(cpr)
+add_subdirectory(cmfs)
 
 add_compile_options(-fexceptions)
 
@@ -57,6 +58,7 @@ target_link_libraries(FoxSYN PRIVATE
     hpart
     timer
     cpr
+    cmfs
 )
 
 # Add test_dot executable to demonstrate the DOT file generation

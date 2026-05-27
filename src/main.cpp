@@ -19,6 +19,7 @@
 #include "hpart/hpart.hpp"
 #include "timer/timer.hpp"
 #include "cpr/cpr.hpp"
+#include "cmfs/cmfs.hpp"
 
 extern "C"
 {
@@ -646,6 +647,91 @@ usage:
     return 1;
 }
 
+int Cmfs_Command(Abc_Frame_t *pAbc, int argc, char **argv)
+{
+    fox::cmfs::Config cfg;
+    Abc_Ntk_t *pNtk = Abc_FrameReadNtk(pAbc);
+
+    if (argc > 1 && !strcmp(argv[1], "-h"))
+        goto usage;
+
+    for (int i = 1; i != argc; ++i)
+    {
+        if (argv[i][0] != '-')
+        {
+            std::cout << "cmfs: unexpected argument " << argv[i] << "\n";
+            goto usage;
+        }
+        const char arg = *(argv[i] + 1);
+        switch (arg)
+        {
+        case 'K':
+            if (i + 1 >= argc) { printf("cmfs: -K requires a number\n"); return 1; }
+            cfg.top_K = std::atoi(argv[++i]);
+            if (cfg.top_K < 1) { printf("cmfs: invalid top_K %d\n", cfg.top_K); return 1; }
+            break;
+        case 'R':
+            if (i + 1 >= argc) { printf("cmfs: -R requires a number\n"); return 1; }
+            cfg.max_rounds = std::atoi(argv[++i]);
+            if (cfg.max_rounds < 1) { printf("cmfs: invalid max_rounds %d\n", cfg.max_rounds); return 1; }
+            break;
+        case 'S':
+            if (i + 1 >= argc) { printf("cmfs: -S requires a number\n"); return 1; }
+            cfg.stall_limit = std::atoi(argv[++i]);
+            if (cfg.stall_limit < 1) { printf("cmfs: invalid stall_limit %d\n", cfg.stall_limit); return 1; }
+            break;
+        case 'C':
+            if (i + 1 >= argc) { printf("cmfs: -C requires a number\n"); return 1; }
+            cfg.nBTLimit = std::atoi(argv[++i]);
+            if (cfg.nBTLimit < 0) { printf("cmfs: invalid BT limit %d\n", cfg.nBTLimit); return 1; }
+            break;
+        case 'W':
+            if (i + 1 >= argc) { printf("cmfs: -W requires a number\n"); return 1; }
+            cfg.nWinTfoLevs = std::atoi(argv[++i]);
+            if (cfg.nWinTfoLevs < 0) { printf("cmfs: invalid TFO levels %d\n", cfg.nWinTfoLevs); return 1; }
+            break;
+        case 'F':
+            if (i + 1 >= argc) { printf("cmfs: -F requires a number\n"); return 1; }
+            cfg.nFanoutsMax = std::atoi(argv[++i]);
+            if (cfg.nFanoutsMax < 1) { printf("cmfs: invalid fanout max %d\n", cfg.nFanoutsMax); return 1; }
+            break;
+        case 'M':
+            if (i + 1 >= argc) { printf("cmfs: -M requires a number\n"); return 1; }
+            cfg.nWinMax = std::atoi(argv[++i]);
+            if (cfg.nWinMax < 0) { printf("cmfs: invalid window max %d\n", cfg.nWinMax); return 1; }
+            break;
+        case 'v':
+            cfg.verbose ^= 1;
+            break;
+        case 'h':
+            goto usage;
+        default:
+            std::cout << "cmfs: unknown argument -" << arg << "\n";
+            goto usage;
+        }
+    }
+
+    if (!pNtk) { printf("cmfs: current network is empty\n"); return 1; }
+    if (!Abc_NtkIsLogic(pNtk)) { printf("cmfs: network must be logic (not AIG)\n"); return 1; }
+    if (!pNtk->pPdb) { printf("cmfs: no partition database (run hpart first)\n"); return 1; }
+
+    return fox::cmfs::ApplyCmfs(pNtk, cfg) ? 0 : 1;
+
+usage:
+    Abc_Print(-2, "usage: cmfs [-K num] [-R num] [-S num] [-C num] [-W num] [-F num] [-M num] [-v]\n");
+    Abc_Print(-2, "\t           critical-path edge removal using SAT-based redundancy\n");
+    Abc_Print(-2, "\t-K num  : number of critical paths to analyze [default = %d]\n", cfg.top_K);
+    Abc_Print(-2, "\t-R num  : max optimization rounds [default = %d]\n", cfg.max_rounds);
+    Abc_Print(-2, "\t-S num  : stall limit (rounds without improvement) [default = %d]\n", cfg.stall_limit);
+    Abc_Print(-2, "\t-C num  : SAT conflict limit per attempt [default = %d]\n", cfg.nBTLimit);
+    Abc_Print(-2, "\t-W num  : MFS window TFO levels [default = %d]\n", cfg.nWinTfoLevs);
+    Abc_Print(-2, "\t-F num  : MFS max fanouts for window [default = %d]\n", cfg.nFanoutsMax);
+    Abc_Print(-2, "\t-M num  : MFS max window node count [default = %d]\n", cfg.nWinMax);
+    Abc_Print(-2, "\t-v      : toggles verbose output\n");
+    Abc_Print(-2, "\n");
+    return 1;
+}
+
 struct CmdRegister
 {
     CmdRegister()
@@ -656,6 +742,7 @@ struct CmdRegister
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "hpart", HPart_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "timer", Timer_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "cpr", Cpr_Command, 1);
+        Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "cmfs", Cmfs_Command, 1);
     }
 } regiter;
 
