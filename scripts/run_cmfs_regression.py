@@ -19,7 +19,7 @@ CMFS_RESULT_RE = re.compile(
     r"cmfs:.*?(\d+)\s+attempts,\s+(\d+)\s+removals\s+\((\d+)\s+timeouts\)"
 )
 CMFS_ARRIVAL_RE = re.compile(
-    r"cmfs:\s+arrival\s+([0-9.]+)\s+->\s+([0-9.]+)\s+\(improvement\s+([0-9.-]+)\)"
+    r"cmfs:\s+arrival\s+([0-9.]+)\s+->\s+([0-9.]+)\s+\((?:total )?improvement\s+([0-9.-]+)\)"
 )
 HOP_RE = re.compile(r"\bhop =\s*(\d+)")
 ARR_RE = re.compile(r"\barr\s*=\s*([0-9.]+)")

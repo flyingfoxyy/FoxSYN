@@ -150,6 +150,67 @@ static int try_arrival_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
         if (p->nCexes >= p->pPars->nWinMax)
             break;
     }
+
+    // Single-divisor resub failed. Try 2-divisor resub if node has room.
+    // After removing 1 fanin and adding 2, total = N+1. Need N+1 <= K (6).
+    if (Abc_ObjFaninNum(pNode) > 5)
+        return 0;
+    if (good_divs.size() < 2)
+        return 0;
+
+    // Limit search space
+    constexpr int MAX_PAIR_DIVS = 30;
+    int pair_limit = std::min(static_cast<int>(good_divs.size()), MAX_PAIR_DIVS);
+
+    for (int iter = 0; iter < p->pPars->nWinMax; ++iter)
+    {
+        nWords = Abc_BitWordNum(p->nCexes);
+        if (nWords > p->nDivWords)
+            break;
+
+        // Find a pair (d1, d2) whose OR covers all counter-examples
+        int found1 = -1, found2 = -1;
+        for (int i = 1; i < pair_limit && found1 < 0; i++)
+        {
+            int di = good_divs[i].second;
+            unsigned *pDi = (unsigned *)Vec_PtrEntry(p->vDivCexes, di);
+            for (int j = 0; j < i; j++)
+            {
+                int dj = good_divs[j].second;
+                unsigned *pDj = (unsigned *)Vec_PtrEntry(p->vDivCexes, dj);
+                for (w = 0; w < nWords; w++)
+                    if ((pDi[w] | pDj[w]) != ~(unsigned)0)
+                        break;
+                if (w == nWords)
+                {
+                    found1 = dj;
+                    found2 = di;
+                    break;
+                }
+            }
+        }
+        if (found1 < 0)
+            return 0;
+
+        pCands[nCands]     = Abc_Var2Lit(Vec_IntEntry(p->vProjVarsSat, found1), 1);
+        pCands[nCands + 1] = Abc_Var2Lit(Vec_IntEntry(p->vProjVarsSat, found2), 1);
+        ret = Abc_NtkMfsTryResubOnce(p, pCands, nCands + 2);
+        if (ret == 1)
+        {
+            Hop_Obj_t *pFunc = Abc_NtkMfsInterplate(p, pCands, nCands + 2);
+            if (!pFunc)
+                return 0;
+            Vec_PtrPush(p->vMfsFanins, Vec_PtrEntry(p->vDivs, found1));
+            Vec_PtrPush(p->vMfsFanins, Vec_PtrEntry(p->vDivs, found2));
+            Abc_NtkMfsUpdateNetwork(p, pNode, p->vMfsFanins, pFunc);
+            p->nResubs++;
+            return 3; // 2-divisor resub success
+        }
+        if (ret == -1)
+            return 0;
+        if (p->nCexes >= p->pPars->nWinMax)
+            break;
+    }
     return 0;
 }
 
