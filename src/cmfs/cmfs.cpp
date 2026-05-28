@@ -90,9 +90,12 @@ static int try_arrival_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
     // Pure removal failed. Try divisors with lower arrival contribution.
     // Pre-compute which divisors are "good" (lower contribution than critical fanin)
     std::vector<std::pair<float, int>> good_divs;
+    int arr_sz = static_cast<int>(arrival.size());
     for (int d = 0; d < nDivs; d++)
     {
         Abc_Obj_t *pDiv = (Abc_Obj_t *)Vec_PtrEntry(p->vDivs, d);
+        if (pDiv->Id >= arr_sz)
+            continue;
         float div_contrib = arrival[pDiv->Id] + edge_delay(pDiv, pNode, pPdb);
         if (div_contrib < crit_contrib - 0.5f)
             good_divs.push_back({div_contrib, d});
@@ -267,8 +270,10 @@ bool ApplyCmfs(Abc_Ntk_t *pNtk, const Config &cfg)
         fflush(stdout);
     }
 
+    int rounds_run = 0;
     for (int round = 0; round < cfg.max_rounds; ++round)
     {
+        rounds_run++;
         // Re-establish clean Hop manager each round (sweep/cleanup may invalidate it)
         Abc_NtkToSop(pNtk, -1, ABC_INFINITY);
         if (!Abc_NtkToAig(pNtk))
@@ -305,10 +310,12 @@ bool ApplyCmfs(Abc_Ntk_t *pNtk, const Config &cfg)
 
         Mfs_Man_t *p = Mfs_ManAlloc(&pars);
         p->pNtk = pNtk;
-        p->nFaninMax = Abc_NtkGetFaninMax(pNtk);
+        p->nFaninMax = std::min(Abc_NtkGetFaninMax(pNtk), MFS_FANIN_MAX);
 
         int round_successes = 0;
         std::vector<char> node_done(Abc_NtkObjNumMax(pNtk), 0);
+        const auto &arr = rtimer.get_arrival();
+        int arr_size = static_cast<int>(arr.size());
 
         for (const auto &cand : candidates)
         {
@@ -338,10 +345,12 @@ bool ApplyCmfs(Abc_Ntk_t *pNtk, const Config &cfg)
             if (cfg.allow_resub)
             {
                 Abc_Obj_t *pCritFanin = Abc_ObjFanin(pNode, cand.iFanin);
-                float crit_contrib = rtimer.get_arrival()[pCritFanin->Id]
+                if (pCritFanin->Id >= arr_size)
+                    continue;
+                float crit_contrib = arr[pCritFanin->Id]
                                    + edge_delay(pCritFanin, pNode, pNtk->pPdb);
                 ret = try_arrival_resub(p, pNode, cand.iFanin,
-                                        crit_contrib, rtimer.get_arrival(), pNtk->pPdb);
+                                        crit_contrib, arr, pNtk->pPdb);
             }
             else
             {
@@ -399,8 +408,7 @@ bool ApplyCmfs(Abc_Ntk_t *pNtk, const Config &cfg)
     float final_arrival = ftimer.max_arrival();
 
     printf("cmfs: %d rounds, %d attempts, %d successes (%d timeouts)\n",
-           stall_count > 0 ? stall_count : cfg.max_rounds,
-           total_attempts, total_successes, total_timeouts);
+           rounds_run, total_attempts, total_successes, total_timeouts);
     printf("cmfs: arrival %.2f -> %.2f (total improvement %.2f)\n",
            initial_arrival, final_arrival, initial_arrival - final_arrival);
 
