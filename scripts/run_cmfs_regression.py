@@ -52,7 +52,7 @@ def run_case(foxsyn: Path, workdir: Path, case: Path, parts: int,
 
     command = (
         f"read {rel}; st; if -K 6; "
-        f"hpart -N {parts}; cpr; ps; "
+        f"hpart -N {parts}; ps; "
         f"cmfs {cmfs_args}; ps"
     )
 

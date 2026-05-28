@@ -45,11 +45,13 @@ static float edge_delay(Abc_Obj_t *pFrom, Abc_Obj_t *pTo, Pdb *pPdb)
     return (fp != tp) ? HOP_DLY : 0.0f;
 }
 
-// Partition-aware resub: try to replace a cross-partition fanin with a
-// same-partition divisor. Only accepts replacements that eliminate the hop.
+// Arrival-aware resub: try to replace a critical fanin with any divisor
+// whose arrival contribution is strictly lower. This guarantees timing gain
+// at this node even if the divisor is in a different partition.
 // Requires: Abc_WinNode(p, pNode) already called successfully.
-static int try_partition_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
-                               part_id target_part)
+static int try_arrival_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
+                             float crit_contrib,
+                             const std::vector<float> &arrival, Pdb *pPdb)
 {
     int pCands[MFS_FANIN_MAX];
     int nCands = 0;
@@ -75,7 +77,6 @@ static int try_partition_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
     int ret = Abc_NtkMfsTryResubOnce(p, pCands, nCands);
     if (ret == 1)
     {
-        // Fanin is redundant — pure removal succeeds
         Hop_Obj_t *pFunc = Abc_NtkMfsInterplate(p, pCands, nCands);
         if (!pFunc)
             return 0;
@@ -84,9 +85,24 @@ static int try_partition_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
         return 1;
     }
     if (ret == -1)
-        return 0; // timeout
+        return 0;
 
-    // Pure removal failed. Try same-partition divisors.
+    // Pure removal failed. Try divisors with lower arrival contribution.
+    // Pre-compute which divisors are "good" (lower contribution than critical fanin)
+    std::vector<std::pair<float, int>> good_divs;
+    for (int d = 0; d < nDivs; d++)
+    {
+        Abc_Obj_t *pDiv = (Abc_Obj_t *)Vec_PtrEntry(p->vDivs, d);
+        float div_contrib = arrival[pDiv->Id] + edge_delay(pDiv, pNode, pPdb);
+        if (div_contrib < crit_contrib - 0.5f)
+            good_divs.push_back({div_contrib, d});
+    }
+    // Sort ascending: prefer lowest-arrival divisors first
+    std::sort(good_divs.begin(), good_divs.end());
+
+    if (good_divs.empty())
+        return 0;
+
     int nWords;
     unsigned *pData;
     int w;
@@ -97,13 +113,10 @@ static int try_partition_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
         if (nWords > p->nDivWords)
             break;
 
-        // Find next same-partition divisor consistent with counter-examples
+        // Find next good divisor consistent with counter-examples
         int found = -1;
-        for (int d = 0; d < nDivs; d++)
+        for (auto &[contrib, d] : good_divs)
         {
-            Abc_Obj_t *pDiv = (Abc_Obj_t *)Vec_PtrEntry(p->vDivs, d);
-            if (Abc_ObjGetPartId(pDiv) != target_part)
-                continue;
             pData = (unsigned *)Vec_PtrEntry(p->vDivCexes, d);
             for (w = 0; w < nWords; w++)
                 if (pData[w] != ~(unsigned)0)
@@ -115,7 +128,7 @@ static int try_partition_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
             }
         }
         if (found < 0)
-            return 0; // no compatible same-partition divisor
+            return 0;
 
         pCands[nCands] = Abc_Var2Lit(Vec_IntEntry(p->vProjVarsSat, found), 1);
         ret = Abc_NtkMfsTryResubOnce(p, pCands, nCands + 1);
@@ -127,10 +140,10 @@ static int try_partition_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
             Vec_PtrPush(p->vMfsFanins, Vec_PtrEntry(p->vDivs, found));
             Abc_NtkMfsUpdateNetwork(p, pNode, p->vMfsFanins, pFunc);
             p->nResubs++;
-            return 2; // resub success
+            return 2;
         }
         if (ret == -1)
-            return 0; // timeout
+            return 0;
         if (p->nCexes >= p->pPars->nWinMax)
             break;
     }
@@ -219,7 +232,16 @@ bool ApplyCmfs(Abc_Ntk_t *pNtk, const Config &cfg)
         return false;
     }
 
+    // Measure true initial arrival before any transformation
+    int total_attempts = 0, total_successes = 0, total_timeouts = 0;
+
+    SimpleTimer timer0(pNtk);
+    timer0.compute_arrival();
+    float initial_arrival = timer0.max_arrival();
+
     // Force a clean Hop manager: convert to SOP first, then back to AIG.
+    // Note: Abc_NtkToSop calls Abc_NtkMinimumBase which removes locally-redundant
+    // fanins. This is a beneficial side effect that we account for in timing.
     Abc_NtkToSop(pNtk, -1, ABC_INFINITY);
     if (!Abc_NtkToAig(pNtk))
     {
@@ -227,17 +249,18 @@ bool ApplyCmfs(Abc_Ntk_t *pNtk, const Config &cfg)
         return false;
     }
 
-    int total_attempts = 0, total_successes = 0, total_timeouts = 0;
-
     SimpleTimer timer(pNtk);
     timer.compute_arrival();
-    float initial_arrival = timer.max_arrival();
-    float best_arrival = initial_arrival;
+    float post_minbase_arrival = timer.max_arrival();
+    float best_arrival = post_minbase_arrival;
     int stall_count = 0;
 
     if (cfg.verbose)
     {
         printf("cmfs: initial max arrival = %.2f\n", initial_arrival);
+        if (post_minbase_arrival < initial_arrival - 0.5f)
+            printf("cmfs: after minbase      = %.2f (gain %.2f from redundant fanin removal)\n",
+                   post_minbase_arrival, initial_arrival - post_minbase_arrival);
         printf("cmfs: top_K=%d  max_rounds=%d  stall=%d  BT=%d  resub=%s\n",
                cfg.top_K, cfg.max_rounds, cfg.stall_limit, cfg.nBTLimit,
                cfg.allow_resub ? "on" : "off");
@@ -312,13 +335,13 @@ bool ApplyCmfs(Abc_Ntk_t *pNtk, const Config &cfg)
             total_attempts++;
             int ret = 0;
 
-            Abc_Obj_t *pFanin = Abc_ObjFanin(pNode, cand.iFanin);
-            bool is_xpart = pFanin && Abc_ObjGetPartId(pFanin) != orig_part
-                            && orig_part != ABC_PART_ID_NONE;
-
-            if (cfg.allow_resub && is_xpart)
+            if (cfg.allow_resub)
             {
-                ret = try_partition_resub(p, pNode, cand.iFanin, orig_part);
+                Abc_Obj_t *pCritFanin = Abc_ObjFanin(pNode, cand.iFanin);
+                float crit_contrib = rtimer.get_arrival()[pCritFanin->Id]
+                                   + edge_delay(pCritFanin, pNode, pNtk->pPdb);
+                ret = try_arrival_resub(p, pNode, cand.iFanin,
+                                        crit_contrib, rtimer.get_arrival(), pNtk->pPdb);
             }
             else
             {
@@ -375,10 +398,10 @@ bool ApplyCmfs(Abc_Ntk_t *pNtk, const Config &cfg)
     ftimer.compute_arrival();
     float final_arrival = ftimer.max_arrival();
 
-    printf("cmfs: %d rounds, %d attempts, %d removals (%d timeouts)\n",
+    printf("cmfs: %d rounds, %d attempts, %d successes (%d timeouts)\n",
            stall_count > 0 ? stall_count : cfg.max_rounds,
            total_attempts, total_successes, total_timeouts);
-    printf("cmfs: arrival %.2f -> %.2f (improvement %.2f)\n",
+    printf("cmfs: arrival %.2f -> %.2f (total improvement %.2f)\n",
            initial_arrival, final_arrival, initial_arrival - final_arrival);
 
     return true;
