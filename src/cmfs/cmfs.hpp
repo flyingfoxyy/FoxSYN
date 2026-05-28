@@ -14,6 +14,7 @@ struct Config {
     int  nWinTfoLevs = 2;
     int  nFanoutsMax = 30;
     int  nWinMax     = 300;
+    bool allow_resub = false;
     bool verbose     = false;
 };
 

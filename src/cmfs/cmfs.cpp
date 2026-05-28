@@ -15,6 +15,9 @@ extern "C" {
 int Abc_WinNode(Mfs_Man_t *p, Abc_Obj_t *pNode);
 int Abc_NtkMfsSolveSatResub(Mfs_Man_t *p, Abc_Obj_t *pNode,
                              int iFanin, int fOnlyRemove, int fSkipUpdate);
+int Abc_NtkMfsTryResubOnce(Mfs_Man_t *p, int *pCands, int nCands);
+void Abc_NtkMfsUpdateNetwork(Mfs_Man_t *p, Abc_Obj_t *pObj,
+                              Vec_Ptr_t *vMfsFanins, Hop_Obj_t *pFunc);
 }
 
 namespace fox::cmfs {
@@ -41,6 +44,99 @@ static float edge_delay(Abc_Obj_t *pFrom, Abc_Obj_t *pTo, Pdb *pPdb)
         return 0.0f;
     return (fp != tp) ? HOP_DLY : 0.0f;
 }
+
+// Partition-aware resub: try to replace a cross-partition fanin with a
+// same-partition divisor. Only accepts replacements that eliminate the hop.
+// Requires: Abc_WinNode(p, pNode) already called successfully.
+static int try_partition_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
+                               part_id target_part)
+{
+    int pCands[MFS_FANIN_MAX];
+    int nCands = 0;
+    Abc_Obj_t *pFanin;
+    int i;
+
+    // Build base candidate set: all fanins except the target
+    Vec_PtrClear(p->vMfsFanins);
+    int nDivs = Vec_PtrSize(p->vDivs) - Abc_ObjFaninNum(pNode);
+    Abc_ObjForEachFanin(pNode, pFanin, i)
+    {
+        if (i == iFanin)
+            continue;
+        Vec_PtrPush(p->vMfsFanins, pFanin);
+        int iVar = nDivs + i;
+        pCands[nCands++] = Abc_Var2Lit(Vec_IntEntry(p->vProjVarsSat, iVar), 1);
+    }
+
+    // First try pure removal
+    Vec_PtrFillSimInfo(p->vDivCexes, 0, p->nDivWords);
+    p->nCexes = 0;
+
+    int ret = Abc_NtkMfsTryResubOnce(p, pCands, nCands);
+    if (ret == 1)
+    {
+        // Fanin is redundant — pure removal succeeds
+        Hop_Obj_t *pFunc = Abc_NtkMfsInterplate(p, pCands, nCands);
+        if (!pFunc)
+            return 0;
+        Abc_NtkMfsUpdateNetwork(p, pNode, p->vMfsFanins, pFunc);
+        p->nRemoves++;
+        return 1;
+    }
+    if (ret == -1)
+        return 0; // timeout
+
+    // Pure removal failed. Try same-partition divisors.
+    int nWords;
+    unsigned *pData;
+    int w;
+
+    for (int iter = 0; iter < p->pPars->nWinMax; ++iter)
+    {
+        nWords = Abc_BitWordNum(p->nCexes);
+        if (nWords > p->nDivWords)
+            break;
+
+        // Find next same-partition divisor consistent with counter-examples
+        int found = -1;
+        for (int d = 0; d < nDivs; d++)
+        {
+            Abc_Obj_t *pDiv = (Abc_Obj_t *)Vec_PtrEntry(p->vDivs, d);
+            if (Abc_ObjGetPartId(pDiv) != target_part)
+                continue;
+            pData = (unsigned *)Vec_PtrEntry(p->vDivCexes, d);
+            for (w = 0; w < nWords; w++)
+                if (pData[w] != ~(unsigned)0)
+                    break;
+            if (w == nWords)
+            {
+                found = d;
+                break;
+            }
+        }
+        if (found < 0)
+            return 0; // no compatible same-partition divisor
+
+        pCands[nCands] = Abc_Var2Lit(Vec_IntEntry(p->vProjVarsSat, found), 1);
+        ret = Abc_NtkMfsTryResubOnce(p, pCands, nCands + 1);
+        if (ret == 1)
+        {
+            Hop_Obj_t *pFunc = Abc_NtkMfsInterplate(p, pCands, nCands + 1);
+            if (!pFunc)
+                return 0;
+            Vec_PtrPush(p->vMfsFanins, Vec_PtrEntry(p->vDivs, found));
+            Abc_NtkMfsUpdateNetwork(p, pNode, p->vMfsFanins, pFunc);
+            p->nResubs++;
+            return 2; // resub success
+        }
+        if (ret == -1)
+            return 0; // timeout
+        if (p->nCexes >= p->pPars->nWinMax)
+            break;
+    }
+    return 0;
+}
+
 
 static void collect_candidates(Abc_Ntk_t *pNtk, const std::vector<float> &arrival,
                                const std::vector<fox::timer::Path> &paths,
@@ -142,8 +238,9 @@ bool ApplyCmfs(Abc_Ntk_t *pNtk, const Config &cfg)
     if (cfg.verbose)
     {
         printf("cmfs: initial max arrival = %.2f\n", initial_arrival);
-        printf("cmfs: top_K=%d  max_rounds=%d  stall=%d  BT=%d\n",
-               cfg.top_K, cfg.max_rounds, cfg.stall_limit, cfg.nBTLimit);
+        printf("cmfs: top_K=%d  max_rounds=%d  stall=%d  BT=%d  resub=%s\n",
+               cfg.top_K, cfg.max_rounds, cfg.stall_limit, cfg.nBTLimit,
+               cfg.allow_resub ? "on" : "off");
         fflush(stdout);
     }
 
@@ -213,8 +310,22 @@ bool ApplyCmfs(Abc_Ntk_t *pNtk, const Config &cfg)
             int id_before = Abc_NtkObjNumMax(pNtk);
 
             total_attempts++;
-            int ret = Abc_NtkMfsSolveSatResub(p, pNode, cand.iFanin, 1, 0);
-            if (ret == 1)
+            int ret = 0;
+
+            Abc_Obj_t *pFanin = Abc_ObjFanin(pNode, cand.iFanin);
+            bool is_xpart = pFanin && Abc_ObjGetPartId(pFanin) != orig_part
+                            && orig_part != ABC_PART_ID_NONE;
+
+            if (cfg.allow_resub && is_xpart)
+            {
+                ret = try_partition_resub(p, pNode, cand.iFanin, orig_part);
+            }
+            else
+            {
+                ret = Abc_NtkMfsSolveSatResub(p, pNode, cand.iFanin, 1, 0);
+            }
+
+            if (ret >= 1)
             {
                 total_successes++;
                 round_successes++;

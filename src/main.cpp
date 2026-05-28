@@ -700,6 +700,9 @@ int Cmfs_Command(Abc_Frame_t *pAbc, int argc, char **argv)
             cfg.nWinMax = std::atoi(argv[++i]);
             if (cfg.nWinMax < 0) { printf("cmfs: invalid window max %d\n", cfg.nWinMax); return 1; }
             break;
+        case 'r':
+            cfg.allow_resub ^= 1;
+            break;
         case 'v':
             cfg.verbose ^= 1;
             break;
@@ -718,7 +721,7 @@ int Cmfs_Command(Abc_Frame_t *pAbc, int argc, char **argv)
     return fox::cmfs::ApplyCmfs(pNtk, cfg) ? 0 : 1;
 
 usage:
-    Abc_Print(-2, "usage: cmfs [-K num] [-R num] [-S num] [-C num] [-W num] [-F num] [-M num] [-v]\n");
+    Abc_Print(-2, "usage: cmfs [-K num] [-R num] [-S num] [-C num] [-W num] [-F num] [-M num] [-rv]\n");
     Abc_Print(-2, "\t           critical-path edge removal using SAT-based redundancy\n");
     Abc_Print(-2, "\t-K num  : number of critical paths to analyze [default = %d]\n", cfg.top_K);
     Abc_Print(-2, "\t-R num  : max optimization rounds [default = %d]\n", cfg.max_rounds);
@@ -727,6 +730,7 @@ usage:
     Abc_Print(-2, "\t-W num  : MFS window TFO levels [default = %d]\n", cfg.nWinTfoLevs);
     Abc_Print(-2, "\t-F num  : MFS max fanouts for window [default = %d]\n", cfg.nFanoutsMax);
     Abc_Print(-2, "\t-M num  : MFS max window node count [default = %d]\n", cfg.nWinMax);
+    Abc_Print(-2, "\t-r      : enable partition-aware resubstitution [default = %s]\n", cfg.allow_resub ? "on" : "off");
     Abc_Print(-2, "\t-v      : toggles verbose output\n");
     Abc_Print(-2, "\n");
     return 1;
