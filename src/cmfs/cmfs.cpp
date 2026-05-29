@@ -11,6 +11,7 @@
 
 extern "C" {
 #include "opt/mfs/mfsInt.h"
+#include "bool/kit/kit.h"
 
 int Abc_WinNode(Mfs_Man_t *p, Abc_Obj_t *pNode);
 int Abc_NtkMfsSolveSatResub(Mfs_Man_t *p, Abc_Obj_t *pNode,
@@ -18,6 +19,10 @@ int Abc_NtkMfsSolveSatResub(Mfs_Man_t *p, Abc_Obj_t *pNode,
 int Abc_NtkMfsTryResubOnce(Mfs_Man_t *p, int *pCands, int nCands);
 void Abc_NtkMfsUpdateNetwork(Mfs_Man_t *p, Abc_Obj_t *pObj,
                               Vec_Ptr_t *vMfsFanins, Hop_Obj_t *pFunc);
+unsigned *Hop_ManConvertAigToTruth(Hop_Man_t *p, Hop_Obj_t *pRoot,
+                                    int nVars, Vec_Int_t *vTruth, int fMsbFirst);
+Hop_Obj_t *Kit_TruthToHop(Hop_Man_t *pMan, unsigned *pTruth,
+                            int nVars, Vec_Int_t *vMemory);
 }
 
 namespace fox::cmfs {
@@ -45,13 +50,74 @@ static float edge_delay(Abc_Obj_t *pFrom, Abc_Obj_t *pTo, Pdb *pPdb)
     return (fp != tp) ? HOP_DLY : 0.0f;
 }
 
+// Shannon decomposition: recursively split an over-sized truth table into
+// a tree of 6-LUT nodes. Splits on highest-arrival variable (MUX select).
+static Abc_Obj_t *shannon_decompose(Abc_Ntk_t *pNtk, unsigned *pTruth, int nVars,
+                                     Abc_Obj_t **fanins, float *arrivals, part_id partId)
+{
+    Hop_Man_t *pHop = (Hop_Man_t *)pNtk->pManFunc;
+
+    if (nVars <= 6)
+    {
+        Abc_Obj_t *pLeaf = Abc_NtkCreateNode(pNtk);
+        for (int v = 0; v < nVars; v++)
+            Abc_ObjAddFanin(pLeaf, fanins[v]);
+        pLeaf->pData = (void *)Kit_TruthToHop(pHop, pTruth, nVars, NULL);
+        if (!pLeaf->pData)
+            pLeaf->pData = (void *)Hop_ManConst0(pHop);
+        Abc_ObjSetPartId(pLeaf, partId);
+        return pLeaf;
+    }
+
+    // Pick highest-arrival variable as decomposition variable
+    int iVar = 0;
+    float maxArr = arrivals[0];
+    for (int v = 1; v < nVars; v++)
+        if (arrivals[v] > maxArr) { maxArr = arrivals[v]; iVar = v; }
+
+    int nWords = Kit_TruthWordNum(nVars);
+    std::vector<unsigned> cof0(nWords), cof1(nWords), tmp(nWords);
+    Kit_TruthCofactor0New(cof0.data(), pTruth, nVars, iVar);
+    Kit_TruthCofactor1New(cof1.data(), pTruth, nVars, iVar);
+
+    // Compact: swap iVar to last position, then use nVars-1
+    for (int v = iVar; v < nVars - 1; v++)
+    {
+        Kit_TruthSwapAdjacentVars(tmp.data(), cof0.data(), nVars, v);
+        std::copy(tmp.begin(), tmp.end(), cof0.begin());
+        Kit_TruthSwapAdjacentVars(tmp.data(), cof1.data(), nVars, v);
+        std::copy(tmp.begin(), tmp.end(), cof1.begin());
+    }
+
+    // Build sub-arrays without the decomposition variable
+    Abc_Obj_t *subFanins[MFS_FANIN_MAX];
+    float subArrivals[MFS_FANIN_MAX];
+    int k = 0;
+    for (int v = 0; v < nVars; v++)
+        if (v != iVar) { subFanins[k] = fanins[v]; subArrivals[k] = arrivals[v]; k++; }
+
+    Abc_Obj_t *pN0 = shannon_decompose(pNtk, cof0.data(), nVars - 1, subFanins, subArrivals, partId);
+    Abc_Obj_t *pN1 = shannon_decompose(pNtk, cof1.data(), nVars - 1, subFanins, subArrivals, partId);
+
+    // MUX node: fanins[iVar] ? pN1 : pN0
+    Abc_Obj_t *pMux = Abc_NtkCreateNode(pNtk);
+    Abc_ObjAddFanin(pMux, fanins[iVar]);
+    Abc_ObjAddFanin(pMux, pN1);
+    Abc_ObjAddFanin(pMux, pN0);
+    pMux->pData = (void *)Hop_Mux(pHop, Hop_IthVar(pHop, 0),
+                                   Hop_IthVar(pHop, 1), Hop_IthVar(pHop, 2));
+    Abc_ObjSetPartId(pMux, partId);
+    return pMux;
+}
+
 // Arrival-aware resub: try to replace a critical fanin with any divisor
 // whose arrival contribution is strictly lower. This guarantees timing gain
 // at this node even if the divisor is in a different partition.
 // Requires: Abc_WinNode(p, pNode) already called successfully.
 static int try_arrival_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
                              float crit_contrib,
-                             const std::vector<float> &arrival, Pdb *pPdb)
+                             const std::vector<float> &arrival, Pdb *pPdb,
+                             int maxTempLut)
 {
     int pCands[MFS_FANIN_MAX];
     int nCands = 0;
@@ -205,6 +271,117 @@ static int try_arrival_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
             Abc_NtkMfsUpdateNetwork(p, pNode, p->vMfsFanins, pFunc);
             p->nResubs++;
             return 3; // 2-divisor resub success
+        }
+        if (ret == -1)
+            return 0;
+        if (p->nCexes >= p->pPars->nWinMax)
+            break;
+    }
+
+    // Phase 4: Multi-divisor resub with Shannon decomposition (-X mode)
+    if (maxTempLut < 7 || nCands + 3 > maxTempLut)
+        return 0;
+    if (good_divs.size() < 3)
+        return 0;
+
+    int maxExtra = std::min(maxTempLut - nCands, static_cast<int>(good_divs.size()));
+    maxExtra = std::min(maxExtra, MFS_FANIN_MAX - nCands);
+
+    // Greedy: accumulate divisors one at a time, try SAT after each addition
+    for (int k = 2; k < maxExtra; ++k)
+    {
+        nWords = Abc_BitWordNum(p->nCexes);
+        if (nWords > p->nDivWords)
+            break;
+
+        // Find next divisor covering at least one uncovered CEX
+        int found = -1;
+        for (int gi = 0; gi < static_cast<int>(good_divs.size()); gi++)
+        {
+            int d = good_divs[gi].second;
+            // Skip if already chosen
+            bool already = false;
+            for (int c = nCands; c < nCands + k; c++)
+                if (pCands[c] == Abc_Var2Lit(Vec_IntEntry(p->vProjVarsSat, d), 1))
+                { already = true; break; }
+            if (already) continue;
+
+            pData = (unsigned *)Vec_PtrEntry(p->vDivCexes, d);
+            // Check it covers at least one bit not yet covered
+            for (w = 0; w < nWords; w++)
+                if (pData[w] != 0) break;
+            if (w < nWords) { found = d; break; }
+        }
+        if (found < 0)
+            return 0;
+
+        pCands[nCands + k] = Abc_Var2Lit(Vec_IntEntry(p->vProjVarsSat, found), 1);
+        ret = Abc_NtkMfsTryResubOnce(p, pCands, nCands + k + 1);
+        if (ret == 1)
+        {
+            // Success! Interpolate and decompose.
+            Hop_Obj_t *pFunc = Abc_NtkMfsInterplate(p, pCands, nCands + k + 1);
+            if (!pFunc) return 0;
+
+            // Collect all fanins for decomposition
+            for (int c = 0; c <= k; c++)
+                Vec_PtrPush(p->vMfsFanins, Vec_PtrEntry(p->vDivs, good_divs[c].second));
+            // Actually we need the correct divisor indices. Rebuild from pCands.
+            Vec_PtrClear(p->vMfsFanins);
+            Abc_Obj_t *pFi; int fi;
+            Abc_ObjForEachFanin(pNode, pFi, fi)
+                if (fi != iFanin)
+                    Vec_PtrPush(p->vMfsFanins, pFi);
+            // Add all chosen divisors (from pCands[nCands..nCands+k])
+            for (int c = nCands; c <= nCands + k; c++)
+            {
+                int lit = pCands[c];
+                int var = Abc_Lit2Var(lit);
+                // Find which divisor index this corresponds to
+                for (int d = 0; d < Vec_IntSize(p->vProjVarsSat); d++)
+                    if (Vec_IntEntry(p->vProjVarsSat, d) == var)
+                    { Vec_PtrPush(p->vMfsFanins, Vec_PtrEntry(p->vDivs, d)); break; }
+            }
+
+            int nTotal = Vec_PtrSize(p->vMfsFanins);
+            if (nTotal <= 6)
+            {
+                // Fits in one LUT, just update normally
+                Abc_NtkMfsUpdateNetwork(p, pNode, p->vMfsFanins, pFunc);
+                p->nResubs++;
+                return 4;
+            }
+
+            // Decompose via Shannon expansion
+            Hop_Man_t *pHopMan = (Hop_Man_t *)pNode->pNtk->pManFunc;
+            Vec_Int_t *vTruth = Vec_IntAlloc(Kit_TruthWordNum(nTotal) * 2 + 32);
+            unsigned *pTruth = Hop_ManConvertAigToTruth(pHopMan, pFunc, nTotal, vTruth, 0);
+            if (!pTruth) { Vec_IntFree(vTruth); return 0; }
+
+            // Copy truth table (buffer may be reused)
+            int nTtWords = Kit_TruthWordNum(nTotal);
+            std::vector<unsigned> ttCopy(pTruth, pTruth + nTtWords);
+            Vec_IntFree(vTruth);
+
+            Abc_Obj_t *decomp_fanins[MFS_FANIN_MAX];
+            float decomp_arrivals[MFS_FANIN_MAX];
+            int arr_sz = static_cast<int>(arrival.size());
+            for (int j = 0; j < nTotal; j++)
+            {
+                decomp_fanins[j] = (Abc_Obj_t *)Vec_PtrEntry(p->vMfsFanins, j);
+                int fid = decomp_fanins[j]->Id;
+                decomp_arrivals[j] = (fid < arr_sz) ? arrival[fid] : 0.0f;
+                decomp_arrivals[j] += edge_delay(decomp_fanins[j], pNode, pPdb);
+            }
+
+            part_id partId = Abc_ObjGetPartId(pNode);
+            Abc_Obj_t *pRoot = shannon_decompose(pNode->pNtk, ttCopy.data(), nTotal,
+                                                  decomp_fanins, decomp_arrivals, partId);
+            // Replace original node with decomposed tree
+            Abc_ObjTransferFanout(pNode, pRoot);
+            Abc_NtkDeleteObj(pNode);
+            p->nResubs++;
+            return 4;
         }
         if (ret == -1)
             return 0;
@@ -411,7 +588,8 @@ bool ApplyCmfs(Abc_Ntk_t *pNtk, const Config &cfg)
                 float crit_contrib = arr[pCritFanin->Id]
                                    + edge_delay(pCritFanin, pNode, pNtk->pPdb);
                 ret = try_arrival_resub(p, pNode, cand.iFanin,
-                                        crit_contrib, arr, pNtk->pPdb);
+                                        crit_contrib, arr, pNtk->pPdb,
+                                        cfg.maxTempLut);
             }
             else
             {

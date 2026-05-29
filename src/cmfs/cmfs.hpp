@@ -14,6 +14,7 @@ struct Config {
     int  nWinTfoLevs = 2;
     int  nFanoutsMax = 30;
     int  nWinMax     = 300;
+    int  maxTempLut  = 0;   // -X: max temp LUT size for Shannon decomp (0=off, 7-12)
     bool allow_resub = false;
     bool verbose     = false;
 };
