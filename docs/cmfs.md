@@ -74,6 +74,24 @@ compatible_pair(d1, d2): sim[d1] | sim[d2] == all-ones (for all counter-example 
 
 这与 ABC 的 `Abc_NtkMfsSolveSatResub2` 使用相同的模式。
 
+### Multi-Divisor Resub with Shannon Decomposition（-X 模式）
+
+当 1-2 divisor 替换都失败时，如果指定了 `-X num`（num=7-12），允许找 3+ 个低 arrival divisor，临时超过 6 输入，然后通过 Shannon 分解将过大节点拆分为合法的 6-LUT 树。
+
+```
+Phase 4 (guarded by -X num > 0):
+  greedy 累积 divisor，每加一个就尝试 SAT
+  成功后：
+    Abc_NtkMfsInterplate → 获得 Hop 函数
+    Hop_ManConvertAigToTruth → 转为 truth table
+    shannon_decompose → 递归拆分为 6-LUT 树
+    替换原节点
+```
+
+Shannon 分解策略：**在最高 arrival 变量上分解**（该变量作为 MUX select，只过 1 层 LUT）。低 arrival 变量进入 cofactor（多过 1-2 层 LUT，但它们有 slack 可以承受）。
+
+Tradeoff：`HOP_DLY=200` vs `LUT_DLY=1`。即使加 4 层 LUT（cost=4）来省 1 个 hop（gain=200），净收益 196。
+
 ### 迭代结构
 
 ```
@@ -87,6 +105,7 @@ for each round:
       1. Pure removal
       2. Single-divisor resub（-r 模式）
       3. 2-divisor resub（-r 模式，fanin ≤ 5）
+      4. Multi-divisor + Shannon decomp（-X 模式，fanin ≤ maxTempLut）
     释放 MFS manager
     Abc_NtkSweep + Abc_NtkCleanup（清理悬空节点）
     检查收敛（stall detection）
@@ -106,7 +125,7 @@ src/cmfs/
 ### 命令接口
 
 ```
-usage: cmfs [-K num] [-R num] [-S num] [-C num] [-W num] [-F num] [-M num] [-rv]
+usage: cmfs [-K num] [-R num] [-S num] [-C num] [-W num] [-F num] [-M num] [-X num] [-rv]
     -K num  : 分析的关键路径数量 [default = 16]
     -R num  : 最大优化轮数 [default = 20]
     -S num  : 停滞轮数限制 [default = 3]
@@ -114,33 +133,36 @@ usage: cmfs [-K num] [-R num] [-S num] [-C num] [-W num] [-F num] [-M num] [-rv]
     -W num  : MFS 窗口 TFO 层数 [default = 2]
     -F num  : MFS 窗口最大扇出数 [default = 30]
     -M num  : MFS 窗口最大节点数 [default = 300]
-    -r      : 启用 arrival-aware resubstitution（含 2-divisor）
+    -X num  : Shannon 分解最大临时 LUT 大小 (0=off, 7-12) [default = 0]
+    -r      : 启用 arrival-aware resubstitution（含 2-divisor 和 Shannon decomp）
     -v      : 详细输出
 ```
 
 ### 典型使用流程
 
 ```
-read design.v; st; if -K 6; hpart -N 16; cmfs -r -v -K 64 -W 6 -M 1000
+read design.v; st; if -K 6; hpart -N 16; cmfs -r -X 8 -v -K 64 -W 6 -M 1000
 ```
 
 ### 实验结果
 
-在 90 个 benchmark（MCNC + EPFL + OpenCores + VTR）上测试，16 分区，`-r -K 64 -W 6 -M 1000`：
+在 90 个 benchmark（MCNC + EPFL + OpenCores + VTR）上测试，16 分区，`-r -X 8 -K 64 -W 6 -M 1000`，每个 case 跑 3 次取最优（消除 hmetis 随机性）：
 
 | Case | Arrival Before | Arrival After | Gain | Hop Change |
 |------|---------------|--------------|------|-----------|
+| tv80 | 1812 | 1210 | 602 | 9→6 |
+| or1200 | 1815 | 1613 | 202 | 9→8 |
 | alu4 | 2215 | 2014 | 201 | 11→10 |
-| tv80 | 1812 | 1412 | 400 | 9→7 |
 | router | 1811 | 1611 | 200 | 9→8 |
-| i10 | 2212 | 2012 | 200 | 11→10 |
-| spla | 1609 | 1409 | 200 | 8→7 |
+| apex2 | 1006 | 806 | 200 | 5→4 |
+| ex5p | 1408 | 1208 | 200 | 7→6 |
+| mem_ctrl | 1812 | 1612 | 200 | 9→8 |
 | stereovision3 | 1005 | 805 | 200 | 5→4 |
-| sin | 4438 | 4240 | 198 | 22→21 |
 | div | 27408 | 27210 | 198 | 133→132 |
-| or1200 | 1815 | 1626 | 189 | 9→8 |
+| fpu | 6169 | 5971 | 198 | 30→29 |
+| sin | 4438 | 4435 | 3 | 22→22 |
 
-**9/90 个 benchmark 有 timing gain**，最大改善 400（2 hops），多数为 200（1 hop）。
+**11/90 个 benchmark 有 timing gain**，最大改善 602（3 hops），多数为 ~200（1 hop）。
 
 ### Gain 的来源分析
 
