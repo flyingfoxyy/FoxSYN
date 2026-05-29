@@ -46,7 +46,23 @@ def strip_ansi(text: str) -> str:
 
 
 def run_case(foxsyn: Path, workdir: Path, case: Path, parts: int,
-             cmfs_args: str, timeout: int) -> Result:
+             cmfs_args: str, timeout: int, runs: int = 1) -> Result:
+    name = case.stem
+    best: Result | None = None
+
+    for _ in range(runs):
+        r = run_case_once(foxsyn, workdir, case, parts, cmfs_args, timeout)
+        if best is None:
+            best = r
+        elif r.status == "OK" and r.gain != "-":
+            if best.gain == "-" or float(r.gain) > float(best.gain):
+                best = r
+
+    return best  # type: ignore
+
+
+def run_case_once(foxsyn: Path, workdir: Path, case: Path, parts: int,
+                  cmfs_args: str, timeout: int) -> Result:
     name = case.stem
     rel = case.relative_to(workdir).as_posix()
 
@@ -125,6 +141,8 @@ def main() -> int:
     parser.add_argument("-j", "--jobs", type=int,
                         default=max(1, min(os.cpu_count() or 4, 8)))
     parser.add_argument("--match", default="")
+    parser.add_argument("--runs", type=int, default=1,
+                        help="Run each case N times, report best (mitigates hmetis randomness)")
     args = parser.parse_args()
 
     workdir = Path.cwd()
@@ -154,7 +172,7 @@ def main() -> int:
     results: list[Result] = []
     with ThreadPoolExecutor(max_workers=args.jobs) as executor:
         futures = {
-            executor.submit(run_case, foxsyn, workdir, c, args.parts, args.cmfs_args, args.timeout): c
+            executor.submit(run_case, foxsyn, workdir, c, args.parts, args.cmfs_args, args.timeout, args.runs): c
             for c in cases
         }
         for future in as_completed(futures):
