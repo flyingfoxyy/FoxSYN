@@ -345,13 +345,6 @@ bool ApplyPartitioning( Abc_Ntk_t *pNtk, const Config &cfg )
         return false;
     }
 
-    const std::filesystem::path exe_path = FindExecutable( ToolName( cfg.tool ) );
-    if ( exe_path.empty() )
-    {
-        Abc_Print( -1, "hpart: partitioner \"%s\" is not available in PATH\n", ToolName( cfg.tool ) );
-        return false;
-    }
-
     VertexTraits traits;
     Hypergraph hypergraph = BuildHypergraph( pNtk, traits );
     Abc_Print( 1, "hpart: PI = %d  PO = %d  Node = %d\n", Abc_NtkPiNum( pNtk ), Abc_NtkPoNum( pNtk ), Abc_NtkNodeNum( pNtk ) );
@@ -366,47 +359,83 @@ bool ApplyPartitioning( Abc_Ntk_t *pNtk, const Config &cfg )
         Abc_Print( -1, "hpart: current network has no hyperedges to partition\n" );
         return false;
     }
-    TempDir temp_dir = CreateTempDir();
-    if ( !temp_dir.valid )
-    {
-        Abc_Print( -1, "hpart: failed to create temporary directory: %s\n", std::strerror( errno ) );
-        return false;
-    }
-
-    const std::filesystem::path graph_file = temp_dir.path / "network.hgr";
-    const std::filesystem::path part_file = PartitionFileName( graph_file, cfg.num_parts );
-    if ( !WriteHypergraph( hypergraph, graph_file ) )
-    {
-        Abc_Print( -1, "hpart: failed to write hypergraph file \"%s\"\n", graph_file.c_str() );
-        return false;
-    }
-
-    const std::string command = BuildCommand( exe_path, graph_file, cfg );
-    if ( cfg.verbose )
-    {
-        Abc_Print( 1, "hpart: running %s\n", command.c_str() );
-        fflush( stdout );
-    }
-
-    const int status = std::system( command.c_str() );
-    if ( status == -1 )
-    {
-        Abc_Print( -1, "hpart: failed to launch partitioner \"%s\"\n", ToolName( cfg.tool ) );
-        return false;
-    }
-    if ( ( !WIFEXITED( status ) || WEXITSTATUS( status ) != 0 ) && !std::filesystem::exists( part_file ) )
-    {
-        Abc_Print( -1, "hpart: partitioner \"%s\" exited with status %d\n", ToolName( cfg.tool ), status );
-        return false;
-    }
-    if ( ( !WIFEXITED( status ) || WEXITSTATUS( status ) != 0 ) && cfg.verbose )
-        Abc_Print( 1, "hpart: partitioner returned status %d, using generated result file anyway\n", status );
 
     std::vector<part_id> partitions;
-    if ( !ReadPartitionFile( part_file, cfg.num_parts, hypergraph.vertices.size(), partitions ) )
+
+    // --load-part: skip hmetis, read saved partition directly
+    if ( !cfg.load_part.empty() )
     {
-        Abc_Print( -1, "hpart: failed to read partition file \"%s\"\n", part_file.c_str() );
-        return false;
+        if ( !ReadPartitionFile( cfg.load_part, cfg.num_parts, hypergraph.vertices.size(), partitions ) )
+        {
+            Abc_Print( -1, "hpart: failed to load partition file \"%s\"\n", cfg.load_part.c_str() );
+            return false;
+        }
+        if ( cfg.verbose )
+            Abc_Print( 1, "hpart: loaded partition from \"%s\"\n", cfg.load_part.c_str() );
+    }
+    else
+    {
+        const std::filesystem::path exe_path = FindExecutable( ToolName( cfg.tool ) );
+        if ( exe_path.empty() )
+        {
+            Abc_Print( -1, "hpart: partitioner \"%s\" is not available in PATH\n", ToolName( cfg.tool ) );
+            return false;
+        }
+
+        TempDir temp_dir = CreateTempDir();
+        if ( !temp_dir.valid )
+        {
+            Abc_Print( -1, "hpart: failed to create temporary directory: %s\n", std::strerror( errno ) );
+            return false;
+        }
+
+        const std::filesystem::path graph_file = temp_dir.path / "network.hgr";
+        const std::filesystem::path part_file = PartitionFileName( graph_file, cfg.num_parts );
+        if ( !WriteHypergraph( hypergraph, graph_file ) )
+        {
+            Abc_Print( -1, "hpart: failed to write hypergraph file \"%s\"\n", graph_file.c_str() );
+            return false;
+        }
+
+        const std::string command = BuildCommand( exe_path, graph_file, cfg );
+        if ( cfg.verbose )
+        {
+            Abc_Print( 1, "hpart: running %s\n", command.c_str() );
+            fflush( stdout );
+        }
+
+        const int status = std::system( command.c_str() );
+        if ( status == -1 )
+        {
+            Abc_Print( -1, "hpart: failed to launch partitioner \"%s\"\n", ToolName( cfg.tool ) );
+            return false;
+        }
+        if ( ( !WIFEXITED( status ) || WEXITSTATUS( status ) != 0 ) && !std::filesystem::exists( part_file ) )
+        {
+            Abc_Print( -1, "hpart: partitioner \"%s\" exited with status %d\n", ToolName( cfg.tool ), status );
+            return false;
+        }
+        if ( ( !WIFEXITED( status ) || WEXITSTATUS( status ) != 0 ) && cfg.verbose )
+            Abc_Print( 1, "hpart: partitioner returned status %d, using generated result file anyway\n", status );
+
+        if ( !ReadPartitionFile( part_file, cfg.num_parts, hypergraph.vertices.size(), partitions ) )
+        {
+            Abc_Print( -1, "hpart: failed to read partition file \"%s\"\n", part_file.c_str() );
+            return false;
+        }
+
+        // --save-part: copy partition result to user-specified path
+        if ( !cfg.save_part.empty() )
+        {
+            std::error_code ec;
+            std::filesystem::copy_file( part_file, cfg.save_part,
+                                        std::filesystem::copy_options::overwrite_existing, ec );
+            if ( ec )
+                Abc_Print( -1, "hpart: warning: failed to save partition to \"%s\": %s\n",
+                           cfg.save_part.c_str(), ec.message().c_str() );
+            else if ( cfg.verbose )
+                Abc_Print( 1, "hpart: saved partition to \"%s\"\n", cfg.save_part.c_str() );
+        }
     }
 
     Abc_NtkClearPartIds( pNtk );

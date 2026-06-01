@@ -571,30 +571,39 @@ bool ApplyCmfs(Abc_Ntk_t *pNtk, const Config &cfg)
             if (Abc_ObjFaninNum(pNode) > p->nFaninMax)
                 continue;
 
-            if (Abc_WinNode(p, pNode) != 0)
-                continue;
-
             part_id orig_part = Abc_ObjGetPartId(pNode);
             int id_before = Abc_NtkObjNumMax(pNtk);
 
             total_attempts++;
             int ret = 0;
 
-            if (cfg.allow_resub)
+            // Iterative deepening: try nWinTfoLevs, then nWinTfoLevs+1 .. maxWinDepth
+            int depth_start = p->pPars->nWinTfoLevs;
+            int depth_end   = (cfg.maxWinDepth > depth_start) ? cfg.maxWinDepth : depth_start;
+
+            for (int depth = depth_start; depth <= depth_end && ret == 0; ++depth)
             {
-                Abc_Obj_t *pCritFanin = Abc_ObjFanin(pNode, cand.iFanin);
-                if (pCritFanin->Id >= arr_size)
+                p->pPars->nWinTfoLevs = depth;
+                if (Abc_WinNode(p, pNode) != 0)
                     continue;
-                float crit_contrib = arr[pCritFanin->Id]
-                                   + edge_delay(pCritFanin, pNode, pNtk->pPdb);
-                ret = try_arrival_resub(p, pNode, cand.iFanin,
-                                        crit_contrib, arr, pNtk->pPdb,
-                                        cfg.maxTempLut);
+
+                if (cfg.allow_resub)
+                {
+                    Abc_Obj_t *pCritFanin = Abc_ObjFanin(pNode, cand.iFanin);
+                    if (pCritFanin->Id >= arr_size)
+                        break;
+                    float crit_contrib = arr[pCritFanin->Id]
+                                       + edge_delay(pCritFanin, pNode, pNtk->pPdb);
+                    ret = try_arrival_resub(p, pNode, cand.iFanin,
+                                            crit_contrib, arr, pNtk->pPdb,
+                                            cfg.maxTempLut);
+                }
+                else
+                {
+                    ret = Abc_NtkMfsSolveSatResub(p, pNode, cand.iFanin, 1, 0);
+                }
             }
-            else
-            {
-                ret = Abc_NtkMfsSolveSatResub(p, pNode, cand.iFanin, 1, 0);
-            }
+            p->pPars->nWinTfoLevs = depth_start; // restore
 
             if (ret >= 1)
             {

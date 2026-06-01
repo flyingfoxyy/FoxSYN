@@ -15,6 +15,7 @@ struct Config {
     int  nFanoutsMax = 30;
     int  nWinMax     = 300;
     int  maxTempLut  = 0;   // -X: max temp LUT size for Shannon decomp (0=off, 7-12)
+    int  maxWinDepth = 0;   // -D: iterative deepening max TFO depth (0=off, tries nWinTfoLevs+1..maxWinDepth)
     bool allow_resub = false;
     bool verbose     = false;
 };

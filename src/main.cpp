@@ -622,7 +622,20 @@ int HPart_Command(Abc_Frame_t *pAbc, int argc, char **argv)
         case 'h':
             goto usage;
         default:
-            std::cout << "hpart: unknown argument -" << arg << "\n";
+            // Check for long options (--save-part, --load-part)
+            if (strncmp(argv[i], "--save-part", 11) == 0)
+            {
+                if (i + 1 >= argc) { printf("hpart: --save-part requires a file path\n"); return 1; }
+                cfg.save_part = argv[++i];
+                break;
+            }
+            if (strncmp(argv[i], "--load-part", 11) == 0)
+            {
+                if (i + 1 >= argc) { printf("hpart: --load-part requires a file path\n"); return 1; }
+                cfg.load_part = argv[++i];
+                break;
+            }
+            std::cout << "hpart: unknown argument " << argv[i] << "\n";
             goto usage;
         }
     }
@@ -637,12 +650,14 @@ int HPart_Command(Abc_Frame_t *pAbc, int argc, char **argv)
     return ApplyPartitioning(pNtk, cfg) ? 0 : 1;
 
 usage:
-    Abc_Print(-2, "usage: hpart [-T hmetis|shmetis|kmetis] [-N num] [-B pct] [-v]\n");
+    Abc_Print(-2, "usage: hpart [-T hmetis|shmetis|kmetis] [-N num] [-B pct] [--save-part file] [--load-part file] [-v]\n");
     Abc_Print(-2, "\t           partitions the current network structurally and creates a pdb\n");
-    Abc_Print(-2, "\t-T name  : partitioner name [default = %s]\n", ToolName(cfg.tool));
-    Abc_Print(-2, "\t-N num   : number of partitions (2 <= num <= 255) [default = %d]\n", cfg.num_parts);
-    Abc_Print(-2, "\t-B pct   : balance imbalance percent (1 <= pct <= 49) [default = %d]\n", cfg.balance_pct);
-    Abc_Print(-2, "\t-v       : toggles partitioner log output\n");
+    Abc_Print(-2, "\t-T name         : partitioner name [default = %s]\n", ToolName(cfg.tool));
+    Abc_Print(-2, "\t-N num          : number of partitions (2 <= num <= 255) [default = %d]\n", cfg.num_parts);
+    Abc_Print(-2, "\t-B pct          : balance imbalance percent (1 <= pct <= 49) [default = %d]\n", cfg.balance_pct);
+    Abc_Print(-2, "\t--save-part file: save partition result to file (for reproducible runs)\n");
+    Abc_Print(-2, "\t--load-part file: load partition from file instead of running hmetis\n");
+    Abc_Print(-2, "\t-v              : toggles partitioner log output\n");
     Abc_Print(-2, "\n");
     return 1;
 }
@@ -706,6 +721,11 @@ int Cmfs_Command(Abc_Frame_t *pAbc, int argc, char **argv)
             if (cfg.maxTempLut != 0 && (cfg.maxTempLut < 7 || cfg.maxTempLut > 12))
             { printf("cmfs: -X must be 0 (off) or 7-12\n"); return 1; }
             break;
+        case 'D':
+            if (i + 1 >= argc) { printf("cmfs: -D requires a number\n"); return 1; }
+            cfg.maxWinDepth = std::atoi(argv[++i]);
+            if (cfg.maxWinDepth < 0) { printf("cmfs: invalid max window depth %d\n", cfg.maxWinDepth); return 1; }
+            break;
         case 'r':
             cfg.allow_resub ^= 1;
             break;
@@ -727,7 +747,7 @@ int Cmfs_Command(Abc_Frame_t *pAbc, int argc, char **argv)
     return fox::cmfs::ApplyCmfs(pNtk, cfg) ? 0 : 1;
 
 usage:
-    Abc_Print(-2, "usage: cmfs [-K num] [-R num] [-S num] [-C num] [-W num] [-F num] [-M num] [-X num] [-rv]\n");
+    Abc_Print(-2, "usage: cmfs [-K num] [-R num] [-S num] [-C num] [-W num] [-F num] [-M num] [-X num] [-D num] [-rv]\n");
     Abc_Print(-2, "\t           critical-path edge removal using SAT-based redundancy\n");
     Abc_Print(-2, "\t-K num  : number of critical paths to analyze [default = %d]\n", cfg.top_K);
     Abc_Print(-2, "\t-R num  : max optimization rounds [default = %d]\n", cfg.max_rounds);
@@ -737,6 +757,7 @@ usage:
     Abc_Print(-2, "\t-F num  : MFS max fanouts for window [default = %d]\n", cfg.nFanoutsMax);
     Abc_Print(-2, "\t-M num  : MFS max window node count [default = %d]\n", cfg.nWinMax);
     Abc_Print(-2, "\t-X num  : max temp LUT size for Shannon decomp (0=off, 7-12) [default = %d]\n", cfg.maxTempLut);
+    Abc_Print(-2, "\t-D num  : iterative deepening max TFO depth (0=off) [default = %d]\n", cfg.maxWinDepth);
     Abc_Print(-2, "\t-r      : enable partition-aware resubstitution [default = %s]\n", cfg.allow_resub ? "on" : "off");
     Abc_Print(-2, "\t-v      : toggles verbose output\n");
     Abc_Print(-2, "\n");

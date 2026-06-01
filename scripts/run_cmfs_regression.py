@@ -46,12 +46,14 @@ def strip_ansi(text: str) -> str:
 
 
 def run_case(foxsyn: Path, workdir: Path, case: Path, parts: int,
-             cmfs_args: str, timeout: int, runs: int = 1) -> Result:
+             cmfs_args: str, timeout: int, runs: int = 1,
+             parts_dir: Path | None = None, save_parts: bool = False) -> Result:
     name = case.stem
     best: Result | None = None
 
     for _ in range(runs):
-        r = run_case_once(foxsyn, workdir, case, parts, cmfs_args, timeout)
+        r = run_case_once(foxsyn, workdir, case, parts, cmfs_args, timeout,
+                          parts_dir=parts_dir, save_parts=save_parts)
         if best is None:
             best = r
         elif r.status == "OK" and r.gain != "-":
@@ -62,13 +64,23 @@ def run_case(foxsyn: Path, workdir: Path, case: Path, parts: int,
 
 
 def run_case_once(foxsyn: Path, workdir: Path, case: Path, parts: int,
-                  cmfs_args: str, timeout: int) -> Result:
+                  cmfs_args: str, timeout: int,
+                  parts_dir: Path | None = None, save_parts: bool = False) -> Result:
     name = case.stem
     rel = case.relative_to(workdir).as_posix()
 
+    # Build hpart command with optional save/load
+    hpart_cmd = f"hpart -N {parts}"
+    if parts_dir is not None:
+        part_file = parts_dir / f"{name}.part"
+        if save_parts:
+            hpart_cmd += f" --save-part {part_file}"
+        elif part_file.exists():
+            hpart_cmd += f" --load-part {part_file}"
+
     command = (
         f"read {rel}; st; if -K 6; "
-        f"hpart -N {parts}; ps; "
+        f"{hpart_cmd}; ps; "
         f"cmfs {cmfs_args}; ps"
     )
 
@@ -143,6 +155,10 @@ def main() -> int:
     parser.add_argument("--match", default="")
     parser.add_argument("--runs", type=int, default=1,
                         help="Run each case N times, report best (mitigates hmetis randomness)")
+    parser.add_argument("--save-parts-dir", type=Path, default=None,
+                        help="Save hmetis partition results to this directory for reproducible runs")
+    parser.add_argument("--load-parts-dir", type=Path, default=None,
+                        help="Load partition results from this directory instead of running hmetis")
     args = parser.parse_args()
 
     workdir = Path.cwd()
@@ -152,6 +168,16 @@ def main() -> int:
     if not foxsyn.is_file():
         print(f"error: FoxSYN not found: {foxsyn}", file=sys.stderr)
         return 1
+
+    parts_dir: Path | None = None
+    save_parts = False
+    if args.save_parts_dir is not None:
+        parts_dir = args.save_parts_dir if args.save_parts_dir.is_absolute() else (workdir / args.save_parts_dir).resolve()
+        parts_dir.mkdir(parents=True, exist_ok=True)
+        save_parts = True
+    elif args.load_parts_dir is not None:
+        parts_dir = args.load_parts_dir if args.load_parts_dir.is_absolute() else (workdir / args.load_parts_dir).resolve()
+        save_parts = False
 
     cases = sorted(p for p in cases_root.rglob("*") if p.suffix in {".v", ".blif"} and p.is_file())
     # Skip pre-mapped files
@@ -164,6 +190,9 @@ def main() -> int:
         return 1
 
     print(f"# cmfs regression: parts={args.parts}, cmfs_args='{args.cmfs_args}', cases={len(cases)}")
+    if parts_dir:
+        mode = "saving" if save_parts else "loading"
+        print(f"# partition {mode}: {parts_dir}")
     print(f"{'Case':<16} {'Nodes':>6} {'HopBef':>7} {'HopAft':>7} "
           f"{'ArrBef':>9} {'ArrAft':>9} {'Gain':>9} "
           f"{'Att':>4} {'Rem':>4} {'T/O':>4} {'Time':>6} {'Status':<6}")
@@ -172,7 +201,8 @@ def main() -> int:
     results: list[Result] = []
     with ThreadPoolExecutor(max_workers=args.jobs) as executor:
         futures = {
-            executor.submit(run_case, foxsyn, workdir, c, args.parts, args.cmfs_args, args.timeout, args.runs): c
+            executor.submit(run_case, foxsyn, workdir, c, args.parts, args.cmfs_args,
+                            args.timeout, args.runs, parts_dir, save_parts): c
             for c in cases
         }
         for future in as_completed(futures):
