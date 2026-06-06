@@ -1,6 +1,3 @@
-[submodule "src/abc"]
-	path = src/abc
-	url = git@github.com:flyingfoxyy/fox-abc.git
 [submodule "regression/SimpleCircuits"]
 	path = regression/SimpleCircuits
 	url = git@github.com:flyingfoxyy/SimpleCircuits.git
