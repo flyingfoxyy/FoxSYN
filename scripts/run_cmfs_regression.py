@@ -10,14 +10,16 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, field
 from pathlib import Path
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 CMFS_RESULT_RE = re.compile(
-    r"cmfs:.*?(\d+)\s+attempts,\s+(\d+)\s+removals\s+\((\d+)\s+timeouts\)"
+    r"cmfs:.*?(\d+)\s+attempts,\s+(\d+)\s+successes\s+\((\d+)\s+timeouts\)"
 )
+CMFS_DIAG_RE = re.compile(r"cmfs-diag:\s+(.*)")
 CMFS_ARRIVAL_RE = re.compile(
     r"cmfs:\s+arrival\s+([0-9.]+)\s+->\s+([0-9.]+)\s+\((?:total )?improvement\s+([0-9.-]+)\)"
 )
@@ -39,10 +41,51 @@ class Result:
     gain: str = "-"
     sec: str = "-"
     status: str = "FAIL"
+    diag: dict = field(default_factory=dict)
 
 
 def strip_ansi(text: str) -> str:
     return ANSI_RE.sub("", text)
+
+
+def parse_diag(output: str) -> dict:
+    m = CMFS_DIAG_RE.search(output)
+    if not m:
+        return {}
+    d: dict = {}
+    for tok in m.group(1).split():
+        if "=" not in tok:
+            continue
+        k, v = tok.split("=", 1)
+        try:
+            d[k] = float(v) if "." in v else int(v)
+        except ValueError:
+            d[k] = v
+    return d
+
+
+def dominant_bucket(r: "Result") -> str:
+    """Classify a no-gain case into its dominant failure bucket."""
+    if r.status != "OK":
+        return "CRASH"
+    d = r.diag
+    if not d:
+        return "NO_DIAG"
+    cand = int(d.get("cand", 0))
+    succ = int(d.get("succ_rmv", 0)) + int(d.get("succ_resub", 0))
+    if cand == 0 and int(d.get("slack_skip", 0)) > 0:
+        return "CO_CRITICAL"
+    if cand == 0:
+        return "NO_OPPORTUNITY"
+    if succ > 0:
+        return "WIDE_FRONT"
+    fails = {
+        "NO_DIVISOR": int(d.get("no_div", 0)),
+        "SAT_REJECT": int(d.get("resub_fail", 0)),
+        "WINDOW_FAIL": int(d.get("winfail", 0)),
+        "TIMEOUT": int(d.get("timeout", 0)),
+    }
+    return max(fails, key=lambda k: fails[k])
 
 
 def run_case(foxsyn: Path, workdir: Path, case: Path, parts: int,
@@ -131,6 +174,8 @@ def run_case_once(foxsyn: Path, workdir: Path, case: Path, parts: int,
         result.arr_before = m.group(1)
         result.arr_after = m.group(2)
         result.gain = m.group(3)
+
+    result.diag = parse_diag(output)
 
     # Extract node count from first ps line
     nd_match = re.search(r"\bnd =\s*(\d+)", output)
@@ -221,6 +266,39 @@ def main() -> int:
         gains.sort(key=lambda r: float(r.gain), reverse=True)
         for r in gains:
             print(f"  {r.case}: arrival improvement = {r.gain}")
+
+    # Coverage diagnostic histogram
+    ok = [r for r in results if r.status == "OK"]
+    wins = [r for r in ok if r.gain != "-" and float(r.gain) > 0]
+    nogain = [r for r in ok if r.gain == "-" or float(r.gain) <= 0]
+    crashes = [r for r in results if r.status != "OK"]
+    print("\n=== coverage diagnostic ===")
+    print(f"total={len(results)}  wins={len(wins)}  "
+          f"no-gain={len(nogain)}  crash/fail={len(crashes)}")
+
+    buckets = Counter(dominant_bucket(r) for r in nogain)
+    print("dominant bucket (no-gain cases):")
+    for name, n in buckets.most_common():
+        print(f"  {name:<16} {n}")
+
+    keys = ["cand", "slack_skip", "winfail", "no_div", "resub_fail",
+            "other_fail", "timeout", "succ_rmv", "succ_resub", "local_flat"]
+    agg = {k: sum(int(r.diag.get(k, 0)) for r in nogain if r.diag) for k in keys}
+    print("counter sums (no-gain):", " ".join(f"{k}={agg[k]}" for k in keys))
+
+    wide = sum(1 for r in nogain if r.diag and int(r.diag.get("front_final", 0)) > 1)
+    print(f"front_final>1 (wide front): {wide}/{len(nogain)}")
+
+    bad = []
+    for r in nogain + wins:
+        if not r.diag:
+            continue
+        lhs = int(r.diag.get("cand", 0))
+        rhs = sum(int(r.diag.get(k, 0)) for k in
+                  ("succ_rmv", "succ_resub", "winfail", "no_div", "resub_fail", "other_fail"))
+        if lhs != rhs:
+            bad.append((r.case, lhs, rhs))
+    print("invariant cand==sum: " + ("OK" if not bad else f"VIOLATED {bad[:5]}"))
 
     return 0
 

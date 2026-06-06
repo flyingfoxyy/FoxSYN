@@ -39,6 +39,28 @@ struct CandidateEdge {
     float weight;
 };
 
+// Coverage diagnostic counters (accumulated across rounds). See
+// docs/superpowers/specs/2026-06-02-cmfs-coverage-diagnostic-design.md.
+// Invariant: cand == succ_rmv + succ_resub + winfail + no_div + resub_fail + other_fail.
+struct Diag {
+    int cand        = 0;   // candidates that entered the attempt loop
+    int slack_skip  = 0;   // critical-path node visits skipped (slack < 0.5)
+    int winfail     = 0;   // Abc_WinNode failed at every depth
+    int no_div      = 0;   // good_divs empty (arrival gate killed all)
+    int resub_fail  = 0;   // had divisors but every SAT resub failed
+    int other_fail  = 0;   // ret==-1 / interpolate null, rare hard fails
+    int timeout     = 0;   // = total p->nTimeOuts
+    int succ_rmv    = 0;   // pure-removal successes (ret 1)
+    int succ_resub  = 0;   // resub/Shannon successes (ret 2/3/4)
+    int rounds      = 0;
+    int local_flat  = 0;   // rounds with successes but global max unchanged
+    int front_init  = 0;   // POs at global max, initial
+    int front_final = 0;   // POs at global max, final
+};
+
+// Terminal reason for a failed try_arrival_resub attempt (set via out-param).
+enum ResubReason { RR_SUCCESS = 0, RR_NO_DIV, RR_RESUB_FAIL, RR_OTHER };
+
 static float edge_delay(Abc_Obj_t *pFrom, Abc_Obj_t *pTo, Pdb *pPdb)
 {
     if (!pPdb)
@@ -48,6 +70,24 @@ static float edge_delay(Abc_Obj_t *pFrom, Abc_Obj_t *pTo, Pdb *pPdb)
     if (fp == ABC_PART_ID_NONE || tp == ABC_PART_ID_NONE)
         return 0.0f;
     return (fp != tp) ? HOP_DLY : 0.0f;
+}
+
+// Number of primary outputs whose arrival is within 0.5 of the global max
+// (how wide the critical front is). Diagnostic only.
+static int front_width(Abc_Ntk_t *pNtk, const std::vector<float> &arr, float maxv)
+{
+    int w = 0;
+    Abc_Obj_t *pPo;
+    int i;
+    Abc_NtkForEachPo(pNtk, pPo, i)
+    {
+        Abc_Obj_t *pDrv = Abc_ObjFanin0(pPo);
+        if (!pDrv || pDrv->Id >= static_cast<int>(arr.size()))
+            continue;
+        if (arr[pDrv->Id] >= maxv - 0.5f)
+            w++;
+    }
+    return w;
 }
 
 // Shannon decomposition: recursively split an over-sized truth table into
@@ -117,12 +157,14 @@ static Abc_Obj_t *shannon_decompose(Abc_Ntk_t *pNtk, unsigned *pTruth, int nVars
 static int try_arrival_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
                              float crit_contrib,
                              const std::vector<float> &arrival, Pdb *pPdb,
-                             int maxTempLut)
+                             int maxTempLut, int *reason)
 {
     int pCands[MFS_FANIN_MAX];
     int nCands = 0;
     Abc_Obj_t *pFanin;
     int i;
+
+    *reason = RR_RESUB_FAIL; // default; overridden at specific exits
 
     // Build base candidate set: all fanins except the target
     Vec_PtrClear(p->vMfsFanins);
@@ -145,7 +187,7 @@ static int try_arrival_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
     {
         Hop_Obj_t *pFunc = Abc_NtkMfsInterplate(p, pCands, nCands);
         if (!pFunc)
-            return 0;
+            { *reason = RR_OTHER; return 0; }
         Abc_NtkMfsUpdateNetwork(p, pNode, p->vMfsFanins, pFunc);
         p->nRemoves++;
         return 1;
@@ -170,7 +212,7 @@ static int try_arrival_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
     std::sort(good_divs.begin(), good_divs.end());
 
     if (good_divs.empty())
-        return 0;
+        { *reason = RR_NO_DIV; return 0; }
 
     int nWords;
     unsigned *pData;
@@ -205,7 +247,7 @@ static int try_arrival_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
         {
             Hop_Obj_t *pFunc = Abc_NtkMfsInterplate(p, pCands, nCands + 1);
             if (!pFunc)
-                return 0;
+                { *reason = RR_OTHER; return 0; }
             Vec_PtrPush(p->vMfsFanins, Vec_PtrEntry(p->vDivs, found));
             Abc_NtkMfsUpdateNetwork(p, pNode, p->vMfsFanins, pFunc);
             p->nResubs++;
@@ -265,7 +307,7 @@ static int try_arrival_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
         {
             Hop_Obj_t *pFunc = Abc_NtkMfsInterplate(p, pCands, nCands + 2);
             if (!pFunc)
-                return 0;
+                { *reason = RR_OTHER; return 0; }
             Vec_PtrPush(p->vMfsFanins, Vec_PtrEntry(p->vDivs, found1));
             Vec_PtrPush(p->vMfsFanins, Vec_PtrEntry(p->vDivs, found2));
             Abc_NtkMfsUpdateNetwork(p, pNode, p->vMfsFanins, pFunc);
@@ -321,7 +363,7 @@ static int try_arrival_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
         {
             // Success! Interpolate and decompose.
             Hop_Obj_t *pFunc = Abc_NtkMfsInterplate(p, pCands, nCands + k + 1);
-            if (!pFunc) return 0;
+            if (!pFunc) { *reason = RR_OTHER; return 0; }
 
             // Collect all fanins for decomposition
             for (int c = 0; c <= k; c++)
@@ -356,7 +398,7 @@ static int try_arrival_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
             Hop_Man_t *pHopMan = (Hop_Man_t *)pNode->pNtk->pManFunc;
             Vec_Int_t *vTruth = Vec_IntAlloc(Kit_TruthWordNum(nTotal) * 2 + 32);
             unsigned *pTruth = Hop_ManConvertAigToTruth(pHopMan, pFunc, nTotal, vTruth, 0);
-            if (!pTruth) { Vec_IntFree(vTruth); return 0; }
+            if (!pTruth) { Vec_IntFree(vTruth); *reason = RR_OTHER; return 0; }
 
             // Copy truth table (buffer may be reused)
             int nTtWords = Kit_TruthWordNum(nTotal);
@@ -394,7 +436,7 @@ static int try_arrival_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
 
 static void collect_candidates(Abc_Ntk_t *pNtk, const std::vector<float> &arrival,
                                const std::vector<fox::timer::Path> &paths,
-                               std::vector<CandidateEdge> &candidates)
+                               std::vector<CandidateEdge> &candidates, Diag &diag)
 {
     Pdb *pPdb = pNtk->pPdb;
     std::unordered_map<uint64_t, CandidateEdge> edge_map;
@@ -430,7 +472,11 @@ static void collect_candidates(Abc_Ntk_t *pNtk, const std::vector<float> &arriva
 
             float slack = best - second;
             if (slack < 0.5f || best_idx < 0)
+            {
+                if (best_idx >= 0)
+                    diag.slack_skip++;
                 continue;
+            }
 
             uint64_t key = (static_cast<uint64_t>(pNode->Id) << 16)
                          | static_cast<uint64_t>(best_idx);
@@ -475,10 +521,12 @@ bool ApplyCmfs(Abc_Ntk_t *pNtk, const Config &cfg)
 
     // Measure true initial arrival before any transformation
     int total_attempts = 0, total_successes = 0, total_timeouts = 0;
+    Diag diag;
 
     SimpleTimer timer0(pNtk);
     timer0.compute_arrival();
     float initial_arrival = timer0.max_arrival();
+    diag.front_init = front_width(pNtk, timer0.get_arrival(), initial_arrival);
 
     // Force a clean Hop manager: convert to SOP first, then back to AIG.
     // Note: Abc_NtkToSop calls Abc_NtkMinimumBase which removes locally-redundant
@@ -530,7 +578,7 @@ bool ApplyCmfs(Abc_Ntk_t *pNtk, const Config &cfg)
         }
 
         std::vector<CandidateEdge> candidates;
-        collect_candidates(pNtk, rtimer.get_arrival(), paths, candidates);
+        collect_candidates(pNtk, rtimer.get_arrival(), paths, candidates, diag);
 
         if (candidates.empty())
         {
@@ -575,7 +623,10 @@ bool ApplyCmfs(Abc_Ntk_t *pNtk, const Config &cfg)
             int id_before = Abc_NtkObjNumMax(pNtk);
 
             total_attempts++;
+            diag.cand++;
             int ret = 0;
+            int reason = RR_OTHER;
+            bool win_ok = false;
 
             // Iterative deepening: try nWinTfoLevs, then nWinTfoLevs+1 .. maxWinDepth
             int depth_start = p->pPars->nWinTfoLevs;
@@ -586,6 +637,7 @@ bool ApplyCmfs(Abc_Ntk_t *pNtk, const Config &cfg)
                 p->pPars->nWinTfoLevs = depth;
                 if (Abc_WinNode(p, pNode) != 0)
                     continue;
+                win_ok = true;
 
                 if (cfg.allow_resub)
                 {
@@ -596,11 +648,12 @@ bool ApplyCmfs(Abc_Ntk_t *pNtk, const Config &cfg)
                                        + edge_delay(pCritFanin, pNode, pNtk->pPdb);
                     ret = try_arrival_resub(p, pNode, cand.iFanin,
                                             crit_contrib, arr, pNtk->pPdb,
-                                            cfg.maxTempLut);
+                                            cfg.maxTempLut, &reason);
                 }
                 else
                 {
                     ret = Abc_NtkMfsSolveSatResub(p, pNode, cand.iFanin, 1, 0);
+                    reason = RR_RESUB_FAIL;
                 }
             }
             p->pPars->nWinTfoLevs = depth_start; // restore
@@ -609,12 +662,18 @@ bool ApplyCmfs(Abc_Ntk_t *pNtk, const Config &cfg)
             {
                 total_successes++;
                 round_successes++;
+                if (ret == 1) diag.succ_rmv++;
+                else          diag.succ_resub++;
                 Abc_Obj_t *pNew = Abc_NtkObj(pNtk, id_before);
                 if (pNew && orig_part != ABC_PART_ID_NONE)
                     Abc_ObjSetPartId(pNew, orig_part);
                 if (static_cast<size_t>(cand.node_id) < node_done.size())
                     node_done[cand.node_id] = 1;
             }
+            else if (!win_ok)                 diag.winfail++;
+            else if (reason == RR_NO_DIV)     diag.no_div++;
+            else if (reason == RR_RESUB_FAIL) diag.resub_fail++;
+            else                              diag.other_fail++;
         }
 
         total_timeouts += p->nTimeOuts;
@@ -633,6 +692,9 @@ bool ApplyCmfs(Abc_Ntk_t *pNtk, const Config &cfg)
             printf("cmfs: round %2d  candidates=%3zu  removed=%3d  arrival=%.2f\n",
                    round, candidates.size(), round_successes, new_arrival);
         }
+
+        if (round_successes > 0 && !(new_arrival < best_arrival - 0.5f))
+            diag.local_flat++;
 
         if (new_arrival < best_arrival - 0.5f)
         {
@@ -654,11 +716,21 @@ bool ApplyCmfs(Abc_Ntk_t *pNtk, const Config &cfg)
     SimpleTimer ftimer(pNtk);
     ftimer.compute_arrival();
     float final_arrival = ftimer.max_arrival();
+    diag.front_final = front_width(pNtk, ftimer.get_arrival(), final_arrival);
+    diag.rounds = rounds_run;
+    diag.timeout = total_timeouts;
 
     printf("cmfs: %d rounds, %d attempts, %d successes (%d timeouts)\n",
            rounds_run, total_attempts, total_successes, total_timeouts);
     printf("cmfs: arrival %.2f -> %.2f (total improvement %.2f)\n",
            initial_arrival, final_arrival, initial_arrival - final_arrival);
+    printf("cmfs-diag: front_init=%d front_final=%d cand=%d slack_skip=%d "
+           "winfail=%d no_div=%d resub_fail=%d other_fail=%d timeout=%d "
+           "succ_rmv=%d succ_resub=%d rounds=%d local_flat=%d gain=%.2f\n",
+           diag.front_init, diag.front_final, diag.cand, diag.slack_skip,
+           diag.winfail, diag.no_div, diag.resub_fail, diag.other_fail, diag.timeout,
+           diag.succ_rmv, diag.succ_resub, diag.rounds, diag.local_flat,
+           initial_arrival - final_arrival);
 
     return true;
 }

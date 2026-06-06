@@ -69,3 +69,4 @@ build-clang
 .codex
 .worktrees/
 scripts/__pycache__
+docs/superpowers
