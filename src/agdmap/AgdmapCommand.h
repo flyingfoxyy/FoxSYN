@@ -40,6 +40,6 @@ ABC_NAMESPACE_HEADER_START
 ///                      FUNCTION DEFINITIONS                        ///
 ////////////////////////////////////////////////////////////////////////
 
-extern int Agdmap(Abc_Frame_t * pAbc, int argc, char **argv);
+extern int Agdmap(Abc_Frame_t *pAbc, int argc, char **argv);
 
 ABC_NAMESPACE_HEADER_END
