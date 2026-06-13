@@ -20,6 +20,7 @@
 #include "timer/timer.hpp"
 #include "cpr/cpr.hpp"
 #include "cmfs/cmfs.hpp"
+#include "agdmap/AgdmapCommand.h"
 
 extern "C"
 {
@@ -775,6 +776,7 @@ struct CmdRegister
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "timer", Timer_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "cpr", Cpr_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "cmfs", Cmfs_Command, 1);
+        Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FPGA mapping", "agdmap", Agdmap, 1);
     }
 } regiter;
 

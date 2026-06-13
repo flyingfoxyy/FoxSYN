@@ -44,6 +44,7 @@ add_subdirectory(hpart)
 add_subdirectory(timer)
 add_subdirectory(cpr)
 add_subdirectory(cmfs)
+add_subdirectory(agdmap)
 
 add_compile_options(-fexceptions)
 
@@ -59,6 +60,7 @@ target_link_libraries(FoxSYN PRIVATE
     timer
     cpr
     cmfs
+    agdmap
 )
 
 # Add test_dot executable to demonstrate the DOT file generation
