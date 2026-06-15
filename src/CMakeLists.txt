@@ -45,6 +45,7 @@ add_subdirectory(timer)
 add_subdirectory(cpr)
 add_subdirectory(cmfs)
 add_subdirectory(agdmap)
+add_subdirectory(curvemap)
 
 add_compile_options(-fexceptions)
 
@@ -61,6 +62,7 @@ target_link_libraries(FoxSYN PRIVATE
     cpr
     cmfs
     agdmap
+    curvemap
 )
 
 # Add test_dot executable to demonstrate the DOT file generation

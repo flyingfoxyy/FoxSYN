@@ -21,6 +21,7 @@
 #include "cpr/cpr.hpp"
 #include "cmfs/cmfs.hpp"
 #include "agdmap/AgdmapCommand.h"
+#include "curvemap/curvemap.h"
 
 extern "C"
 {
@@ -765,6 +766,61 @@ usage:
     return 1;
 }
 
+int Curvemap_Command(Abc_Frame_t* pAbc, int argc, char** argv) {
+    using namespace fox::curvemap;
+
+    int K = 6;
+
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "-K") == 0) {
+            K = atoi(argv[++i]);
+            if (K < 2 || K > 6) {
+                printf("curvemap: LUT size must be 2-6\n");
+                return 1;
+            }
+        } else if (strcmp(argv[i], "-h") == 0) {
+            goto usage;
+        } else {
+            printf("curvemap: unknown argument %s\n", argv[i]);
+            goto usage;
+        }
+    }
+
+    {
+        Abc_Ntk_t* pNtk = Abc_FrameReadNtk(pAbc);
+        if (!pNtk) {
+            printf("curvemap: empty network\n");
+            return 0;
+        }
+
+        Abc_Ntk_t* pStrash = pNtk;
+        if (!Abc_NtkIsStrash(pNtk)) {
+            pStrash = Abc_NtkStrash(pNtk, 0, 0, 0);
+            if (!pStrash) {
+                printf("curvemap: strashing failed\n");
+                return 1;
+            }
+        }
+
+        Curvemap mapper(pStrash, K);
+        mapper.run();
+        Abc_Ntk_t* pRes = mapper.mapped_ntk();
+        if (!pRes) {
+            printf("curvemap: mapping failed\n");
+            return 1;
+        }
+        Abc_FrameReplaceCurrentNetwork(pAbc, pRes);
+    }
+    return 0;
+
+usage:
+    Abc_Print(-2, "\nusage: curvemap [-K <num>]\n");
+    Abc_Print(-2, "\t         area-delay Pareto-curve LUT mapper\n");
+    Abc_Print(-2, "\t-K [int] : LUT input size (2-6) [default = 6]\n");
+    Abc_Print(-2, "\t-h       : print the command usage\n");
+    return 1;
+}
+
 struct CmdRegister
 {
     CmdRegister()
@@ -776,6 +832,7 @@ struct CmdRegister
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "timer", Timer_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "cpr", Cpr_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "cmfs", Cmfs_Command, 1);
+        Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "curvemap", Curvemap_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FPGA mapping", "agdmap", Agdmap, 1);
     }
 } regiter;
