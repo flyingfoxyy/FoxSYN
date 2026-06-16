@@ -123,7 +123,7 @@ private:
 // =========================================================================
 class Curvemap {
 public:
-    Curvemap(Abc_Ntk_t* pNtk, int K);
+    Curvemap(Abc_Ntk_t* pNtk, int K, int nPasses = 3);
     ~Curvemap();
 
     void run();
@@ -140,6 +140,8 @@ private:
     Abc_Ntk_t* _pNtk = nullptr;
     int        _K    = 6;
     int        _nObjs = 0;
+    int        _nPasses = 3;     // total number of mapping passes
+    int        _pass = 0;        // current pass index (0-based)
 
     // Per-node data indexed by Abc_ObjId
     std::vector<std::vector<Cut*>> _cuts;       // cut lists
@@ -147,6 +149,11 @@ private:
     std::vector<int>               _required;   // required time
     std::vector<bool>              _is_root;    // LUT root flag
     std::vector<Cut*>              _best_cut;   // selected cut
+
+    // Multi-pass area-flow state
+    std::vector<double> _est_fanout;  // estimated fanout from previous pass cover
+    std::vector<double> _rep_area;    // per-node representative area (min-delay cut)
+    std::vector<int>    _rep_delay;   // per-node representative delay (min-delay cut)
 
     // Traversal order
     std::vector<Abc_Obj_t*> _topo_order;
@@ -163,8 +170,17 @@ private:
 
     void combine_costs(Cut* merged, const Cut* subcut, int fanout);
 
+    // ---- Pass 2+ single-point area-flow ----
+    void forward_pass_flow();
+    void cut_enum_node_flow(Abc_Obj_t* pNode);
+    void create_trivial_cut_flow(int nId);
+    void update_rep(int nId);   // set _rep_area/_rep_delay from min-delay cut
+    void compute_est_fanout();  // recount fanout from current cover
+
     bool insert_cut(int nId, Cut* cut);
     bool is_cut_redundant(int nId, const std::vector<int>& leaves) const;
+
+    void free_cuts();           // release all cut lists between passes
 
     // ---- Truth table ----
     static uint64_t compute_truth(const std::vector<int>& merged_leaves,

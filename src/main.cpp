@@ -770,12 +770,19 @@ int Curvemap_Command(Abc_Frame_t* pAbc, int argc, char** argv) {
     using namespace fox::curvemap;
 
     int K = 6;
+    int nPasses = 3;
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "-K") == 0) {
             K = atoi(argv[++i]);
             if (K < 2 || K > 6) {
                 printf("curvemap: LUT size must be 2-6\n");
+                return 1;
+            }
+        } else if (strcmp(argv[i], "-P") == 0) {
+            nPasses = atoi(argv[++i]);
+            if (nPasses < 1) {
+                printf("curvemap: pass count must be >= 1\n");
                 return 1;
             }
         } else if (strcmp(argv[i], "-h") == 0) {
@@ -802,7 +809,7 @@ int Curvemap_Command(Abc_Frame_t* pAbc, int argc, char** argv) {
             }
         }
 
-        Curvemap mapper(pStrash, K);
+        Curvemap mapper(pStrash, K, nPasses);
         mapper.run();
         Abc_Ntk_t* pRes = mapper.mapped_ntk();
         if (!pRes) {
@@ -814,9 +821,10 @@ int Curvemap_Command(Abc_Frame_t* pAbc, int argc, char** argv) {
     return 0;
 
 usage:
-    Abc_Print(-2, "\nusage: curvemap [-K <num>]\n");
+    Abc_Print(-2, "\nusage: curvemap [-K <num>] [-P <num>]\n");
     Abc_Print(-2, "\t         area-delay Pareto-curve LUT mapper\n");
     Abc_Print(-2, "\t-K [int] : LUT input size (2-6) [default = 6]\n");
+    Abc_Print(-2, "\t-P [int] : number of mapping passes (>=1) [default = 3]\n");
     Abc_Print(-2, "\t-h       : print the command usage\n");
     return 1;
 }

@@ -165,16 +165,22 @@ bool Cut::leaves_contain(const Cut* rhs) const {
 // Curvemap
 // =========================================================================
 
-Curvemap::Curvemap(Abc_Ntk_t* pNtk, int K)
-    : _pNtk(pNtk), _K(K) {
+Curvemap::Curvemap(Abc_Ntk_t* pNtk, int K, int nPasses)
+    : _pNtk(pNtk), _K(K), _nPasses(nPasses < 1 ? 1 : nPasses) {
     assert(Abc_NtkIsStrash(pNtk));
     assert(K >= 2 && K <= 6);
 }
 
 Curvemap::~Curvemap() {
+    free_cuts();
+}
+
+void Curvemap::free_cuts() {
     for (auto& cl : _cuts)
         for (Cut* c : cl)
             delete c;
+    for (auto& cl : _cuts)
+        cl.clear();
 }
 
 void Curvemap::run() {
@@ -185,6 +191,9 @@ void Curvemap::run() {
     _required.resize((size_t)_nObjs, INT_MAX);
     _is_root.resize((size_t)_nObjs, false);
     _best_cut.resize((size_t)_nObjs, nullptr);
+    _est_fanout.resize((size_t)_nObjs, 1.0);
+    _rep_area.resize((size_t)_nObjs, 0.0);
+    _rep_delay.resize((size_t)_nObjs, 0);
 
     // Collect PIs and POs
     int i;
@@ -203,11 +212,29 @@ void Curvemap::run() {
         _topo_order.push_back(pNode);
     }
 
-    // --- Forward pass ---
-    forward_pass();
+    // Multi-pass mapping.  Pass 0 uses the area-delay Pareto-curve model
+    // with the subcut area-flow formula.  Passes 1+ use a single-point
+    // area-flow model whose leaf areas are guided by the fanout estimated
+    // from the previous pass's LUT cover.
+    for (_pass = 0; _pass < _nPasses; ++_pass) {
+        free_cuts(); // drop the previous pass's cuts (no-op on first pass)
 
-    // --- Backward pass ---
-    backward_pass();
+        // Reset per-node mapping state for this pass
+        std::fill(_required.begin(), _required.end(), INT_MAX);
+        std::fill(_is_root.begin(), _is_root.end(), false);
+        std::fill(_best_cut.begin(), _best_cut.end(), nullptr);
+
+        if (_pass == 0)
+            forward_pass();
+        else
+            forward_pass_flow();
+
+        backward_pass();
+
+        // Update fanout estimates from this pass's cover for the next pass
+        if (_pass + 1 < _nPasses)
+            compute_est_fanout();
+    }
 }
 
 Abc_Ntk_t* Curvemap::mapped_ntk() {
@@ -254,8 +281,8 @@ void Curvemap::forward_pass() {
         sum_cut += n;
         if (n > max_cut) max_cut = n;
     }
-    fprintf(stderr, "curvemap: total cuts %d  max cuts/node %d  avg %.1f\n",
-            sum_cut, max_cut, (double)sum_cut / (double)_topo_order.size());
+    fprintf(stderr, "curvemap PASS %d: cuts %8d  max/node %3d  avg %5.1f  [curve]\n",
+            _pass, sum_cut, max_cut, (double)sum_cut / (double)_topo_order.size());
 }
 
 void Curvemap::init_pi_cut(int piId) {
@@ -384,6 +411,195 @@ void Curvemap::create_trivial_cut(int nId) {
 
     // Push to front (as in original pushFrontCut)
     _cuts[nId].insert(_cuts[nId].begin(), triv);
+}
+
+// =========================================================================
+// Pass 2+ forward pass — single-point area-flow model
+//
+// Each cut carries a single solution.  The area of a cut is
+//   A_cut = 1 + Σ_leaf  A_leaf / est_fanout[leaf]
+// where A_leaf is the area of the leaf node's min-delay cut from the
+// current pass (stored in _rep_area), and est_fanout comes from the
+// previous pass's LUT cover.  The delay is the unit-delay depth.
+// =========================================================================
+
+void Curvemap::forward_pass_flow() {
+    // 1. Initialize PIs.  A PI is not a LUT, so it contributes 0 area; its
+    //    min-delay representative delay is LUT_DELAY (matching the pass-0
+    //    trivial-cut convention so consumers see leaf delay = 1).
+    for (int piId : _pi_ids) {
+        _level[piId] = 0;
+        Cut* triv = new Cut;
+        triv->_leaves.push_back(piId);
+        triv->set_trivial();
+        triv->_truth = 0xAAAAAAAAAAAAAAAAULL;
+        triv->_cost.insert(CutSolution(0.0, LUT_DELAY + EDGE_DELAY, 1));
+        _cuts[piId].push_back(triv);
+        _rep_area[piId]  = 0.0;
+        _rep_delay[piId] = LUT_DELAY + EDGE_DELAY;
+    }
+
+    // 2. Cut enumeration for AND nodes (PI → PO topological order)
+    for (Abc_Obj_t* pObj : _topo_order) {
+        int nId = Abc_ObjId(pObj);
+        int f0 = Abc_ObjFaninId(pObj, 0);
+        int f1 = Abc_ObjFaninId(pObj, 1);
+        _level[nId] = 1 + std::max(_level[f0], _level[f1]);
+        cut_enum_node_flow(pObj);
+        update_rep(nId);          // record the min-delay cut as A_leaf/D_leaf
+        create_trivial_cut_flow(nId);
+    }
+
+    // 3. Compute _max_arrival from PO drivers' trivial cuts
+    _max_arrival = 0;
+    for (int poId : _po_ids) {
+        Abc_Obj_t* pPo = Abc_NtkObj(_pNtk, poId);
+        int drvId = Abc_ObjFaninId(pPo, 0);
+        if (!_cuts[drvId].empty()) {
+            Cut* triv = _cuts[drvId].front();
+            int min_dly = triv->cost().min_delay_sol().delay();
+            if (min_dly > _max_arrival)
+                _max_arrival = min_dly;
+        }
+    }
+
+    // Stats
+    int sum_cut = 0, max_cut = 0;
+    for (auto& cl : _cuts) {
+        int n = (int)cl.size();
+        sum_cut += n;
+        if (n > max_cut) max_cut = n;
+    }
+    fprintf(stderr, "curvemap PASS %d: cuts %8d  max/node %3d  avg %5.1f  [flow]\n",
+            _pass, sum_cut, max_cut, (double)sum_cut / (double)_topo_order.size());
+}
+
+void Curvemap::cut_enum_node_flow(Abc_Obj_t* pNode) {
+    int nId  = Abc_ObjId(pNode);
+    int f0id = Abc_ObjFaninId(pNode, 0);
+    int f1id = Abc_ObjFaninId(pNode, 1);
+    bool c0  = Abc_ObjFaninC(pNode, 0);
+    bool c1  = Abc_ObjFaninC(pNode, 1);
+
+    auto& cl0 = _cuts[f0id];
+    auto& cl1 = _cuts[f1id];
+
+    for (Cut* cut0 : cl0) {
+        for (Cut* cut1 : cl1) {
+            // Merge leaves (sorted union)
+            std::vector<int> merged;
+            merged.reserve(cut0->size() + cut1->size());
+            auto i0 = cut0->leaf_begin(), e0 = cut0->leaf_end();
+            auto i1 = cut1->leaf_begin(), e1 = cut1->leaf_end();
+            while (i0 != e0 && i1 != e1) {
+                if (*i0 < *i1)
+                    merged.push_back(*i0++);
+                else if (*i1 < *i0)
+                    merged.push_back(*i1++);
+                else {
+                    merged.push_back(*i0);
+                    ++i0;
+                    ++i1;
+                }
+            }
+            merged.insert(merged.end(), i0, e0);
+            merged.insert(merged.end(), i1, e1);
+
+            if ((int)merged.size() > _K)
+                continue;
+
+            if (is_cut_redundant(nId, merged))
+                continue;
+
+            uint64_t tt = compute_truth(merged, cut0, cut1, c0, c1);
+
+            Cut* mc = new Cut;
+            mc->_leaves = std::move(merged);
+            mc->_truth  = tt;
+
+            // Single-point area-flow cost:
+            //   A_cut = 1 + Σ A_leaf / est_fanout[leaf]
+            //   D_cut = max(rep_delay[leaf])    (leaf delay already includes
+            //                                    its own LUT, so this is the
+            //                                    cut's arrival time)
+            double area = LUT_AREA;
+            int    dly  = 0;
+            for (int leaf : mc->_leaves) {
+                double ef = _est_fanout[leaf] > 0.0 ? _est_fanout[leaf] : 1.0;
+                area += _rep_area[leaf] / ef;
+                if (_rep_delay[leaf] > dly)
+                    dly = _rep_delay[leaf];
+            }
+            mc->_cost.insert(CutSolution(area, dly, dly));
+
+            insert_cut(nId, mc);
+        }
+    }
+}
+
+void Curvemap::update_rep(int nId) {
+    // A_leaf / D_leaf = area & delay of this node's min-delay cut (over the
+    // non-trivial cuts enumerated this pass).  Falls back gracefully if no
+    // non-trivial cut exists (degenerate node).
+    bool found = false;
+    double best_area = 0.0;
+    int    best_dly  = INT_MAX;
+    for (Cut* c : _cuts[nId]) {
+        if (c->is_trivial())
+            continue;
+        CutSolution& sol = c->cost().min_delay_sol();
+        if (!found || sol.delay() < best_dly ||
+            (sol.delay() == best_dly && sol.area() < best_area)) {
+            best_dly  = sol.delay();
+            best_area = sol.area();
+            found     = true;
+        }
+    }
+    if (found) {
+        _rep_area[nId]  = best_area;
+        _rep_delay[nId] = best_dly + LUT_DELAY + EDGE_DELAY;
+    } else {
+        // No cut (should not happen for AND nodes); treat as a PI-like leaf.
+        _rep_area[nId]  = LUT_AREA;
+        _rep_delay[nId] = _level[nId] + LUT_DELAY + EDGE_DELAY;
+    }
+}
+
+void Curvemap::create_trivial_cut_flow(int nId) {
+    // Trivial cut: node n viewed as a boundary leaf for its fanouts.  Its
+    // single solution mirrors the representative (A_leaf, D_leaf) so that a
+    // consumer combining this cut sees leaf area A_leaf and leaf delay D_leaf.
+    Cut* triv = new Cut;
+    triv->_leaves.push_back(nId);
+    triv->set_trivial();
+    triv->_truth = 0xAAAAAAAAAAAAAAAAULL;
+    triv->_cost.insert(CutSolution(_rep_area[nId], _rep_delay[nId], _rep_delay[nId]));
+    _cuts[nId].insert(_cuts[nId].begin(), triv);
+}
+
+void Curvemap::compute_est_fanout() {
+    // Recount fanout from the current pass's LUT cover.  A node selected as a
+    // LUT root gets fanout = number of times it appears as a LUT input; a node
+    // not on the cover normalizes to 1.
+    std::vector<int> ref((size_t)_nObjs, 0);
+
+    // PO drivers are referenced once each
+    for (int poId : _po_ids) {
+        Abc_Obj_t* pPo = Abc_NtkObj(_pNtk, poId);
+        int drvId = Abc_ObjFaninId(pPo, 0);
+        ++ref[drvId];
+    }
+
+    // Each selected LUT root references the leaves of its best cut
+    for (int i = 0; i < _nObjs; ++i) {
+        if (!_is_root[i] || !_best_cut[i])
+            continue;
+        for (int leaf : _best_cut[i]->_leaves)
+            ++ref[leaf];
+    }
+
+    for (int i = 0; i < _nObjs; ++i)
+        _est_fanout[i] = std::max(1, ref[i]);
 }
 
 bool Curvemap::insert_cut(int nId, Cut* cut) {
@@ -555,8 +771,8 @@ void Curvemap::backward_pass() {
         }
     }
 
-    fprintf(stderr, "curvemap: LUTs %d  depth %d  est-area %.1f  max-arrival %d\n",
-            nLuts, maxLvl, totalArea, _max_arrival);
+    fprintf(stderr, "curvemap PASS %d: LUTs %8d  depth    %3d  est-area %8.1f  max-arrival %d\n",
+            _pass, nLuts, maxLvl, totalArea, _max_arrival);
 }
 
 Cut* Curvemap::cut_sel(int nId) {
