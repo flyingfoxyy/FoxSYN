@@ -236,7 +236,7 @@ static Abc_Obj_t *duplicate_node(Abc_Ntk_t *pNtk, Abc_Obj_t *pObj)
 
 // Count objects in each partition, using the same accounting as hpart
 // (every object with a valid part_id).
-static void partition_sizes(Abc_Ntk_t *pNtk, int num_parts, std::vector<int> &sz)
+void partition_sizes(Abc_Ntk_t *pNtk, int num_parts, std::vector<int> &sz)
 {
     sz.assign(num_parts, 0);
     int i;
@@ -251,7 +251,7 @@ static void partition_sizes(Abc_Ntk_t *pNtk, int num_parts, std::vector<int> &sz
     }
 }
 
-static int compute_balance_max_allowed(const std::vector<int> &sz, int balance_pct)
+int compute_balance_max_allowed(const std::vector<int> &sz, int balance_pct)
 {
     if (sz.empty())
         return 0;
@@ -266,7 +266,7 @@ static int compute_balance_max_allowed(const std::vector<int> &sz, int balance_p
     return std::max(avg + slack, avg + 1);
 }
 
-static int compute_balance_overflow(const std::vector<int> &sz, int max_allowed)
+int compute_balance_overflow(const std::vector<int> &sz, int max_allowed)
 {
     if (max_allowed <= 0)
         return 0;
@@ -282,8 +282,8 @@ static int compute_balance_overflow(const std::vector<int> &sz, int max_allowed)
 //   1. lowest-arrival node that already touches the target partition
 //   2. lowest-arrival node in the overfull partition
 // Returns true iff the constraint is satisfied on exit.
-static bool enforce_balance(Abc_Ntk_t *pNtk, int num_parts, int balance_pct,
-                            const std::vector<float> &arrival, bool verbose)
+bool enforce_balance(Abc_Ntk_t *pNtk, int num_parts, int balance_pct,
+                     const std::vector<float> &arrival, bool verbose)
 {
     std::vector<int> sz;
     partition_sizes(pNtk, num_parts, sz);

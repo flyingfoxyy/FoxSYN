@@ -4,6 +4,8 @@
 #include "misc/util/abc_global.h"
 #include "base/main/main.h"
 
+#include <vector>
+
 namespace fox::cpr {
 
 struct Config {
@@ -18,6 +20,14 @@ struct Config {
 };
 
 bool ApplyCpr(Abc_Ntk_t *pNtk, const Config &cfg);
+
+// Balance-repair primitives, shared with csr (Cut Size Reducer). Signatures
+// and behavior unchanged from their original file-local versions.
+void partition_sizes(Abc_Ntk_t *pNtk, int num_parts, std::vector<int> &sz);
+int  compute_balance_max_allowed(const std::vector<int> &sz, int balance_pct);
+int  compute_balance_overflow(const std::vector<int> &sz, int max_allowed);
+bool enforce_balance(Abc_Ntk_t *pNtk, int num_parts, int balance_pct,
+                     const std::vector<float> &arrival, bool verbose);
 
 } // namespace fox::cpr
 

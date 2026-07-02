@@ -20,6 +20,7 @@
 #include "timer/timer.hpp"
 #include "cpr/cpr.hpp"
 #include "cmfs/cmfs.hpp"
+#include "csr/csr.hpp"
 #include "agdmap/AgdmapCommand.h"
 #include "curvemap/curvemap.h"
 
@@ -766,6 +767,82 @@ usage:
     return 1;
 }
 
+int Csr_Command(Abc_Frame_t *pAbc, int argc, char **argv)
+{
+    fox::csr::Config cfg;
+    Abc_Ntk_t *pNtk = Abc_FrameReadNtk(pAbc);
+
+    if (argc > 1 && !strcmp(argv[1], "-h"))
+        goto usage;
+
+    for (int i = 1; i != argc; ++i)
+    {
+        if (argv[i][0] != '-')
+        {
+            std::cout << "csr: unexpected argument " << argv[i] << "\n";
+            goto usage;
+        }
+        const char arg = *(argv[i] + 1);
+        switch (arg)
+        {
+        case 'R':
+            if (i + 1 >= argc) { printf("csr: -R requires a number\n"); return 1; }
+            cfg.max_rounds = std::atoi(argv[++i]);
+            if (cfg.max_rounds < 1) { printf("csr: invalid max_rounds %d\n", cfg.max_rounds); return 1; }
+            break;
+        case 'S':
+            if (i + 1 >= argc) { printf("csr: -S requires a number\n"); return 1; }
+            cfg.stall_limit = std::atoi(argv[++i]);
+            if (cfg.stall_limit < 1) { printf("csr: invalid stall_limit %d\n", cfg.stall_limit); return 1; }
+            break;
+        case 'X':
+            if (i + 1 >= argc) { printf("csr: -X requires a number\n"); return 1; }
+            cfg.maxTempLut = std::atoi(argv[++i]);
+            if (cfg.maxTempLut != 0 && (cfg.maxTempLut < 7 || cfg.maxTempLut > 12))
+            { printf("csr: -X must be 0 (off) or 7-12\n"); return 1; }
+            break;
+        case 'G':
+            if (i + 1 >= argc) { printf("csr: -G requires a growth percentage\n"); return 1; }
+            cfg.replicate_growth_pct = std::atoi(argv[++i]);
+            if (cfg.replicate_growth_pct < 0 || cfg.replicate_growth_pct > 100)
+            { printf("csr: invalid growth percentage %d (must be between 0 and 100)\n", cfg.replicate_growth_pct); return 1; }
+            break;
+        case 'B':
+            if (i + 1 >= argc) { printf("csr: -B requires a balance percentage\n"); return 1; }
+            cfg.balance_pct = std::atoi(argv[++i]);
+            if (cfg.balance_pct < 1 || cfg.balance_pct > 99)
+            { printf("csr: invalid balance percentage %d (must be between 1 and 99)\n", cfg.balance_pct); return 1; }
+            break;
+        case 'v':
+            cfg.verbose ^= 1;
+            break;
+        case 'h':
+            goto usage;
+        default:
+            std::cout << "csr: unknown argument -" << arg << "\n";
+            goto usage;
+        }
+    }
+
+    if (!pNtk) { printf("csr: current network is empty\n"); return 1; }
+    if (!Abc_NtkIsLogic(pNtk)) { printf("csr: network must be logic (not AIG)\n"); return 1; }
+    if (!pNtk->pPdb) { printf("csr: no partition database (run hpart first)\n"); return 1; }
+
+    return fox::csr::ApplyCsr(pNtk, cfg) ? 0 : 1;
+
+usage:
+    Abc_Print(-2, "usage: csr [-R num] [-S num] [-X num] [-G num] [-B num] [-v]\n");
+    Abc_Print(-2, "\t           cut-edge reduction via resub-first + replication-fallback logic synthesis\n");
+    Abc_Print(-2, "\t-R num  : max optimization rounds per phase [default = %d]\n", cfg.max_rounds);
+    Abc_Print(-2, "\t-S num  : stall limit (rounds without improvement) per phase [default = %d]\n", cfg.stall_limit);
+    Abc_Print(-2, "\t-X num  : max temp LUT size for Shannon decomp (0=off, 7-12), Phase 1 only [default = %d]\n", cfg.maxTempLut);
+    Abc_Print(-2, "\t-G num  : Phase 2 replication node growth cap, %% of original node count [default = %d]\n", cfg.replicate_growth_pct);
+    Abc_Print(-2, "\t-B num  : balance percentage (1-99) [default = inherit from pdb]\n");
+    Abc_Print(-2, "\t-v      : toggles verbose output\n");
+    Abc_Print(-2, "\n");
+    return 1;
+}
+
 int Curvemap_Command(Abc_Frame_t* pAbc, int argc, char** argv) {
     using namespace fox::curvemap;
 
@@ -840,6 +917,7 @@ struct CmdRegister
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "timer", Timer_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "cpr", Cpr_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "cmfs", Cmfs_Command, 1);
+        Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "csr", Csr_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "curvemap", Curvemap_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FPGA mapping", "agdmap", Agdmap, 1);
     }
