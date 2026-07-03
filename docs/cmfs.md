@@ -210,7 +210,13 @@ Gain 来自两个机制的叠加：
 
 ### 已知问题
 
-- 少数 benchmark（frg2, x4, stereovision1 等）仍有 crash，与特定网络结构相关。
+- ~~少数 benchmark（frg2, x4, stereovision1 等）仍有 crash，与特定网络结构相关。~~
+  已修复（commit `3b70cbd`）。根因是 vendored 的 ABC 上游代码 `Abc_NtkBddToSop`
+  （`abcFunc.c`）在把节点化简为常量时直接清零 `vFanins.nSize`，未同步清理对端
+  `vFanouts`，留下悬空 object ID；下一轮 `Abc_NtkStartReverseLevels` →
+  `Abc_NtkDfsReverse` 遍历 `vFanouts` 时解引用悬空 ID 而崩溃。与 cmfs/csr 的业务逻辑
+  无关，是任何调用 `Abc_NtkToSop` 且产生常量节点的 pass 都可能触发的通用 bug。
+  修复后 90-benchmark 回归 crash/fail 从 11 降到 0，cec 确认功能等价性不受影响。
 - 每轮需要 SOP→AIG 重新转换以保证 Hop manager 一致性，有一定开销。
 - hmetis 分区的随机性导致每次运行结果略有波动。
 
