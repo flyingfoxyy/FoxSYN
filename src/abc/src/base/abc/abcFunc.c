@@ -488,7 +488,7 @@ int Abc_NtkBddToSop( Abc_Ntk_t * pNtk, int fMode, int nCubeLimit, int fCubeSort 
         }
         // it may happen that a constant node was created after structural mapping
         if ( Abc_SopGetVarNum((char *)pNode->pNext) == 0 )
-            pNode->vFanins.nSize = 0;
+            Abc_ObjRemoveFanins( pNode );
         // check the support
         if ( Abc_ObjFaninNum(pNode) != Abc_SopGetVarNum((char *)pNode->pNext) )
         {
