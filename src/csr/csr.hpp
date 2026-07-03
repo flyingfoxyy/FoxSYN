@@ -16,6 +16,7 @@ struct Config {
     int  maxTempLut            = 0;   // -X: Shannon decomp max temp LUT size (0=off, 7-12), Phase 1 only
     int  replicate_growth_pct = 2;    // -G: Phase 2 node growth cap, % of original node count
     int  balance_pct          = -1;   // -B: -1 = inherit from pdb (falls back to 2 like cpr)
+    bool do_balance_repair    = false; // -b: run cpr-style enforce_balance after phase1/2 (off by default)
     bool verbose              = false;
 };
 

@@ -562,9 +562,10 @@ static void run_phase1_resub(Abc_Ntk_t *pNtk, const Config &cfg,
 
 // ---------------------------------------------------------------------
 // Phase 2: replication fallback, ported from cpr.cpp's duplicate_node /
-// try_replicate_on_path. Accept criterion is a strict cut-edge decrease.
-// One replication repoints every fanout of the driver already living in
-// the target partition, not just the candidate edge that triggered it.
+// try_replicate_on_path. Accept criterion is a strict cut-edge decrease
+// AND a hop-slack check (see HopSlack below): One replication repoints
+// every fanout of the driver already living in the target partition, not
+// just the candidate edge that triggered it.
 // ---------------------------------------------------------------------
 
 static Abc_Obj_t *duplicate_node_csr(Abc_Ntk_t *pNtk, Abc_Obj_t *pObj)
@@ -579,8 +580,92 @@ static Abc_Obj_t *duplicate_node_csr(Abc_Ntk_t *pNtk, Abc_Obj_t *pObj)
     return pDup;
 }
 
+// Hop-slack snapshot, computed once before Phase 2 starts (the network is
+// stable at that point -- Phase 1 has already converged). Same shape as
+// timing slack: hop_arrival is a forward DFS max over fanins (+1 per
+// cross-partition fanin edge), hop_required is a backward pass from POs
+// (required = max_hop at POs, min over fanouts of required-crossing
+// upstream), and slack = required - arrival. slack==0 means the node sits
+// on some longest hop path and has zero room to grow.
+struct HopSlack {
+    std::vector<int> arrival;
+    std::vector<int> required;
+    int max_hop = 0;
+
+    int slack(int id) const
+    {
+        if (id < 0 || static_cast<size_t>(id) >= arrival.size())
+            return 0;
+        return required[id] - arrival[id];
+    }
+};
+
+static void compute_hop_slack(Abc_Ntk_t *pNtk, HopSlack &hs)
+{
+    int n = Abc_NtkObjNumMax(pNtk);
+    hs.arrival.assign(n, 0);
+    hs.required.assign(n, 0);
+    hs.max_hop = 0;
+
+    Vec_Ptr_t *vNodes = Abc_NtkDfs(pNtk, 1);
+    Abc_Obj_t *pObj;
+    int i;
+
+    Vec_PtrForEachEntry(Abc_Obj_t *, vNodes, pObj, i)
+    {
+        part_id obj_part = Abc_ObjGetPartId(pObj);
+        if (obj_part == ABC_PART_ID_NONE)
+            continue;
+        int best = 0;
+        Abc_Obj_t *pFanin;
+        int k;
+        Abc_ObjForEachFanin(pObj, pFanin, k)
+        {
+            part_id fanin_part = Abc_ObjGetPartId(pFanin);
+            if (fanin_part == ABC_PART_ID_NONE)
+                continue;
+            int cand = hs.arrival[pFanin->Id] + (fanin_part != obj_part ? 1 : 0);
+            if (cand > best)
+                best = cand;
+        }
+        hs.arrival[pObj->Id] = best;
+        if (best > hs.max_hop)
+            hs.max_hop = best;
+    }
+
+    // Backward pass in reverse topological order: required(n) = min over
+    // fanouts g of { required(g) - (cross_partition(n,g) ? 1 : 0) }.
+    // POs are not part_stat vertices, so their drivers get max_hop directly
+    // (matching Abc_NtkComputeHopNum's PO-exclusion convention).
+    hs.required.assign(n, hs.max_hop);
+    Vec_PtrForEachEntryReverse(Abc_Obj_t *, vNodes, pObj, i)
+    {
+        part_id obj_part = Abc_ObjGetPartId(pObj);
+        if (obj_part == ABC_PART_ID_NONE)
+            continue;
+        int best_req = hs.max_hop;
+        bool has_fanout = false;
+        Abc_Obj_t *pFanout;
+        int k;
+        Abc_ObjForEachFanout(pObj, pFanout, k)
+        {
+            if (!is_part_stat_vertex(pFanout))
+                continue;
+            part_id fanout_part = Abc_ObjGetPartId(pFanout);
+            if (fanout_part == ABC_PART_ID_NONE)
+                continue;
+            int req = hs.required[pFanout->Id] - (fanout_part != obj_part ? 1 : 0);
+            if (!has_fanout || req < best_req)
+                { best_req = req; has_fanout = true; }
+        }
+        hs.required[pObj->Id] = has_fanout ? best_req : hs.max_hop;
+    }
+
+    Vec_PtrFree(vNodes);
+}
+
 static bool try_replicate(Abc_Ntk_t *pNtk, Abc_Obj_t *pDriver, Abc_Obj_t *pConsumer,
-                          int &cur_cutedges, int &extra_nodes)
+                          const HopSlack &hs, int &cur_cutedges, int &extra_nodes)
 {
     // Only logic nodes can be duplicated. A PI/CONST1 driver is a single
     // physical pin/constant in the design; "duplicating" it would fabricate
@@ -593,6 +678,28 @@ static bool try_replicate(Abc_Ntk_t *pNtk, Abc_Obj_t *pDriver, Abc_Obj_t *pConsu
     part_id driver_part  = Abc_ObjGetPartId(pDriver);
     if (target_part == ABC_PART_ID_NONE || driver_part == ABC_PART_ID_NONE
         || target_part == driver_part)
+        return false;
+
+    // Hop-slack gate: the duplicate's own hop arrival (recomputed from its
+    // fanins under the *new* target partition) must not exceed the
+    // original driver's hop budget (its arrival + slack). This is a local
+    // check -- O(fanins), no network-wide recompute -- because replication
+    // only ever changes the driver-side crossing count of the duplicate's
+    // own fanin edges; it does not alter any other node's fanins.
+    int allowed = hs.arrival[pDriver->Id] + hs.slack(pDriver->Id);
+    int new_arr = 0;
+    Abc_Obj_t *pFanin;
+    int fi;
+    Abc_ObjForEachFanin(pDriver, pFanin, fi)
+    {
+        part_id fanin_part = Abc_ObjGetPartId(pFanin);
+        if (fanin_part == ABC_PART_ID_NONE)
+            continue;
+        int cand = hs.arrival[pFanin->Id] + (fanin_part != target_part ? 1 : 0);
+        if (cand > new_arr)
+            new_arr = cand;
+    }
+    if (new_arr > allowed)
         return false;
 
     std::vector<Abc_Obj_t *> fanouts;
@@ -636,6 +743,13 @@ static void run_phase2_replicate(Abc_Ntk_t *pNtk, const Config &cfg,
     int cur_cutedges = ComputeCutEdgeCount(pNtk);
     int stall_count = 0;
 
+    // Snapshot taken once, before Phase 2 starts (Phase 1 has already
+    // converged, so the network is stable at this point). Later rounds
+    // reuse the same snapshot -- see docs/superpowers/specs for the
+    // rationale (a conservative, not dynamically-updated, hop budget).
+    HopSlack hs;
+    compute_hop_slack(pNtk, hs);
+
     for (int round = 0; round < cfg.max_rounds; ++round)
     {
         if (extra_nodes >= max_extra_nodes)
@@ -666,7 +780,7 @@ static void run_phase2_replicate(Abc_Ntk_t *pNtk, const Config &cfg,
             if (Abc_ObjGetPartId(pDriver) == Abc_ObjGetPartId(pConsumer))
                 continue; // already fixed by an earlier replication this round
 
-            if (try_replicate(pNtk, pDriver, pConsumer, cur_cutedges, extra_nodes))
+            if (try_replicate(pNtk, pDriver, pConsumer, hs, cur_cutedges, extra_nodes))
                 round_fixed++;
         }
 
@@ -738,22 +852,27 @@ bool ApplyCsr(Abc_Ntk_t *pNtk, const Config &cfg)
     run_phase2_replicate(pNtk, cfg, total_replications);
     int after_phase2 = ComputeCutEdgeCount(pNtk);
 
-    int num_parts = resolve_num_parts(pNtk);
-    int balance_pct = cfg.balance_pct;
-    if (balance_pct < 0)
-        balance_pct = pNtk->pPdb->balance_pct();
-    if (balance_pct < 0)
-        balance_pct = 2;
-
-    // csr has no arrival/timing model; a zero vector means enforce_balance's
-    // "move lowest-arrival node first" tie-break degenerates to an
-    // unspecified (but still correct) choice among balance-violating nodes.
     // Known limitation: enforce_balance optimizes only partition size, not
     // cutsize, so this final repair can raise cut-edges above the phase1/2
     // result (observed on adder.v: 12 -> 21). Functional correctness is
     // unaffected (cec-clean); only the cutsize objective can regress here.
-    std::vector<float> zero_arrival(Abc_NtkObjNumMax(pNtk), 0.0f);
-    fox::cpr::enforce_balance(pNtk, num_parts, balance_pct, zero_arrival, cfg.verbose);
+    // Off by default (-b to enable) for exactly this reason.
+    if (cfg.do_balance_repair)
+    {
+        int num_parts = resolve_num_parts(pNtk);
+        int balance_pct = cfg.balance_pct;
+        if (balance_pct < 0)
+            balance_pct = pNtk->pPdb->balance_pct();
+        if (balance_pct < 0)
+            balance_pct = 2;
+
+        // csr has no arrival/timing model; a zero vector means
+        // enforce_balance's "move lowest-arrival node first" tie-break
+        // degenerates to an unspecified (but still correct) choice among
+        // balance-violating nodes.
+        std::vector<float> zero_arrival(Abc_NtkObjNumMax(pNtk), 0.0f);
+        fox::cpr::enforce_balance(pNtk, num_parts, balance_pct, zero_arrival, cfg.verbose);
+    }
 
     int final_cutedges = ComputeCutEdgeCount(pNtk);
 
