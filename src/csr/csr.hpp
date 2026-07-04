@@ -17,6 +17,7 @@ struct Config {
     int  replicate_growth_pct = 2;    // -G: Phase 2 node growth cap, % of original node count
     int  balance_pct          = -1;   // -B: -1 = inherit from pdb (falls back to 2 like cpr)
     bool do_balance_repair    = false; // -b: run cpr-style enforce_balance after phase1/2 (off by default)
+    bool do_relocate          = true;  // -L disables: phase 0 hop-preserving node relocation
     bool verbose              = false;
 };
 

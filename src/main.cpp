@@ -816,6 +816,9 @@ int Csr_Command(Abc_Frame_t *pAbc, int argc, char **argv)
         case 'b':
             cfg.do_balance_repair ^= 1;
             break;
+        case 'L':
+            cfg.do_relocate ^= 1;
+            break;
         case 'v':
             cfg.verbose ^= 1;
             break;
@@ -834,7 +837,7 @@ int Csr_Command(Abc_Frame_t *pAbc, int argc, char **argv)
     return fox::csr::ApplyCsr(pNtk, cfg) ? 0 : 1;
 
 usage:
-    Abc_Print(-2, "usage: csr [-R num] [-S num] [-X num] [-G num] [-B num] [-bv]\n");
+    Abc_Print(-2, "usage: csr [-R num] [-S num] [-X num] [-G num] [-B num] [-bLv]\n");
     Abc_Print(-2, "\t           cut-edge reduction via resub-first + replication-fallback logic synthesis\n");
     Abc_Print(-2, "\t-R num  : max optimization rounds per phase [default = %d]\n", cfg.max_rounds);
     Abc_Print(-2, "\t-S num  : stall limit (rounds without improvement) per phase [default = %d]\n", cfg.stall_limit);
@@ -842,6 +845,7 @@ usage:
     Abc_Print(-2, "\t-G num  : Phase 2 replication node growth cap, %% of original node count [default = %d]\n", cfg.replicate_growth_pct);
     Abc_Print(-2, "\t-B num  : balance percentage (1-99) [default = inherit from pdb]\n");
     Abc_Print(-2, "\t-b      : run cpr-style balance repair after phase1/2 [default = %s]\n", cfg.do_balance_repair ? "on" : "off");
+    Abc_Print(-2, "\t-L      : disable phase 0 hop-preserving relocation [default = on]\n");
     Abc_Print(-2, "\t-v      : toggles verbose output\n");
     Abc_Print(-2, "\n");
     return 1;

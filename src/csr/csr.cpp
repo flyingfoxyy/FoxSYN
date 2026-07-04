@@ -822,6 +822,17 @@ static int resolve_num_parts(Abc_Ntk_t *pNtk)
     return max_part + 1;
 }
 
+// ---------------------------------------------------------------------
+// Phase 0: hop-preserving node relocation. Greedily moves each node to the
+// neighbor partition minimizing its incident cut-edges. Pure part_id
+// relabel (zero area, zero logic). Gated by strict cut-edge decrease, an
+// exact global-hop-non-worsening check, and a per-partition balance cap.
+// ---------------------------------------------------------------------
+void run_phase0_relocate(Abc_Ntk_t *pNtk, const Config &cfg, int &total_moves)
+{
+    (void)pNtk; (void)cfg; (void)total_moves; // filled in Task 3
+}
+
 bool ApplyCsr(Abc_Ntk_t *pNtk, const Config &cfg)
 {
     if (!pNtk)
@@ -843,6 +854,11 @@ bool ApplyCsr(Abc_Ntk_t *pNtk, const Config &cfg)
     int initial_cutedges = ComputeCutEdgeCount(pNtk);
     if (cfg.verbose)
         printf("csr: initial cut-edges = %d\n", initial_cutedges);
+
+    int total_moves = 0;
+    if (cfg.do_relocate)
+        run_phase0_relocate(pNtk, cfg, total_moves);
+    int after_phase0 = ComputeCutEdgeCount(pNtk);
 
     int total_attempts = 0, total_successes = 0;
     run_phase1_resub(pNtk, cfg, total_attempts, total_successes);
@@ -876,10 +892,10 @@ bool ApplyCsr(Abc_Ntk_t *pNtk, const Config &cfg)
 
     int final_cutedges = ComputeCutEdgeCount(pNtk);
 
-    printf("csr: cut-edges %d -> %d (after phase1=%d, after phase2=%d)\n",
-           initial_cutedges, final_cutedges, after_phase1, after_phase2);
-    printf("csr: phase1 %d attempts / %d successes; phase2 %d replications\n",
-           total_attempts, total_successes, total_replications);
+    printf("csr: cut-edges %d -> %d (after phase0=%d, after phase1=%d, after phase2=%d)\n",
+           initial_cutedges, final_cutedges, after_phase0, after_phase1, after_phase2);
+    printf("csr: phase0 %d moves; phase1 %d attempts / %d successes; phase2 %d replications\n",
+           total_moves, total_attempts, total_successes, total_replications);
 
     return true;
 }
