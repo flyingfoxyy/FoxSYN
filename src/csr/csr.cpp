@@ -822,6 +822,70 @@ static int resolve_num_parts(Abc_Ntk_t *pNtk)
     return max_part + 1;
 }
 
+// Count pNode's incident cross-partition cut-edges assuming it lives in
+// `as_part`. Fanin edges: pNode is the consumer (a node), so any part_stat
+// driver in a different partition is a cut-edge. Fanout edges: pNode is the
+// driver, so only NODE consumers in a different partition count (matches
+// ComputeCutEdgeCount's Abc_NtkForEachNode outer loop; PO fanouts never
+// count). Since only pNode's part changes on a move, this equals the exact
+// global cut-edge contribution of pNode.
+static int node_incident_cross(Abc_Obj_t *pNode, part_id as_part)
+{
+    int cross = 0;
+    Abc_Obj_t *pObj;
+    int k;
+    Abc_ObjForEachFanin(pNode, pObj, k)
+    {
+        if (!is_part_stat_vertex(pObj))
+            continue;
+        part_id fp = Abc_ObjGetPartId(pObj);
+        if (fp != ABC_PART_ID_NONE && fp != as_part)
+            cross++;
+    }
+    Abc_ObjForEachFanout(pNode, pObj, k)
+    {
+        if (!Abc_ObjIsNode(pObj))
+            continue;
+        part_id fp = Abc_ObjGetPartId(pObj);
+        if (fp != ABC_PART_ID_NONE && fp != as_part)
+            cross++;
+    }
+    return cross;
+}
+
+// Pick the neighbor partition (a partition some fanin/fanout lives in) that
+// minimizes pNode's incident cross-edges. Returns the current partition with
+// best_delta=0 if no neighbor partition is strictly better. best_delta is the
+// exact global cut-edge change of the returned move (<0 means improvement).
+static part_id best_relocate_target(Abc_Obj_t *pNode, int &best_delta)
+{
+    part_id cur = Abc_ObjGetPartId(pNode);
+    int cur_cross = node_incident_cross(pNode, cur);
+    part_id best = cur;
+    int best_cross = cur_cross;
+
+    auto consider = [&](part_id P) {
+        if (P == ABC_PART_ID_NONE || P == cur)
+            return;
+        int c = node_incident_cross(pNode, P);
+        if (c < best_cross)
+        {
+            best_cross = c;
+            best = P;
+        }
+    };
+
+    Abc_Obj_t *pObj;
+    int k;
+    Abc_ObjForEachFanin(pNode, pObj, k)
+        consider(Abc_ObjGetPartId(pObj));
+    Abc_ObjForEachFanout(pNode, pObj, k)
+        consider(Abc_ObjGetPartId(pObj));
+
+    best_delta = best_cross - cur_cross;
+    return best;
+}
+
 // ---------------------------------------------------------------------
 // Phase 0: hop-preserving node relocation. Greedily moves each node to the
 // neighbor partition minimizing its incident cut-edges. Pure part_id
@@ -830,7 +894,103 @@ static int resolve_num_parts(Abc_Ntk_t *pNtk)
 // ---------------------------------------------------------------------
 void run_phase0_relocate(Abc_Ntk_t *pNtk, const Config &cfg, int &total_moves)
 {
-    (void)pNtk; (void)cfg; (void)total_moves; // filled in Task 3
+    int num_parts = resolve_num_parts(pNtk);
+    int balance_pct = cfg.balance_pct;
+    if (balance_pct < 0)
+        balance_pct = pNtk->pPdb->balance_pct();
+    if (balance_pct < 0)
+        balance_pct = 2;
+
+    std::vector<int> sz;
+    fox::cpr::partition_sizes(pNtk, num_parts, sz);
+    int max_allowed = fox::cpr::compute_balance_max_allowed(sz, balance_pct);
+
+    const int baseline_hop = Abc_NtkComputeHopNum(pNtk);
+    int best_cutedges = ComputeCutEdgeCount(pNtk);
+    int stall_count = 0;
+
+    struct Move {
+        int node_id;
+        part_id target;
+        int delta;
+    };
+
+    for (int round = 0; round < cfg.max_rounds; ++round)
+    {
+        std::vector<Move> moves;
+        Abc_Obj_t *pObj;
+        int i;
+        Abc_NtkForEachNode(pNtk, pObj, i)
+        {
+            if (Abc_ObjGetPartId(pObj) == ABC_PART_ID_NONE)
+                continue;
+            int delta;
+            part_id tgt = best_relocate_target(pObj, delta);
+            if (delta < 0)
+                moves.push_back({pObj->Id, tgt, delta});
+        }
+        if (moves.empty())
+            break;
+
+        std::sort(moves.begin(), moves.end(),
+                  [](const Move &a, const Move &b) { return a.delta < b.delta; });
+
+        int round_moved = 0;
+        for (const auto &mv : moves)
+        {
+            Abc_Obj_t *pNode = Abc_NtkObj(pNtk, mv.node_id);
+            if (!pNode || !Abc_ObjIsNode(pNode))
+                continue;
+            part_id cur = Abc_ObjGetPartId(pNode);
+            if (cur == ABC_PART_ID_NONE)
+                continue;
+
+            // Re-verify best target against current (possibly changed)
+            // neighbor partitions -- earlier moves this round may have made
+            // the precomputed delta stale.
+            int delta;
+            part_id tgt = best_relocate_target(pNode, delta);
+            if (delta >= 0 || tgt == cur)
+                continue;
+
+            // Balance cap.
+            if (sz[tgt] + 1 > max_allowed)
+                continue;
+
+            // Apply tentatively, then exact global hop check.
+            Abc_ObjSetPartId(pNode, tgt);
+            int new_hop = Abc_NtkComputeHopNum(pNtk);
+            if (new_hop > baseline_hop)
+            {
+                Abc_ObjSetPartId(pNode, cur); // roll back
+                continue;
+            }
+
+            sz[cur] -= 1;
+            sz[tgt] += 1;
+            round_moved++;
+        }
+
+        total_moves += round_moved;
+
+        int new_cutedges = ComputeCutEdgeCount(pNtk);
+        if (cfg.verbose)
+            printf("csr: phase0 round %2d  moves=%3d  cut-edges=%d  hop=%d\n",
+                   round, round_moved, new_cutedges, baseline_hop);
+
+        if (new_cutedges < best_cutedges)
+        {
+            best_cutedges = new_cutedges;
+            stall_count = 0;
+        }
+        else if (++stall_count >= cfg.stall_limit)
+        {
+            break;
+        }
+
+        if (round_moved == 0)
+            break;
+    }
 }
 
 bool ApplyCsr(Abc_Ntk_t *pNtk, const Config &cfg)
