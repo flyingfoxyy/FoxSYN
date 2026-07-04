@@ -26,7 +26,7 @@ CSR_COUNTS_RE = re.compile(
 )
 ND_RE = re.compile(r"\bnd =\s*(\d+)")
 HOP_RE = re.compile(r"\bhop =\s*(\d+)")
-CUTNET_RE = re.compile(r"\bcut =\s*(\d+)")
+CUTNET_RE = re.compile(r"\bcut-net =\s*(\d+)")
 # "Networks are equivalent" / "Networks are NOT EQUIVALENT"
 CEC_RE = re.compile(r"Networks are (NOT )?EQUIVALENT", re.IGNORECASE)
 
