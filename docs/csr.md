@@ -25,6 +25,9 @@
 ApplyCsr(pNtk, cfg):
     initial_cutedges = ComputeCutEdgeCount(pNtk)
 
+    Phase 0: run_phase0_relocate   -- 保 hop 的节点迁移(纯重标记,零面积),默认开启,-L 关闭
+    after_phase0 = ComputeCutEdgeCount(pNtk)
+
     Phase 1: run_phase1_resub      -- 优先尝试不增加节点的 SAT resub
     after_phase1 = ComputeCutEdgeCount(pNtk)
 
@@ -36,6 +39,20 @@ ApplyCsr(pNtk, cfg):
 
     final_cutedges = ComputeCutEdgeCount(pNtk)
 ```
+
+### Phase 0：保 hop 的节点迁移(relocation)
+
+Phase 1/2 都在改消费者或驱动者的逻辑,却不处理"节点本身应该待在别的分区"这类结构性跨分区边。Phase 0 补上这个杠杆:对每个节点,计算迁到某个**邻居分区**(fanin/fanout 出现过的分区)后自身关联跨分区边(fanin 边 + NODE fanout 边,PO 不计,与 `ComputeCutEdgeCount` 同约定)的变化 `delta`,贪心地应用 `delta < 0` 的迁移。纯 `part_id` 重标记,零面积、零逻辑改动。
+
+三重门槛,缺一不可:
+
+1. **cut-edge 严格下降**:只接受 `delta < 0`,且在真正应用前用当前分区重算 `delta`(FM 式多轮里前面的迁移会让预算过期)。
+2. **hop 精确不变差**:每次试探性迁移后重算全网 `Abc_NtkComputeHopNum`,超过 Phase 0 进入时的基线就回滚。区别于 Phase 2 的静态 slack 快照——迁移会同时翻转节点 fanin 边和所有 fanout 边的跨分区状态,影响更广,精确重算最稳(运行时间不敏感,可承受)。
+3. **平衡上限**:复用 cpr 的 `compute_balance_max_allowed`,分区节点数达上限就拒绝迁入,从机制上杜绝"全挪到一个分区"。
+
+Phase 0 放最前:先用零成本迁移收紧边界,还可能给 Phase 1 创造出原本没有的"同分区 divisor"。`-L` 关闭(默认开启)。
+
+**副作用与 Phase 1 hop 门槛**:relocation 重塑分区布局后,暴露出 Phase 1 resub 原本没有 hop 门槛的缺陷——把一个跨分区但 hop 浅的 fanin 换成同分区但 hop 深的 divisor,边不跨区了(cut-edge↓)但消费者的 hop_arrival 反而上升(实测 arbiter 4→5)。修复:Phase 1 每轮开头对全网算一次 hop_arrival 快照,single/double-divisor resub 提交前预检新节点的预期 hop_arrival,超过该节点快照预算就放弃这条 resub。数学上 sound:没有任何节点的 arrival 超过轮初快照 ⟹ 全局 max hop 不超过轮初基线,无需回滚。pure-removal 路径天然安全(只缩小 fanin 集,arrival 只降不升),不需门槛。
 
 ### Phase 1：partition-match resub
 
@@ -92,7 +109,7 @@ hop_slack(n)    = hop_required(n) - hop_arrival(n)
 ## 命令接口
 
 ```
-usage: csr [-R num] [-S num] [-X num] [-G num] [-B num] [-bv]
+usage: csr [-R num] [-S num] [-X num] [-G num] [-B num] [-bLv]
            cut-edge reduction via resub-first + replication-fallback logic synthesis
     -R num  : max optimization rounds per phase [default = 20]
     -S num  : stall limit (rounds without improvement) per phase [default = 3]
@@ -100,6 +117,7 @@ usage: csr [-R num] [-S num] [-X num] [-G num] [-B num] [-bv]
     -G num  : Phase 2 replication node growth cap, % of original node count [default = 2]
     -B num  : balance percentage (1-99) [default = inherit from pdb]
     -b      : run cpr-style balance repair after phase1/2 [default = off]
+    -L      : disable phase 0 hop-preserving relocation [default = on]
     -v      : toggles verbose output
 ```
 
