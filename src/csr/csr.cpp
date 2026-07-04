@@ -975,8 +975,11 @@ void run_phase0_relocate(Abc_Ntk_t *pNtk, const Config &cfg, int &total_moves)
 
         int new_cutedges = ComputeCutEdgeCount(pNtk);
         if (cfg.verbose)
-            printf("csr: phase0 round %2d  moves=%3d  cut-edges=%d  hop=%d\n",
-                   round, round_moved, new_cutedges, baseline_hop);
+        {
+            int cur_hop = Abc_NtkComputeHopNum(pNtk);
+            printf("csr: phase0 round %2d  moves=%3d  cut-edges=%d  hop=%d/%d\n",
+                   round, round_moved, new_cutedges, cur_hop, baseline_hop);
+        }
 
         if (new_cutedges < best_cutedges)
         {
