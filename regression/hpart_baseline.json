@@ -1,0 +1,1802 @@
+[
+  {
+    "case": "EPFL__cavlc",
+    "parts": 4,
+    "cut": 11,
+    "hop": 2,
+    "area": 122,
+    "edge": 628,
+    "sec": 0.11512762500206009,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__cavlc",
+    "parts": 16,
+    "cut": 24,
+    "hop": 3,
+    "area": 122,
+    "edge": 628,
+    "sec": 0.13073681899550138,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__ctrl",
+    "parts": 4,
+    "cut": 5,
+    "hop": 1,
+    "area": 29,
+    "edge": 136,
+    "sec": 0.045590034998895135,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__adder",
+    "parts": 4,
+    "cut": 4,
+    "hop": 3,
+    "area": 254,
+    "edge": 1036,
+    "sec": 0.17215892600506777,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__ctrl",
+    "parts": 16,
+    "cut": 7,
+    "hop": 1,
+    "area": 29,
+    "edge": 136,
+    "sec": 0.07457203800004208,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__dec",
+    "parts": 4,
+    "cut": 29,
+    "hop": 2,
+    "area": 287,
+    "edge": 684,
+    "sec": 0.06503706600051373,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__bar",
+    "parts": 4,
+    "cut": 112,
+    "hop": 2,
+    "area": 512,
+    "edge": 2688,
+    "sec": 0.23037396599829663,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__dec",
+    "parts": 16,
+    "cut": 39,
+    "hop": 2,
+    "area": 287,
+    "edge": 684,
+    "sec": 0.10209188299631933,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__adder",
+    "parts": 16,
+    "cut": 30,
+    "hop": 18,
+    "area": 254,
+    "edge": 1036,
+    "sec": 0.3748150669998722,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__bar",
+    "parts": 16,
+    "cut": 182,
+    "hop": 3,
+    "area": 512,
+    "edge": 2688,
+    "sec": 0.4819320870010415,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__i2c",
+    "parts": 4,
+    "cut": 37,
+    "hop": 1,
+    "area": 365,
+    "edge": 1668,
+    "sec": 0.2027572369988775,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__int2float",
+    "parts": 4,
+    "cut": 12,
+    "hop": 2,
+    "area": 49,
+    "edge": 256,
+    "sec": 0.049404646997572854,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__int2float",
+    "parts": 16,
+    "cut": 19,
+    "hop": 3,
+    "area": 49,
+    "edge": 256,
+    "sec": 0.05475645499973325,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__arbiter",
+    "parts": 4,
+    "cut": 299,
+    "hop": 4,
+    "area": 2722,
+    "edge": 15137,
+    "sec": 0.6847529000006034,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__i2c",
+    "parts": 16,
+    "cut": 123,
+    "hop": 3,
+    "area": 365,
+    "edge": 1668,
+    "sec": 0.3075338889975683,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__max",
+    "parts": 4,
+    "cut": 26,
+    "hop": 10,
+    "area": 842,
+    "edge": 3350,
+    "sec": 0.18543392300489359,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__arbiter",
+    "parts": 16,
+    "cut": 389,
+    "hop": 5,
+    "area": 2722,
+    "edge": 15137,
+    "sec": 0.9953933529977803,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__max",
+    "parts": 16,
+    "cut": 110,
+    "hop": 32,
+    "area": 842,
+    "edge": 3350,
+    "sec": 0.3950423460046295,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__log2",
+    "parts": 4,
+    "cut": 449,
+    "hop": 6,
+    "area": 8010,
+    "edge": 36309,
+    "sec": 2.229505365001387,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__mem_ctrl",
+    "parts": 4,
+    "cut": 374,
+    "hop": 5,
+    "area": 12104,
+    "edge": 54519,
+    "sec": 2.1492790060001425,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__div",
+    "parts": 4,
+    "cut": 458,
+    "hop": 10,
+    "area": 22030,
+    "edge": 77705,
+    "sec": 3.0774688860037713,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__priority",
+    "parts": 4,
+    "cut": 40,
+    "hop": 5,
+    "area": 219,
+    "edge": 1074,
+    "sec": 0.13131725000130245,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__priority",
+    "parts": 16,
+    "cut": 147,
+    "hop": 15,
+    "area": 219,
+    "edge": 1074,
+    "sec": 0.26881152499845484,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__router",
+    "parts": 4,
+    "cut": 15,
+    "hop": 4,
+    "area": 91,
+    "edge": 306,
+    "sec": 0.06684192300599534,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__log2",
+    "parts": 16,
+    "cut": 1336,
+    "hop": 33,
+    "area": 8010,
+    "edge": 36309,
+    "sec": 3.1040117960001226,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__router",
+    "parts": 16,
+    "cut": 56,
+    "hop": 9,
+    "area": 91,
+    "edge": 306,
+    "sec": 0.10361981200549053,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__multiplier",
+    "parts": 4,
+    "cut": 353,
+    "hop": 13,
+    "area": 5929,
+    "edge": 27739,
+    "sec": 1.072228709999763,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__sin",
+    "parts": 4,
+    "cut": 296,
+    "hop": 8,
+    "area": 1464,
+    "edge": 6497,
+    "sec": 0.47672837100253673,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__sin",
+    "parts": 16,
+    "cut": 494,
+    "hop": 22,
+    "area": 1464,
+    "edge": 6497,
+    "sec": 0.7191975359964999,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__multiplier",
+    "parts": 16,
+    "cut": 531,
+    "hop": 19,
+    "area": 5929,
+    "edge": 27739,
+    "sec": 1.5446038199952454,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__mem_ctrl",
+    "parts": 16,
+    "cut": 819,
+    "hop": 7,
+    "area": 12104,
+    "edge": 54519,
+    "sec": 3.3634887719963444,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__sqrt",
+    "parts": 4,
+    "cut": 216,
+    "hop": 12,
+    "area": 5724,
+    "edge": 26936,
+    "sec": 0.9179048229998443,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__div",
+    "parts": 16,
+    "cut": 1232,
+    "hop": 122,
+    "area": 22030,
+    "edge": 77705,
+    "sec": 4.930837284999143,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__voter",
+    "parts": 4,
+    "cut": 79,
+    "hop": 4,
+    "area": 2826,
+    "edge": 13622,
+    "sec": 0.4785288409984787,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__square",
+    "parts": 4,
+    "cut": 110,
+    "hop": 8,
+    "area": 3997,
+    "edge": 16525,
+    "sec": 0.6732538620053674,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__C3540",
+    "parts": 4,
+    "cut": 66,
+    "hop": 4,
+    "area": 229,
+    "edge": 1090,
+    "sec": 0.12244116199872224,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__C5315",
+    "parts": 4,
+    "cut": 56,
+    "hop": 3,
+    "area": 288,
+    "edge": 1260,
+    "sec": 0.15544037200015737,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__C3540",
+    "parts": 16,
+    "cut": 116,
+    "hop": 6,
+    "area": 229,
+    "edge": 1090,
+    "sec": 0.19317480999598047,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__C5315",
+    "parts": 16,
+    "cut": 127,
+    "hop": 6,
+    "area": 288,
+    "edge": 1260,
+    "sec": 0.24627367699577007,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__C7552",
+    "parts": 4,
+    "cut": 27,
+    "hop": 4,
+    "area": 417,
+    "edge": 1658,
+    "sec": 0.18087321699567838,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__C880",
+    "parts": 4,
+    "cut": 34,
+    "hop": 3,
+    "area": 77,
+    "edge": 351,
+    "sec": 0.08768354800122324,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__square",
+    "parts": 16,
+    "cut": 260,
+    "hop": 19,
+    "area": 3997,
+    "edge": 16525,
+    "sec": 0.9504572189980536,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__C880",
+    "parts": 16,
+    "cut": 57,
+    "hop": 6,
+    "area": 77,
+    "edge": 351,
+    "sec": 0.10648815199965611,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__alu4",
+    "parts": 4,
+    "cut": 56,
+    "hop": 8,
+    "area": 288,
+    "edge": 1327,
+    "sec": 0.10742718999972567,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__voter",
+    "parts": 16,
+    "cut": 241,
+    "hop": 4,
+    "area": 2826,
+    "edge": 13622,
+    "sec": 0.8605503929939005,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__C7552",
+    "parts": 16,
+    "cut": 125,
+    "hop": 9,
+    "area": 417,
+    "edge": 1658,
+    "sec": 0.3602214479979011,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__sqrt",
+    "parts": 16,
+    "cut": 602,
+    "hop": 135,
+    "area": 5724,
+    "edge": 26936,
+    "sec": 1.507550947004347,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__alu4",
+    "parts": 16,
+    "cut": 85,
+    "hop": 9,
+    "area": 288,
+    "edge": 1327,
+    "sec": 0.15883808399667032,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__alu4_2",
+    "parts": 4,
+    "cut": 122,
+    "hop": 5,
+    "area": 519,
+    "edge": 2318,
+    "sec": 0.14487828799610725,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__apex4",
+    "parts": 4,
+    "cut": 184,
+    "hop": 5,
+    "area": 588,
+    "edge": 2680,
+    "sec": 0.14897288299835054,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__apex2",
+    "parts": 4,
+    "cut": 187,
+    "hop": 4,
+    "area": 757,
+    "edge": 3376,
+    "sec": 0.2115694359963527,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__alu4_2",
+    "parts": 16,
+    "cut": 170,
+    "hop": 6,
+    "area": 519,
+    "edge": 2318,
+    "sec": 0.2592892300017411,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__apex4_2",
+    "parts": 4,
+    "cut": 201,
+    "hop": 5,
+    "area": 946,
+    "edge": 4398,
+    "sec": 0.18642690800334094,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__apex4",
+    "parts": 16,
+    "cut": 228,
+    "hop": 6,
+    "area": 588,
+    "edge": 2680,
+    "sec": 0.258371192998311,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__cps",
+    "parts": 4,
+    "cut": 101,
+    "hop": 4,
+    "area": 426,
+    "edge": 1797,
+    "sec": 0.1331439200002933,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__apex2",
+    "parts": 16,
+    "cut": 271,
+    "hop": 7,
+    "area": 757,
+    "edge": 3376,
+    "sec": 0.34209623000060674,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__dalu",
+    "parts": 4,
+    "cut": 50,
+    "hop": 4,
+    "area": 194,
+    "edge": 959,
+    "sec": 0.09425088900025003,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__cps",
+    "parts": 16,
+    "cut": 131,
+    "hop": 4,
+    "area": 426,
+    "edge": 1797,
+    "sec": 0.19581544600077905,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__dalu",
+    "parts": 16,
+    "cut": 69,
+    "hop": 4,
+    "area": 194,
+    "edge": 959,
+    "sec": 0.1650869799996144,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__e64",
+    "parts": 4,
+    "cut": 77,
+    "hop": 3,
+    "area": 193,
+    "edge": 808,
+    "sec": 0.1015151399988099,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__apex4_2",
+    "parts": 16,
+    "cut": 281,
+    "hop": 5,
+    "area": 946,
+    "edge": 4398,
+    "sec": 0.3083880499980296,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__e64",
+    "parts": 16,
+    "cut": 106,
+    "hop": 4,
+    "area": 193,
+    "edge": 808,
+    "sec": 0.16306429299584124,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__ex5p",
+    "parts": 4,
+    "cut": 141,
+    "hop": 7,
+    "area": 383,
+    "edge": 1607,
+    "sec": 0.1336941779954941,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__ex1010",
+    "parts": 4,
+    "cut": 188,
+    "hop": 5,
+    "area": 634,
+    "edge": 3182,
+    "sec": 0.14454861300328048,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__des",
+    "parts": 4,
+    "cut": 79,
+    "hop": 3,
+    "area": 886,
+    "edge": 3952,
+    "sec": 0.2855364159986493,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__example2",
+    "parts": 4,
+    "cut": 20,
+    "hop": 2,
+    "area": 103,
+    "edge": 385,
+    "sec": 0.0721369759994559,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__example2",
+    "parts": 16,
+    "cut": 31,
+    "hop": 3,
+    "area": 103,
+    "edge": 385,
+    "sec": 0.1007492189964978,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__ex1010",
+    "parts": 16,
+    "cut": 215,
+    "hop": 5,
+    "area": 634,
+    "edge": 3182,
+    "sec": 0.2514527589955833,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__frg2",
+    "parts": 4,
+    "cut": 23,
+    "hop": 2,
+    "area": 380,
+    "edge": 1705,
+    "sec": 0.12397010400309227,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__ex5p",
+    "parts": 16,
+    "cut": 178,
+    "hop": 8,
+    "area": 383,
+    "edge": 1607,
+    "sec": 0.2239449019980384,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__i8",
+    "parts": 4,
+    "cut": 63,
+    "hop": 3,
+    "area": 258,
+    "edge": 1250,
+    "sec": 0.11298274299770128,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__des",
+    "parts": 16,
+    "cut": 153,
+    "hop": 4,
+    "area": 886,
+    "edge": 3952,
+    "sec": 0.550734435004415,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__frg2",
+    "parts": 16,
+    "cut": 55,
+    "hop": 4,
+    "area": 380,
+    "edge": 1705,
+    "sec": 0.23700817100325366,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__i10",
+    "parts": 4,
+    "cut": 86,
+    "hop": 7,
+    "area": 569,
+    "edge": 2324,
+    "sec": 0.21125217199733015,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__k2",
+    "parts": 4,
+    "cut": 125,
+    "hop": 6,
+    "area": 315,
+    "edge": 1274,
+    "sec": 0.13010306499927538,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__i8",
+    "parts": 16,
+    "cut": 92,
+    "hop": 4,
+    "area": 258,
+    "edge": 1250,
+    "sec": 0.1979453759995522,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__i10",
+    "parts": 16,
+    "cut": 199,
+    "hop": 11,
+    "area": 569,
+    "edge": 2324,
+    "sec": 0.3356285509944428,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__k2",
+    "parts": 16,
+    "cut": 169,
+    "hop": 7,
+    "area": 315,
+    "edge": 1274,
+    "sec": 0.2204720220033778,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__k2_2",
+    "parts": 4,
+    "cut": 141,
+    "hop": 5,
+    "area": 581,
+    "edge": 2917,
+    "sec": 0.21258734799630474,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__misex3",
+    "parts": 4,
+    "cut": 123,
+    "hop": 5,
+    "area": 496,
+    "edge": 2186,
+    "sec": 0.15639086800365476,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__pair",
+    "parts": 4,
+    "cut": 60,
+    "hop": 2,
+    "area": 344,
+    "edge": 1563,
+    "sec": 0.15756098400015617,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__misex3",
+    "parts": 16,
+    "cut": 185,
+    "hop": 7,
+    "area": 496,
+    "edge": 2186,
+    "sec": 0.24729515799845103,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__k2_2",
+    "parts": 16,
+    "cut": 225,
+    "hop": 13,
+    "area": 581,
+    "edge": 2917,
+    "sec": 0.34955227600585204,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__seq",
+    "parts": 4,
+    "cut": 205,
+    "hop": 5,
+    "area": 745,
+    "edge": 3385,
+    "sec": 0.19657515799917746,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__pair",
+    "parts": 16,
+    "cut": 148,
+    "hop": 4,
+    "area": 344,
+    "edge": 1563,
+    "sec": 0.3063354900004924,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__pdc",
+    "parts": 4,
+    "cut": 354,
+    "hop": 7,
+    "area": 1572,
+    "edge": 7071,
+    "sec": 0.36647459599771537,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__table3",
+    "parts": 4,
+    "cut": 109,
+    "hop": 5,
+    "area": 277,
+    "edge": 1177,
+    "sec": 0.11406423000153154,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__seq",
+    "parts": 16,
+    "cut": 263,
+    "hop": 6,
+    "area": 745,
+    "edge": 3385,
+    "sec": 0.36337929499859456,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__spla",
+    "parts": 4,
+    "cut": 380,
+    "hop": 7,
+    "area": 1529,
+    "edge": 6818,
+    "sec": 0.37974991100054467,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__table3",
+    "parts": 16,
+    "cut": 142,
+    "hop": 7,
+    "area": 277,
+    "edge": 1177,
+    "sec": 0.16619030899892095,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__vda",
+    "parts": 4,
+    "cut": 84,
+    "hop": 4,
+    "area": 283,
+    "edge": 1459,
+    "sec": 0.12532838100014487,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__pdc",
+    "parts": 16,
+    "cut": 469,
+    "hop": 9,
+    "area": 1572,
+    "edge": 7071,
+    "sec": 0.5498210829973686,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__x4",
+    "parts": 4,
+    "cut": 22,
+    "hop": 2,
+    "area": 178,
+    "edge": 803,
+    "sec": 0.08663243800401688,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__x4",
+    "parts": 16,
+    "cut": 41,
+    "hop": 3,
+    "area": 178,
+    "edge": 803,
+    "sec": 0.13810857199860038,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__vda",
+    "parts": 16,
+    "cut": 111,
+    "hop": 5,
+    "area": 283,
+    "edge": 1459,
+    "sec": 0.18126773899712134,
+    "status": "OK"
+  },
+  {
+    "case": "mcnc__spla",
+    "parts": 16,
+    "cut": 496,
+    "hop": 9,
+    "area": 1529,
+    "edge": 6818,
+    "sec": 0.5513092500041239,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__ac97_ctrl",
+    "parts": 4,
+    "cut": 59,
+    "hop": 1,
+    "area": 2798,
+    "edge": 11079,
+    "sec": 0.3024193729943363,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__hyp",
+    "parts": 4,
+    "cut": 634,
+    "hop": 11,
+    "area": 44508,
+    "edge": 198047,
+    "sec": 7.763105211000948,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__ac97_ctrl",
+    "parts": 16,
+    "cut": 157,
+    "hop": 3,
+    "area": 2798,
+    "edge": 11079,
+    "sec": 0.562622163000924,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__i2c",
+    "parts": 4,
+    "cut": 26,
+    "hop": 2,
+    "area": 368,
+    "edge": 1149,
+    "sec": 0.1141587320016697,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__DMA",
+    "parts": 4,
+    "cut": 287,
+    "hop": 4,
+    "area": 6819,
+    "edge": 22623,
+    "sec": 0.894127412000671,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__aes_core",
+    "parts": 4,
+    "cut": 41,
+    "hop": 2,
+    "area": 3691,
+    "edge": 15982,
+    "sec": 0.794383280997863,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__i2c",
+    "parts": 16,
+    "cut": 64,
+    "hop": 4,
+    "area": 368,
+    "edge": 1149,
+    "sec": 0.21445913599745836,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__aes_core",
+    "parts": 16,
+    "cut": 104,
+    "hop": 2,
+    "area": 3691,
+    "edge": 15982,
+    "sec": 1.1463723259948893,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__DMA",
+    "parts": 16,
+    "cut": 483,
+    "hop": 4,
+    "area": 6819,
+    "edge": 22623,
+    "sec": 1.450325427998905,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__mem_ctrl",
+    "parts": 4,
+    "cut": 185,
+    "hop": 7,
+    "area": 3448,
+    "edge": 15855,
+    "sec": 0.6302920689995517,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__pci",
+    "parts": 4,
+    "cut": 102,
+    "hop": 2,
+    "area": 3686,
+    "edge": 14789,
+    "sec": 0.5675203389982926,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__mem_ctrl",
+    "parts": 16,
+    "cut": 294,
+    "hop": 9,
+    "area": 3448,
+    "edge": 15855,
+    "sec": 0.9411613090051105,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__s35932",
+    "parts": 4,
+    "cut": 39,
+    "hop": 3,
+    "area": 2320,
+    "edge": 7531,
+    "sec": 0.3843629260009038,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__s38417",
+    "parts": 4,
+    "cut": 26,
+    "hop": 2,
+    "area": 2147,
+    "edge": 9389,
+    "sec": 0.38550563800527016,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__fpu",
+    "parts": 4,
+    "cut": 195,
+    "hop": 20,
+    "area": 13827,
+    "edge": 45544,
+    "sec": 1.623785534997296,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__sasc",
+    "parts": 4,
+    "cut": 15,
+    "hop": 2,
+    "area": 159,
+    "edge": 629,
+    "sec": 0.07624312699772418,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__s35932",
+    "parts": 16,
+    "cut": 115,
+    "hop": 3,
+    "area": 2320,
+    "edge": 7531,
+    "sec": 0.5934329869996873,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__sasc",
+    "parts": 16,
+    "cut": 20,
+    "hop": 2,
+    "area": 159,
+    "edge": 629,
+    "sec": 0.13137609799741767,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__simple_spi",
+    "parts": 4,
+    "cut": 25,
+    "hop": 3,
+    "area": 214,
+    "edge": 741,
+    "sec": 0.09795429899531882,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__s38584",
+    "parts": 4,
+    "cut": 36,
+    "hop": 2,
+    "area": 2025,
+    "edge": 9105,
+    "sec": 0.41602336300275056,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__pci",
+    "parts": 16,
+    "cut": 214,
+    "hop": 4,
+    "area": 3686,
+    "edge": 14789,
+    "sec": 0.864083008003945,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__ss_pcm",
+    "parts": 4,
+    "cut": 2,
+    "hop": 1,
+    "area": 87,
+    "edge": 150,
+    "sec": 0.05514428400056204,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__simple_spi",
+    "parts": 16,
+    "cut": 40,
+    "hop": 3,
+    "area": 214,
+    "edge": 741,
+    "sec": 0.1652531159998034,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__spi",
+    "parts": 4,
+    "cut": 52,
+    "hop": 3,
+    "area": 800,
+    "edge": 4264,
+    "sec": 0.17477580499689793,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__ss_pcm",
+    "parts": 16,
+    "cut": 5,
+    "hop": 1,
+    "area": 87,
+    "edge": 150,
+    "sec": 0.0773054309975123,
+    "status": "OK"
+  },
+  {
+    "case": "EPFL__hyp",
+    "parts": 16,
+    "cut": 1362,
+    "hop": 70,
+    "area": 44508,
+    "edge": 198047,
+    "sec": 9.687063315999694,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__spi",
+    "parts": 16,
+    "cut": 121,
+    "hop": 5,
+    "area": 800,
+    "edge": 4264,
+    "sec": 0.2948940569986007,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__systemcdes",
+    "parts": 4,
+    "cut": 56,
+    "hop": 3,
+    "area": 684,
+    "edge": 2444,
+    "sec": 0.18892327600042336,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__s38417",
+    "parts": 16,
+    "cut": 102,
+    "hop": 3,
+    "area": 2147,
+    "edge": 9389,
+    "sec": 0.7781749370042235,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__systemcase",
+    "parts": 4,
+    "cut": 76,
+    "hop": 4,
+    "area": 2189,
+    "edge": 7851,
+    "sec": 0.3434615290025249,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__s38584",
+    "parts": 16,
+    "cut": 130,
+    "hop": 3,
+    "area": 2025,
+    "edge": 9105,
+    "sec": 0.8374007449965575,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__systemcdes",
+    "parts": 16,
+    "cut": 142,
+    "hop": 4,
+    "area": 684,
+    "edge": 2444,
+    "sec": 0.3127619740043883,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__usb_phy",
+    "parts": 4,
+    "cut": 4,
+    "hop": 1,
+    "area": 128,
+    "edge": 371,
+    "sec": 0.07995536000089487,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__usb_phy",
+    "parts": 16,
+    "cut": 27,
+    "hop": 2,
+    "area": 128,
+    "edge": 371,
+    "sec": 0.1212028250010917,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__systemcase",
+    "parts": 16,
+    "cut": 150,
+    "hop": 6,
+    "area": 2189,
+    "edge": 7851,
+    "sec": 0.600967573998787,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__usb_funct",
+    "parts": 4,
+    "cut": 97,
+    "hop": 3,
+    "area": 3300,
+    "edge": 9780,
+    "sec": 0.4089207209981396,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__tv80",
+    "parts": 4,
+    "cut": 282,
+    "hop": 6,
+    "area": 2548,
+    "edge": 11034,
+    "sec": 0.5829266400032793,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__vga_lcd",
+    "parts": 4,
+    "cut": 116,
+    "hop": 2,
+    "area": 2642,
+    "edge": 9065,
+    "sec": 0.34178661899932195,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__wb_dma",
+    "parts": 4,
+    "cut": 34,
+    "hop": 3,
+    "area": 724,
+    "edge": 2884,
+    "sec": 0.17841848399984883,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__usb_funct",
+    "parts": 16,
+    "cut": 225,
+    "hop": 4,
+    "area": 3300,
+    "edge": 9780,
+    "sec": 0.7222655270015821,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__fpu",
+    "parts": 16,
+    "cut": 772,
+    "hop": 29,
+    "area": 13827,
+    "edge": 45544,
+    "sec": 2.8816705439967336,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__tv80",
+    "parts": 16,
+    "cut": 471,
+    "hop": 8,
+    "area": 2548,
+    "edge": 11034,
+    "sec": 0.8987436770039494,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__vga_lcd",
+    "parts": 16,
+    "cut": 171,
+    "hop": 3,
+    "area": 2642,
+    "edge": 9065,
+    "sec": 0.5585524050038657,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__wb_dma",
+    "parts": 16,
+    "cut": 53,
+    "hop": 6,
+    "area": 724,
+    "edge": 2884,
+    "sec": 0.30860577400017064,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__wb_conmax",
+    "parts": 4,
+    "cut": 168,
+    "hop": 4,
+    "area": 10393,
+    "edge": 52049,
+    "sec": 1.3159098290052498,
+    "status": "OK"
+  },
+  {
+    "case": "opencores__wb_conmax",
+    "parts": 16,
+    "cut": 264,
+    "hop": 4,
+    "area": 10393,
+    "edge": 52049,
+    "sec": 1.925229421001859,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__blob_merge",
+    "parts": 4,
+    "cut": 356,
+    "hop": 2,
+    "area": 9304,
+    "edge": 45462,
+    "sec": 2.2756349710034556,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__boundtop",
+    "parts": 4,
+    "cut": 73,
+    "hop": 3,
+    "area": 5223,
+    "edge": 18576,
+    "sec": 0.5987923610009602,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__blob_merge",
+    "parts": 16,
+    "cut": 382,
+    "hop": 3,
+    "area": 9304,
+    "edge": 45462,
+    "sec": 2.769156281996402,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__ch_intrinsics",
+    "parts": 4,
+    "cut": 24,
+    "hop": 3,
+    "area": 965,
+    "edge": 3050,
+    "sec": 0.21456110299914144,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__boundtop",
+    "parts": 16,
+    "cut": 198,
+    "hop": 6,
+    "area": 5223,
+    "edge": 18576,
+    "sec": 1.0330718160039396,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__ch_intrinsics",
+    "parts": 16,
+    "cut": 63,
+    "hop": 4,
+    "area": 965,
+    "edge": 3050,
+    "sec": 0.35448745799658354,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__diffeq1",
+    "parts": 4,
+    "cut": 12,
+    "hop": 2,
+    "area": 1053,
+    "edge": 3117,
+    "sec": 0.15518955700099468,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__diffeq2",
+    "parts": 4,
+    "cut": 10,
+    "hop": 2,
+    "area": 857,
+    "edge": 2231,
+    "sec": 0.1391243029938778,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__diffeq1",
+    "parts": 16,
+    "cut": 57,
+    "hop": 7,
+    "area": 1053,
+    "edge": 3117,
+    "sec": 0.33964710500004003,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__diffeq2",
+    "parts": 16,
+    "cut": 47,
+    "hop": 6,
+    "area": 857,
+    "edge": 2231,
+    "sec": 0.3435018569944077,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__LU8PEEng",
+    "parts": 4,
+    "cut": 91,
+    "hop": 2,
+    "area": 38546,
+    "edge": 128691,
+    "sec": 5.594490872004826,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__mkDelayWorker32B",
+    "parts": 4,
+    "cut": 72,
+    "hop": 4,
+    "area": 9883,
+    "edge": 29359,
+    "sec": 1.0882957159992657,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__bgm",
+    "parts": 4,
+    "cut": 0,
+    "hop": 0,
+    "area": 58183,
+    "edge": 226739,
+    "sec": 7.928005153000413,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__mkPktMerge",
+    "parts": 4,
+    "cut": 6,
+    "hop": 2,
+    "area": 770,
+    "edge": 1439,
+    "sec": 0.1005016390045057,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__mkPktMerge",
+    "parts": 16,
+    "cut": 18,
+    "hop": 2,
+    "area": 770,
+    "edge": 1439,
+    "sec": 0.14606243699381594,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__mkDelayWorker32B",
+    "parts": 16,
+    "cut": 325,
+    "hop": 6,
+    "area": 9883,
+    "edge": 29359,
+    "sec": 1.7738235560027533,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__LU8PEEng",
+    "parts": 16,
+    "cut": 170,
+    "hop": 2,
+    "area": 38546,
+    "edge": 128691,
+    "sec": 8.454496015001496,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__mkSMAdapter4B",
+    "parts": 4,
+    "cut": 162,
+    "hop": 5,
+    "area": 3566,
+    "edge": 12567,
+    "sec": 0.5164669189980486,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__mkSMAdapter4B",
+    "parts": 16,
+    "cut": 256,
+    "hop": 6,
+    "area": 3566,
+    "edge": 12567,
+    "sec": 0.7697964530016179,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__or1200",
+    "parts": 4,
+    "cut": 320,
+    "hop": 6,
+    "area": 4124,
+    "edge": 16529,
+    "sec": 0.8071708790012053,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__raygentop",
+    "parts": 4,
+    "cut": 44,
+    "hop": 2,
+    "area": 4476,
+    "edge": 11971,
+    "sec": 0.4574553720012773,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__or1200",
+    "parts": 16,
+    "cut": 473,
+    "hop": 8,
+    "area": 4124,
+    "edge": 16529,
+    "sec": 1.1877379910001764,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__raygentop",
+    "parts": 16,
+    "cut": 127,
+    "hop": 4,
+    "area": 4476,
+    "edge": 11971,
+    "sec": 0.7650735499992152,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__bgm",
+    "parts": 16,
+    "cut": 0,
+    "hop": 0,
+    "area": 58183,
+    "edge": 226739,
+    "sec": 12.343569274999027,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__stereovision0",
+    "parts": 4,
+    "cut": 17,
+    "hop": 1,
+    "area": 28996,
+    "edge": 60592,
+    "sec": 2.589308438000444,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__sha",
+    "parts": 4,
+    "cut": 153,
+    "hop": 4,
+    "area": 22072,
+    "edge": 114608,
+    "sec": 4.218457807000959,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__stereovision1",
+    "parts": 4,
+    "cut": 25,
+    "hop": 2,
+    "area": 27876,
+    "edge": 61086,
+    "sec": 2.1840086660013185,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__sha",
+    "parts": 16,
+    "cut": 267,
+    "hop": 11,
+    "area": 22072,
+    "edge": 114608,
+    "sec": 5.183807544002775,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__stereovision0",
+    "parts": 16,
+    "cut": 22,
+    "hop": 2,
+    "area": 28996,
+    "edge": 60592,
+    "sec": 3.508071933996689,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__stereovision3",
+    "parts": 4,
+    "cut": 12,
+    "hop": 1,
+    "area": 333,
+    "edge": 1037,
+    "sec": 0.11462943900551181,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__stereovision3",
+    "parts": 16,
+    "cut": 59,
+    "hop": 4,
+    "area": 333,
+    "edge": 1037,
+    "sec": 0.21998445699864533,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__stereovision1",
+    "parts": 16,
+    "cut": 46,
+    "hop": 2,
+    "area": 27876,
+    "edge": 61086,
+    "sec": 2.9044846700053313,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__stereovision2",
+    "parts": 4,
+    "cut": 20,
+    "hop": 1,
+    "area": 60140,
+    "edge": 144708,
+    "sec": 6.9829133189996355,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__LU32PEEng",
+    "parts": 4,
+    "cut": 107,
+    "hop": 2,
+    "area": 126209,
+    "edge": 429122,
+    "sec": 22.777206648002903,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__stereovision2",
+    "parts": 16,
+    "cut": 20,
+    "hop": 2,
+    "area": 60140,
+    "edge": 144708,
+    "sec": 8.638708056001633,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__LU32PEEng",
+    "parts": 16,
+    "cut": 108,
+    "hop": 2,
+    "area": 126209,
+    "edge": 429122,
+    "sec": 29.374370411998825,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__mcml",
+    "parts": 4,
+    "cut": 249,
+    "hop": 3,
+    "area": 172308,
+    "edge": 521377,
+    "sec": 26.37257477199455,
+    "status": "OK"
+  },
+  {
+    "case": "vtr__mcml",
+    "parts": 16,
+    "cut": 488,
+    "hop": 5,
+    "area": 172308,
+    "edge": 521377,
+    "sec": 35.13830627599964,
+    "status": "OK"
+  }
+]
