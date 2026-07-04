@@ -16,13 +16,15 @@ from pathlib import Path
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
-# csr: cut-edges 683 -> 495 (after phase1=585, after phase2=495)
+# csr: cut-edges 667 -> 487 (after phase0=589, after phase1=500, after phase2=487)
 CSR_CUTEDGE_RE = re.compile(
-    r"csr:\s+cut-edges\s+(\d+)\s+->\s+(\d+)\s+\(after phase1=(\d+),\s+after phase2=(\d+)\)"
+    r"csr:\s+cut-edges\s+(\d+)\s+->\s+(\d+)\s+\((?:after phase0=\d+,\s+)?"
+    r"after phase1=(\d+),\s+after phase2=(\d+)\)"
 )
-# csr: phase1 2924 attempts / 96 successes; phase2 5 replications
+# csr: phase0 31 moves; phase1 2546 attempts / 86 successes; phase2 5 replications
 CSR_COUNTS_RE = re.compile(
-    r"csr:\s+phase1\s+(\d+)\s+attempts\s+/\s+(\d+)\s+successes;\s+phase2\s+(\d+)\s+replications"
+    r"csr:\s+(?:phase0\s+\d+\s+moves;\s+)?"
+    r"phase1\s+(\d+)\s+attempts\s+/\s+(\d+)\s+successes;\s+phase2\s+(\d+)\s+replications"
 )
 ND_RE = re.compile(r"\bnd =\s*(\d+)")
 HOP_RE = re.compile(r"\bhop =\s*(\d+)")
