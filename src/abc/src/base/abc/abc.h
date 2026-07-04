@@ -561,6 +561,7 @@ extern ABC_DLL void               Abc_NtkClearPartId( Abc_Ntk_t * pNtk, int ObjI
 extern ABC_DLL void               Abc_NtkClearPartIds( Abc_Ntk_t * pNtk );
 extern ABC_DLL void               Abc_NtkUpdateCutNets( Abc_Ntk_t * pNtk );
 extern ABC_DLL int                Abc_NtkComputeCutSize( Abc_Ntk_t * pNtk );
+extern ABC_DLL int                Abc_NtkComputeCutEdgeNum( Abc_Ntk_t * pNtk );
 extern ABC_DLL int                Abc_NtkComputeHopNum( Abc_Ntk_t * pNtk );
 extern ABC_DLL void               Abc_NtkSetPartStats( Abc_Ntk_t * pNtk, int NumParts, int CutSize, int HopNum );
 extern ABC_DLL int                Abc_NtkGetPartStats( Abc_Ntk_t * pNtk, int * pNumParts, int * pCutSize, int * pHopNum, float * pAvgSize, int * pMinSize, int * pMaxSize );

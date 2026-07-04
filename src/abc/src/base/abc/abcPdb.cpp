@@ -178,6 +178,36 @@ int Abc_NtkComputeCutSize( Abc_Ntk_t * pNtk )
     return Abc_NtkCollectCutNets( pNtk ).CutSize;
 }
 
+int Abc_NtkComputeCutEdgeNum( Abc_Ntk_t * pNtk )
+{
+    Abc_Obj_t * pObj;
+    Abc_Obj_t * pFanin;
+    int i, k;
+    int CutEdge = 0;
+
+    if ( pNtk == NULL )
+        return -1;
+
+    // Count every cross-partition (driver, consumer) pair separately. A net
+    // with several cross-partition fanouts contributes 1 to cut-net but one
+    // cut-edge per crossing fanout.
+    Abc_NtkForEachObj( pNtk, pObj, i )
+    {
+        part_id ObjPart;
+        if ( !Abc_ObjIsPartStatVertex( pObj ) || !Abc_ObjHasPartId( pObj ) )
+            continue;
+        ObjPart = Abc_ObjGetPartId( pObj );
+        Abc_ObjForEachFanin( pObj, pFanin, k )
+        {
+            if ( !Abc_ObjIsPartStatVertex( pFanin ) || !Abc_ObjHasPartId( pFanin ) )
+                continue;
+            if ( Abc_ObjGetPartId( pFanin ) != ObjPart )
+                CutEdge += 1;
+        }
+    }
+    return CutEdge;
+}
+
 int Abc_NtkComputeHopNum( Abc_Ntk_t * pNtk )
 {
     std::vector<int> HopLevels;
