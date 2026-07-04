@@ -215,8 +215,65 @@ static Abc_Obj_t *shannon_decompose_csr(Abc_Ntk_t *pNtk, unsigned *pTruth, int n
     return pMux;
 }
 
+// Forward hop-arrival snapshot, keyed by object id. arrival[n] = max over
+// part_stat fanins of (arrival[fanin] + cross_partition ? 1 : 0). Same metric
+// Abc_NtkComputeHopNum maxes over. Computed once per phase1 round; used as the
+// per-node hop budget for the resub gate (a resub may not raise the consumer's
+// arrival above its snapshot value -- if no node exceeds its snapshot, global
+// max hop cannot exceed the round's baseline).
+static void csr_hop_arrival(Abc_Ntk_t *pNtk, std::vector<int> &arrival)
+{
+    arrival.assign(Abc_NtkObjNumMax(pNtk), 0);
+    Vec_Ptr_t *vNodes = Abc_NtkDfs(pNtk, 1);
+    Abc_Obj_t *pObj;
+    int i;
+    Vec_PtrForEachEntry(Abc_Obj_t *, vNodes, pObj, i)
+    {
+        part_id obj_part = Abc_ObjGetPartId(pObj);
+        if (obj_part == ABC_PART_ID_NONE)
+            continue;
+        int best = 0;
+        Abc_Obj_t *pFanin;
+        int k;
+        Abc_ObjForEachFanin(pObj, pFanin, k)
+        {
+            part_id fp = Abc_ObjGetPartId(pFanin);
+            if (fp == ABC_PART_ID_NONE)
+                continue;
+            int cand = arrival[pFanin->Id] + (fp != obj_part ? 1 : 0);
+            if (cand > best)
+                best = cand;
+        }
+        arrival[pObj->Id] = best;
+    }
+    Vec_PtrFree(vNodes);
+}
+
+// Predicted hop-arrival of pNode if its fanin set becomes `fanins` while pNode
+// stays in `node_part`. Uses the round-start arrival snapshot for the fanins
+// (divisors already existed at round start; a resubbed node only shrinks the
+// TFI, so their snapshot arrivals are valid upper-context references).
+static int csr_predicted_arrival(const std::vector<int> &arrival, part_id node_part,
+                                 Abc_Obj_t **fanins, int n)
+{
+    int best = 0;
+    for (int i = 0; i < n; i++)
+    {
+        part_id fp = Abc_ObjGetPartId(fanins[i]);
+        if (fp == ABC_PART_ID_NONE)
+            continue;
+        int id = fanins[i]->Id;
+        int fa = (static_cast<size_t>(id) < arrival.size()) ? arrival[id] : 0;
+        int cand = fa + (fp != node_part ? 1 : 0);
+        if (cand > best)
+            best = cand;
+    }
+    return best;
+}
+
 static int try_partition_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
-                               int maxTempLut, int *reason)
+                               int maxTempLut, int *reason,
+                               const std::vector<int> &hop_arrival)
 {
     int pCands[MFS_FANIN_MAX];
     int nCands = 0;
@@ -226,6 +283,8 @@ static int try_partition_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
     *reason = RR_RESUB_FAIL;
 
     part_id consumer_part = Abc_ObjGetPartId(pNode);
+    int hop_budget = (static_cast<size_t>(pNode->Id) < hop_arrival.size())
+                     ? hop_arrival[pNode->Id] : 0;
 
     Vec_PtrClear(p->vMfsFanins);
     int nDivs = Vec_PtrSize(p->vDivs) - Abc_ObjFaninNum(pNode);
@@ -302,6 +361,14 @@ static int try_partition_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
             if (!pFunc)
                 { *reason = RR_OTHER; return 0; }
             Vec_PtrPush(p->vMfsFanins, Vec_PtrEntry(p->vDivs, found));
+            {
+                int nf = Vec_PtrSize(p->vMfsFanins);
+                Abc_Obj_t *gf[MFS_FANIN_MAX];
+                for (int g = 0; g < nf && g < MFS_FANIN_MAX; g++)
+                    gf[g] = (Abc_Obj_t *)Vec_PtrEntry(p->vMfsFanins, g);
+                if (csr_predicted_arrival(hop_arrival, consumer_part, gf, nf) > hop_budget)
+                    { *reason = RR_RESUB_FAIL; return 0; }
+            }
             Abc_NtkMfsUpdateNetwork(p, pNode, p->vMfsFanins, pFunc);
             p->nResubs++;
             return 2;
@@ -357,6 +424,14 @@ static int try_partition_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
                 { *reason = RR_OTHER; return 0; }
             Vec_PtrPush(p->vMfsFanins, Vec_PtrEntry(p->vDivs, found1));
             Vec_PtrPush(p->vMfsFanins, Vec_PtrEntry(p->vDivs, found2));
+            {
+                int nf = Vec_PtrSize(p->vMfsFanins);
+                Abc_Obj_t *gf[MFS_FANIN_MAX];
+                for (int g = 0; g < nf && g < MFS_FANIN_MAX; g++)
+                    gf[g] = (Abc_Obj_t *)Vec_PtrEntry(p->vMfsFanins, g);
+                if (csr_predicted_arrival(hop_arrival, consumer_part, gf, nf) > hop_budget)
+                    { *reason = RR_RESUB_FAIL; return 0; }
+            }
             Abc_NtkMfsUpdateNetwork(p, pNode, p->vMfsFanins, pFunc);
             p->nResubs++;
             return 3;
@@ -480,6 +555,9 @@ static void run_phase1_resub(Abc_Ntk_t *pNtk, const Config &cfg,
         Abc_NtkLevel(pNtk);
         Abc_NtkStartReverseLevels(pNtk, 0);
 
+        std::vector<int> hop_arrival;
+        csr_hop_arrival(pNtk, hop_arrival);
+
         Mfs_Par_t pars;
         Abc_NtkMfsParsDefault(&pars);
         pars.fResub      = 1;
@@ -518,7 +596,8 @@ static void run_phase1_resub(Abc_Ntk_t *pNtk, const Config &cfg,
             if (Abc_WinNode(p, pNode) != 0)
                 continue;
 
-            int ret = try_partition_resub(p, pNode, cand.iFanin, cfg.maxTempLut, &reason);
+            int ret = try_partition_resub(p, pNode, cand.iFanin, cfg.maxTempLut, &reason,
+                                          hop_arrival);
 
             if (ret >= 1)
             {
