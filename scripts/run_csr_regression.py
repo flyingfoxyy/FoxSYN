@@ -21,9 +21,9 @@ CSR_CUTEDGE_RE = re.compile(
     r"csr:\s+cut-edges\s+(\d+)\s+->\s+(\d+)\s+\((?:after phase0=\d+,\s+)?"
     r"after phase1=(\d+),\s+after phase2=(\d+)\)"
 )
-# csr: phase0 31 moves; phase1 2546 attempts / 86 successes; phase2 5 replications
+# csr: phase0 31 moves / 5 swaps; phase1 2546 attempts / 86 successes; phase2 5 replications
 CSR_COUNTS_RE = re.compile(
-    r"csr:\s+(?:phase0\s+\d+\s+moves;\s+)?"
+    r"csr:\s+(?:phase0\s+\d+\s+moves(?:\s+/\s+\d+\s+swaps)?;\s+)?"
     r"phase1\s+(\d+)\s+attempts\s+/\s+(\d+)\s+successes;\s+phase2\s+(\d+)\s+replications"
 )
 ND_RE = re.compile(r"\bnd =\s*(\d+)")
