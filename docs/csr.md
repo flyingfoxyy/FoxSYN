@@ -186,6 +186,24 @@ Phase 1 的 MFS 窗口构建循环最初没有调用 `Abc_NtkStartReverseLevels`
 
 `-b` 手动开启后在 `adder.v` 上复现了预期的 cutsize 回退（11 → 28），确认该开关行为符合设计。
 
+### LUT size（`-K`）敏感性
+
+多die FPGA 论文 ResynMD（Interconnect-Aware Logic Resynthesis for Multi-Die FPGAs，2026）报告过一个规律：LUT 越小，resub 消除跨分区边的效果越好（LUT4 > LUT5 > LUT6，单调递减），原因是小 LUT 把逻辑拆得更细，节点数更多、每个节点的同分区候选 divisor 池子更大。该论文为了看清这个单一变量，把分区器换成了确定性 hash 分区，规避了 hMetis 划分质量本身随网表结构波动这个混杂因素。
+
+在 `csr` 上用同款 EPFL 11 个 case（`hyp` 超时排除）、`hpart -N 4`（仍走 hMetis，未做上述隔离）测了 `-K 2/3/4/5/6` 五档：
+
+| K | 平均削减率 |
+|---|---|
+| K2 | 35.83% |
+| K3 | 26.13% |
+| K4 | 26.45% |
+| K5 | 25.24% |
+| K6 | 25.07% |
+
+只有 K2 这种极端小 LUT 才有明显抬升，**K3 到 K6 基本走平（26% → 25%）**，跟论文报告的清晰单调趋势不同。逐 case 看波动也很大且不单调：`arbiter` 在 K6 反而最高（46.20%），K3 最低（14.58%）；`max` 在 K2 是 62.86% 但 K3 掉到 0.00%；`log2` 相对稳定，各 K 都在 60-76% 区间。
+
+结论：`csr` 的收益率主要由电路结构决定，K 值是次要因素，且这个效应在常用范围（K4-K6）里基本可忽略。之所以没能重现论文那种干净的单调趋势，大概率是因为这组实验每个 K 都重新走了一遍 hMetis——划分质量本身随网表结构（不同 K 产出的节点数、连接结构都不同）的波动，盖过了"LUT size 影响 divisor 池子"这个真正想测的效应。若要干净复现论文的对比方法，需要像论文一样换成确定性 hash 分区，本次未做（见"后续方向"）。
+
 ## 已知问题
 
 - **11 个 benchmark crash/fail/timeout**：`frg2`、`x4` 崩溃已确认是 vendored ABC 上游 `abcFunc.c` 的通用 bug（`Abc_NtkBddToSop` 常量折叠节点时留下悬空 `vFanouts` 引用），**已在 commit `3b70cbd` 修复**，与 csr 本身无关，见 `docs/cmfs.md` 已知问题一节。剩余 `LU8PEEng`、`mkDelayWorker32B`、`blob_merge`、`mkSMAdapter4B`、`LU32PEEng`、`stereovision1`（此项已随上面的修复解决）、`hyp`、`mcml`、`sha` 多为大设计在 120s 回归超时下的超时，未逐个排查是否为真崩溃。
@@ -197,6 +215,7 @@ Phase 1 的 MFS 窗口构建循环最初没有调用 `Abc_NtkStartReverseLevels`
 - 与 `cpr`/`cmfs` 交替迭代：csr 降 cutsize → cpr 用降下来的 cutsize 空间做 hop 优化 → csr 再找新机会。
 - Phase 2 的 hop-slack snapshot 改成增量更新（每次复制后局部刷新受影响节点的 slack），换取更激进但仍然安全的复制策略。
 - 排查剩余 timeout case 是否有可优化的候选收集 / SAT 求解热点。
+- 用确定性 hash 分区重跑 LUT size（`-K`）敏感性实验，隔离 hMetis 划分质量波动这个混杂变量，干净复现/反驳 ResynMD 论文报告的单调趋势。
 
 ## 相关文件
 
