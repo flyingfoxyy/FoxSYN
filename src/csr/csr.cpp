@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 extern "C" {
@@ -965,13 +966,130 @@ static part_id best_relocate_target(Abc_Obj_t *pNode, int &best_delta)
     return best;
 }
 
+// Enumerate unordered adjacent cross-partition node pairs. Both endpoints are
+// internal NODEs (Phase 0 never relocates PI/CONST1) living in different
+// partitions, connected by at least one fanin/fanout edge. Each unordered pair
+// appears once, deduped by (min Id, max Id). These are the only pairs where a
+// swap changes any edge *between* the two -- a non-adjacent swap equals two
+// independent single-node moves already handled by run_phase0_relocate.
+static void collect_swap_candidates(Abc_Ntk_t *pNtk,
+                                    std::vector<std::pair<int, int>> &pairs)
+{
+    pairs.clear();
+    Abc_Obj_t *pObj, *pNb;
+    int i, k;
+    Abc_NtkForEachNode(pNtk, pObj, i)
+    {
+        part_id pa = Abc_ObjGetPartId(pObj);
+        if (pa == ABC_PART_ID_NONE)
+            continue;
+        auto consider = [&](Abc_Obj_t *nb) {
+            if (!nb || !Abc_ObjIsNode(nb))
+                return;
+            part_id pb = Abc_ObjGetPartId(nb);
+            if (pb == ABC_PART_ID_NONE || pb == pa)
+                return;
+            int lo = pObj->Id < nb->Id ? pObj->Id : nb->Id;
+            int hi = pObj->Id < nb->Id ? nb->Id : pObj->Id;
+            pairs.emplace_back(lo, hi);
+        };
+        Abc_ObjForEachFanin(pObj, pNb, k)
+            consider(pNb);
+        Abc_ObjForEachFanout(pObj, pNb, k)
+            consider(pNb);
+    }
+    std::sort(pairs.begin(), pairs.end());
+    pairs.erase(std::unique(pairs.begin(), pairs.end()), pairs.end());
+}
+
+// ---------------------------------------------------------------------
+// Phase 0 (swap): exchange the partitions of two adjacent cross-partition
+// nodes when the swap strictly lowers global cut-edges without worsening
+// hop. Runs after single-node relocation converges. Swaps preserve every
+// partition's size (each nets -1+1=0), so no balance gate is needed. Pure
+// part_id relabel (zero area, zero logic). The cut-edge delta is a full
+// ComputeCutEdgeCount front/back diff (matches Phase 2's accept check) --
+// this sidesteps double-counting the A-B edge that a hand-written local
+// delta would have to special-case.
+// ---------------------------------------------------------------------
+static void run_phase0_swap(Abc_Ntk_t *pNtk, const Config &cfg, int &total_swaps)
+{
+    const int baseline_hop = Abc_NtkComputeHopNum(pNtk);
+    int best_cutedges = ComputeCutEdgeCount(pNtk);
+    int stall_count = 0;
+
+    for (int round = 0; round < cfg.max_rounds; ++round)
+    {
+        std::vector<std::pair<int, int>> pairs;
+        collect_swap_candidates(pNtk, pairs);
+        if (pairs.empty())
+            break;
+
+        int round_swapped = 0;
+        for (const auto &pr : pairs)
+        {
+            Abc_Obj_t *pA = Abc_NtkObj(pNtk, pr.first);
+            Abc_Obj_t *pB = Abc_NtkObj(pNtk, pr.second);
+            if (!pA || !pB || !Abc_ObjIsNode(pA) || !Abc_ObjIsNode(pB))
+                continue;
+            part_id pa = Abc_ObjGetPartId(pA);
+            part_id pb = Abc_ObjGetPartId(pB);
+            // Stale: an earlier swap this round already moved one endpoint,
+            // so they may now share a partition (nothing to swap).
+            if (pa == ABC_PART_ID_NONE || pb == ABC_PART_ID_NONE || pa == pb)
+                continue;
+
+            int cur = ComputeCutEdgeCount(pNtk);
+            Abc_ObjSetPartId(pA, pb);
+            Abc_ObjSetPartId(pB, pa);
+            int nw = ComputeCutEdgeCount(pNtk);
+            if (nw >= cur)
+            {
+                Abc_ObjSetPartId(pA, pa); // roll back both
+                Abc_ObjSetPartId(pB, pb);
+                continue;
+            }
+            if (Abc_NtkComputeHopNum(pNtk) > baseline_hop)
+            {
+                Abc_ObjSetPartId(pA, pa); // roll back both
+                Abc_ObjSetPartId(pB, pb);
+                continue;
+            }
+            round_swapped++;
+        }
+
+        total_swaps += round_swapped;
+
+        int new_cutedges = ComputeCutEdgeCount(pNtk);
+        if (cfg.verbose)
+        {
+            int cur_hop = Abc_NtkComputeHopNum(pNtk);
+            printf("csr: phase0 swap round %2d  swaps=%3d  cut-edges=%d  hop=%d/%d\n",
+                   round, round_swapped, new_cutedges, cur_hop, baseline_hop);
+        }
+
+        if (new_cutedges < best_cutedges)
+        {
+            best_cutedges = new_cutedges;
+            stall_count = 0;
+        }
+        else if (++stall_count >= cfg.stall_limit)
+        {
+            break;
+        }
+
+        if (round_swapped == 0)
+            break;
+    }
+}
+
 // ---------------------------------------------------------------------
 // Phase 0: hop-preserving node relocation. Greedily moves each node to the
 // neighbor partition minimizing its incident cut-edges. Pure part_id
 // relabel (zero area, zero logic). Gated by strict cut-edge decrease, an
 // exact global-hop-non-worsening check, and a per-partition balance cap.
 // ---------------------------------------------------------------------
-void run_phase0_relocate(Abc_Ntk_t *pNtk, const Config &cfg, int &total_moves)
+void run_phase0_relocate(Abc_Ntk_t *pNtk, const Config &cfg, int &total_moves, int &total_swaps)
 {
     int num_parts = resolve_num_parts(pNtk);
     int balance_pct = cfg.balance_pct;
@@ -1073,6 +1191,8 @@ void run_phase0_relocate(Abc_Ntk_t *pNtk, const Config &cfg, int &total_moves)
         if (round_moved == 0)
             break;
     }
+
+    run_phase0_swap(pNtk, cfg, total_swaps);
 }
 
 bool ApplyCsr(Abc_Ntk_t *pNtk, const Config &cfg)
@@ -1097,9 +1217,9 @@ bool ApplyCsr(Abc_Ntk_t *pNtk, const Config &cfg)
     if (cfg.verbose)
         printf("csr: initial cut-edges = %d\n", initial_cutedges);
 
-    int total_moves = 0;
+    int total_moves = 0, total_swaps = 0;
     if (cfg.do_relocate)
-        run_phase0_relocate(pNtk, cfg, total_moves);
+        run_phase0_relocate(pNtk, cfg, total_moves, total_swaps);
     int after_phase0 = ComputeCutEdgeCount(pNtk);
 
     int total_attempts = 0, total_successes = 0;
@@ -1136,8 +1256,8 @@ bool ApplyCsr(Abc_Ntk_t *pNtk, const Config &cfg)
 
     printf("csr: cut-edges %d -> %d (after phase0=%d, after phase1=%d, after phase2=%d)\n",
            initial_cutedges, final_cutedges, after_phase0, after_phase1, after_phase2);
-    printf("csr: phase0 %d moves; phase1 %d attempts / %d successes; phase2 %d replications\n",
-           total_moves, total_attempts, total_successes, total_replications);
+    printf("csr: phase0 %d moves / %d swaps; phase1 %d attempts / %d successes; phase2 %d replications\n",
+           total_moves, total_swaps, total_attempts, total_successes, total_replications);
 
     return true;
 }
