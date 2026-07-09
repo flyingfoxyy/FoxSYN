@@ -126,6 +126,27 @@ run_pdecomp(pNtk, K):
 
 **连带发现**：`Abc_NtkSweep`（原计划里在分解完成后调用它 + `Abc_NtkCleanup` 做清理）会把所有 <2-fanin 的节点直接"焊掉"（`Abc_ObjPatchFanin` 绕过去），这正好包括刚插入的缓冲节点——调用它会让修复失效、cut-edge 又炸回去，而且它还会把网络转成 BDD 表示，跟本命令假设的 AIG/`Hop_Obj_t` 表示不兼容。**改为只调用 `Abc_NtkCleanup`**（只做从 PO 出发的可达性清理，不做结构合并，不动缓冲节点）。修复后在 `cavlc`/`voter`/`log2`/`max`/`arbiter`（EPFL）五个不同规模的 case 上验证：`hop`/`cut-edge` 严格相等，`cec` 确认功能等价。
 
+### 跨模块兼容性问题：`csr` Phase 1 同样调用 `Abc_NtkSweep`
+
+`pdecomp` 命令本身单跑没问题，但接上 `csr` 后在 EPFL 全量对比实验中暴露出同样的根因在另一个模块里重演：`csr.cpp` Phase 1 每轮都无条件调用 `Abc_NtkSweep`（用于折叠 MFS resub 产出的退化单输入节点），这个调用会把 `pdecomp` 插入的跨分区缓冲节点一并焊掉，导致缓冲节点保护的 fanout 爆炸 bug 在 `csr` 内部重新出现——实测 `cavlc` 接上 `csr` 后 cut-edge 收益率从直接 `csr` 的基线反而暴跌到 -253 个百分点（`csr` phase1 单轮 397→1394，`fixed=0`，即 0 个 resub 被接受、cut-edge 却暴涨，与 `pdecomp` 自身修复前的症状完全一致）。
+
+**修复**：`src/csr/csr.cpp` Phase 1 每轮清理去掉 `Abc_NtkSweep`，只保留 `Abc_NtkCleanup`。改动前后用冻结分区（`--save-part`/`--load-part`）跑同一套 EPFL 分区对比 `csr` 自身（不接 `pdecomp`）的行为，确认 19/20 case 仍是 `OK`/`EQ`，无新增崩溃/超时，数值差异都在噪声量级内（个别 case ±1 节点/cut-edge 级别的抖动），判定该改动对 `csr` 既有行为安全。
+
+**残留风险**：这是"哪个模块调 `Abc_NtkSweep` 就得避开缓冲节点"的一次性修复，不是根治。如果未来任何其他命令在 `pdecomp` 之后的流水线里插入了新的 `Abc_NtkSweep` 调用（或者其他会焊掉 <2-fanin 节点的清理逻辑），同样的 bug 会复现。更根本的修复方向是让缓冲节点本身对通用清理逻辑"隐形"（比如探索 `fPersist` 类的持久化标记扩展到 logic network，目前该字段仅用于 strash/AIG 网络），留作后续方向。
+
+### 实验结果：`pdecomp -K 2` 接 `csr` 的实际收益
+
+修复上述兼容性问题后，用 `scripts/run_pdecomp_csr_comparison.py`（冻结分区，隔离 hMetis 随机性）在 EPFL 全量 case（`hyp`/`log2`/`mem_ctrl` 超时排除）上对比"直接 `csr`" vs "`pdecomp -K 2` 后再 `csr`"：
+
+| 配置 | 平均 cut-edge 削减率 |
+|---|---|
+| 直接 `csr` | 18.99% |
+| `pdecomp -K 2` + `csr` | 18.93% |
+
+**几乎没有差异（-0.06 个百分点），跟"LUT size 敏感性"实验（`docs/csr.md`）的结论一致**：`csr` 的收益主要由电路结构决定，节点粒度是次要因素。逐 case 看方向不一致：`sin`(+21.84pp)、`bar`(+9.55pp)、`adder`(+6.25pp) 明显受益，但 `priority`(-8.43pp)、`ctrl`(-7.14pp)、`dec`(-5.74pp) 反而变差,17 个可比 case 里 8 个变好 9 个变差,没有系统性趋势。全部 case 均 `cec` 确认功能等价。
+
+这个结果没有验证"先展开到 K2 再优化能提升 `csr` 收益"这个最初的实验假设——反而印证了 `docs/csr.md` 里已经得出的"K 值对 `csr` 收益影响可忽略"的结论，从另一个角度（固定分区、只变粒度）独立复现了同一个发现。
+
 ## 文件结构
 
 - `src/pdecomp/`：新模块，独立 `CMakeLists.txt`（参照 `src/csr/CMakeLists.txt` 的结构：链接 `libabc` + 必要的 timer/kit 依赖）。

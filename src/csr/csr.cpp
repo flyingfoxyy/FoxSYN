@@ -615,7 +615,12 @@ static void run_phase1_resub(Abc_Ntk_t *pNtk, const Config &cfg,
         Mfs_ManStop(p);
         Abc_NtkStopReverseLevels(pNtk);
 
-        Abc_NtkSweep(pNtk, 0);
+        // Abc_NtkSweep is skipped here: it converts to BDD and patches out
+        // any <2-fanin node via Abc_ObjPatchFanin, which would delete
+        // pdecomp's cross-partition identity buffers (see pdecomp.cpp) and
+        // reopen the fanout-explosion bug they exist to prevent, if csr
+        // runs after pdecomp. Abc_NtkCleanup only drops nodes unreachable
+        // from the POs and leaves live single-input nodes alone.
         Abc_NtkCleanup(pNtk, 0);
 
         int new_cutedges = ComputeCutEdgeCount(pNtk);
