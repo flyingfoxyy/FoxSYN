@@ -21,6 +21,7 @@
 #include "cpr/cpr.hpp"
 #include "cmfs/cmfs.hpp"
 #include "csr/csr.hpp"
+#include "pdecomp/pdecomp.hpp"
 #include "agdmap/AgdmapCommand.h"
 #include "curvemap/curvemap.h"
 
@@ -851,6 +852,46 @@ usage:
     return 1;
 }
 
+int Pdecomp_Command(Abc_Frame_t *pAbc, int argc, char **argv)
+{
+    fox::pdecomp::Config cfg;
+
+    if (argc > 1 && !strcmp(argv[1], "-h"))
+        goto usage;
+
+    for (int i = 1; i != argc; ++i)
+    {
+        if (argv[i][0] != '-')
+        {
+            std::cout << "pdecomp: unexpected argument " << argv[i] << "\n";
+            goto usage;
+        }
+        const char arg = *(argv[i] + 1);
+        switch (arg)
+        {
+        case 'K':
+            if (i + 1 >= argc) { printf("pdecomp: -K requires a number\n"); return 1; }
+            cfg.K = std::atoi(argv[++i]);
+            if (cfg.K < 2 || cfg.K > 6) { printf("pdecomp: -K must be 2-6\n"); return 1; }
+            break;
+        case 'h':
+            goto usage;
+        default:
+            std::cout << "pdecomp: unknown argument -" << arg << "\n";
+            goto usage;
+        }
+    }
+
+    return fox::pdecomp::ApplyPdecomp(pAbc, cfg) ? 0 : 1;
+
+usage:
+    Abc_Print(-2, "usage: pdecomp [-K num]\n");
+    Abc_Print(-2, "\t           partition-preserving LUT decomposition to <= K inputs\n");
+    Abc_Print(-2, "\t-K num  : target max fanin count after decomposition (2-6) [default = %d]\n", cfg.K);
+    Abc_Print(-2, "\n");
+    return 1;
+}
+
 int Curvemap_Command(Abc_Frame_t* pAbc, int argc, char** argv) {
     using namespace fox::curvemap;
 
@@ -926,6 +967,7 @@ struct CmdRegister
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "cpr", Cpr_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "cmfs", Cmfs_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "csr", Csr_Command, 1);
+        Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "pdecomp", Pdecomp_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "curvemap", Curvemap_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FPGA mapping", "agdmap", Agdmap, 1);
     }

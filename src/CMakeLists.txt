@@ -45,6 +45,7 @@ add_subdirectory(timer)
 add_subdirectory(cpr)
 add_subdirectory(cmfs)
 add_subdirectory(csr)
+add_subdirectory(pdecomp)
 add_subdirectory(agdmap)
 add_subdirectory(curvemap)
 
@@ -63,6 +64,7 @@ target_link_libraries(FoxSYN PRIVATE
     cpr
     cmfs
     csr
+    pdecomp
     agdmap
     curvemap
 )
