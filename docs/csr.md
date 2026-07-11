@@ -111,17 +111,108 @@ hop_slack(n)    = hop_required(n) - hop_arrival(n)
 ## 命令接口
 
 ```
-usage: csr [-R num] [-S num] [-X num] [-G num] [-B num] [-bLv]
+usage: csr [-R num] [-S num] [-T num] [-X num] [-G num] [-B num] [-bLv]
            cut-edge reduction via resub-first + replication-fallback logic synthesis
     -R num  : max optimization rounds per phase [default = 20]
     -S num  : stall limit (rounds without improvement) per phase [default = 3]
+    -T num  : deterministic search trajectories, 1-3 [default = 1]
     -X num  : max temp LUT size for Shannon decomp (0=off, 7-12), Phase 1 only [default = 0]
-    -G num  : Phase 2 replication node growth cap, % of original node count [default = 2]
+    -G num  : Phase 1/2 shared non-refunding growth budget, % of entry node count [default = 2]
     -B num  : balance percentage (1-99) [default = inherit from pdb]
     -b      : run cpr-style balance repair after phase1/2 [default = off]
     -L      : disable phase 0 hop-preserving relocation [default = on]
     -v      : toggles verbose output
 ```
+
+## 增强版架构(2026-07 更新)
+
+CSR 现在以 `Abc_Frame_t *` 为公开入口(`ApplyCsr(Abc_Frame_t *, const Config &)`)，而不是直接接管当前网络。整个优化过程遵守以下事务模型和硬约束：
+
+### Frame 所有权与事务模型
+
+- `csr` 在进入时立即用 `CaptureEntryLimits` 冻结入口网络的标量状态（`num_parts`、`balance_pct`、`hop`、`cut-net`、节点数），因为 `Abc_NtkDup` 不保留 `Pdb` 的这些字段。
+- 每条轨迹从入口网络的独立 `Abc_NtkDup` 快照开始；frame 里的入口网络在所有轨迹跑完之前保持不变。
+- 只有胜出轨迹通过 `Abc_FrameReplaceCurrentNetwork` 安装；安装前先用 `RestorePdbMetadata` 把冻结的入口 `balance_pct`/`num_parts` 写回，恢复对后续命令可见的元数据。
+- 落选轨迹和全部失败的轨迹网络都会被显式删除；全部轨迹失败时 frame 保持入口网络不变。
+
+### 入口硬约束（`EntryLimits`）
+
+以入口网络为基线冻结：
+
+```text
+hop_limit             = entry_hop                      (不允许任何轨迹的最终 hop 超过入口)
+node_limit             = ceil(entry_nodes * 1.02)        (存活节点数上限)
+growth_budget          = floor(entry_nodes * 0.02)       (Phase 1/2 共享，不返还)
+cutnet_limit           = ceil(entry_cutnet * 1.50)
+balance_overflow_limit = compute_balance_overflow(entry_part_sizes, entry 分区在 balance_pct 下的 max_allowed)
+```
+
+除 `balance_overflow_limit` 外，这四个值全部来自 `docs/superpowers/specs/2026-07-11-csr-optimization-enhancement-design.md` 的原始设计。`balance_overflow_limit` 是实现过程中发现必须补的第五个值：hmetis 的递归二分在 `num_parts > 2` 时天然会让实际分区大小超过 `balance_pct` 声明的名义容差（误差逐层复合），而不像 hop/node/cutnet 三个约束一样"入口值天然满足自己的门槛"。若直接要求 `overflow == 0`，冻结分区语料库里 19/90 个案例会在任何优化开始之前就在入口审计失败。`balance_overflow_limit` 改为"入口态本身已有的 overflow"，审计只要求不比入口更差，与其余三个约束同构。
+
+`node_limit` 是防御性的硬上限；正常语义下 `growth_budget` 的"不返还"规则已经保证不会触达它。
+
+节点数增长预算 `growth_budget` 由 Phase 1（Shannon 分解）和 Phase 2（复制）共享，按累计正净增长单调消耗，删除节点不返还额度。
+
+### `-T` 多轨迹搜索
+
+`-T num`（1-3，默认 1）为 CSR 增加确定性的多轨迹搜索：
+
+```text
+trajectory 0 -> TrajectoryPolicy::GainFirst           (收益优先，完整稳定 tie-break)
+trajectory 1 -> TrajectoryPolicy::BoundaryConcentration (边界集中优先)
+trajectory 2 -> TrajectoryPolicy::ScarcityFirst        (稀缺机会优先)
+```
+
+胜出轨迹按字典序选择：cut-edge 更少 → cut-net 更少 → hop 更少 → 节点数更少 → 轨迹编号更小。所有 tie-break 使用对象 ID 和分区 ID，不依赖指针地址或哈希表遍历顺序，保证同一输入重复运行产生字节级相同的输出（已在 90 个冻结分区语料库上验证，3 次 exact-repeat 全部一致）。
+
+### Phase 0：move / swap / compound relocation
+
+单节点 relocation 和相邻跨分区节点 swap 收敛后，运行深度受限（种子上限 64，beam width 8，最大深度 3）的短序列 compound relocation 搜索，覆盖单步、swap 都无法表达的组合迁移（例如两步都不降 cut-edge 但整体降的序列）。中间状态必须满足 hop/cut-net/平衡硬约束；整个序列只有最终 cut-edge 严格下降才原子提交。
+
+### Phase 1：node-level 多方案 resub + joint-replacement 快速路径
+
+在原有逐 `(consumer, iFanin)` MFS resub 之外，新增一个 consumer 级快速路径（`RunPhase1Resub`）：检测已存在的、fanin 集合完全相同、逻辑功能相同的同类节点，用一个外分区 divisor 联合替换两个跨分区 fanin（只在新增跨分区数严格少于删除数时允许）。
+
+这个路径必须区分网络的底层表示：`if` 映射后的网络是 `ABC_FUNC_AIG`（`pManFunc` 是 `Hop_Man_t*`，节点 `pData` 是结构哈希的 `Hop_Obj_t*`），只有旧式 SOP 网络才是 `ABC_FUNC_SOP`（`pManFunc` 是 `Mem_Flex_t*`，`pData` 是 SOP cover 字符串）。函数相同性判断和单输入 buffer 函数构造都必须按 `Abc_NtkHasAig`/`Abc_NtkHasSop` 分支处理，否则会把 AIG 网络的 `pData` 当字符串传给 `Abc_SopCreateBuf`，直接破坏 SOP 内存管理器并 segfault——这个 bug 在开发阶段一度导致 CSR 在**任何**经过 `if -K` 映射的真实电路上都必崩溃（Task 10 的单元测试只覆盖了合成的 SOP 网络，没触发这条路径）。
+
+跨分区候选仍按 driver 的跨分区 fanout 总数加权排序；每轮结束仍跑 `Abc_NtkCleanup`（不再跑 `Abc_NtkSweep`——`Abc_NtkSweep` 会转 BDD 并通过 `Abc_ObjPatchFanin` 清除任何 <2-fanin 节点，会删掉 pdecomp 的跨分区 identity buffer 并重新打开它们本该防止的 fanout 爆炸，若 csr 跑在 pdecomp 之后会出问题）。
+
+### Phase 2：聚合复制候选 + 复制簇 + 增量 HopState
+
+复制候选按 `(driver_id, target_partition)` 聚合，而不是逐条 cut-edge：预先计算可消除的目标分区 fanout 数、复制品新增的跨区 fanin 数、cut-net 变化和节点成本，按净收益/节点成本降序处理。
+
+当单独复制 driver 收益不足时，允许沿 fanin 方向构造深度 ≤2、节点数 ≤3 的复制簇（同一 driver-target 最多评估 16 个）。簇内部边全部同分区，不计入 cut-edge/cut-net；簇按原拓扑序创建，整体原子提交或回滚。
+
+Hop 门槛从静态的入口态 hop-slack 快照，改为可增量更新的 `HopState`：Phase 2 开始时用 `Abc_NtkDfs` 建立拓扑序号并计算全部初始 arrival；每次复制/簇提交时只需局部传播受影响子图的 arrival，任一节点超过 `hop_limit` 时逆序回滚 arrival 日志和复制拓扑。`HopState::VerifyAgainstFull` 独立重算全网 arrival 向量校验增量结果，每轮结束仍全网重算 hop 作为实现审计。
+
+## 已知问题（增强版）
+
+- **`-b` balance repair 语义未变**：默认关闭，`-b` 显式开启后仍可能牺牲 cutsize 收益（见上文历史记录），行为经 `cec` 验证过。
+- **`-T 2/3` 未纳入默认 5 倍运行时间验收范围**：设计上是显式开启的额外搜索，仍受确定的操作次数预算约束，但运行时间需单独评估。
+- **vendored ABC 上游代码存在 UBSan 未定义行为诊断**：ASan/UBSan 构建下运行 `if -K` LUT 映射会在 `src/abc/src/map/if/{ifCut,ifMap,ifMan}.c` 和 `src/abc/src/sat/bsat/{satSolver,satStore}.c` 报告约 91 条"misaligned address"诊断（8 字节对齐要求上的未对齐访问）。这些文件自"Vendor ABC sources into repo"提交后未被 csr 相关改动触碰过，是上游代码的既有问题，不是 csr 引入的；`csr.cpp`/`csr_state.cpp`/`csr_hop.cpp` 本身在同一次 ASan/UBSan 运行下没有任何诊断，`test_csr` 在 ASan/UBSan 下完全无诊断退出。
+- **5 个语料库案例在 200 秒超时下未跑完**：`EPFL_div`、`EPFL_hyp`、`vtr_LU32PEEng`、`vtr_mcml`、`vtr_sha`，均为超时而非崩溃或断言失败；未逐个排查是否存在可优化的候选收集热点。
+
+## 实测结果（增强版，2026-07-11）
+
+在 90 个 SimpleCircuits benchmark（MCNC + EPFL + OpenCores + VTR）上，N=4 hmetis 分区（**冻结分区**，`--save-part`/`--load-part` 保证可复现），`csr -T 1 -v`，对比增强前 commit `799702c`，3 次 exact-repeat 验证确定性，`--cec` 验证功能等价：
+
+| 指标 | 数值 |
+|---|---|
+| 跑通且有 cut-edge 收益的案例 | 84/85（唯一零收益案例 `vtr_bgm` 的入口 cut-edge 本身就是 0） |
+| 负增益案例 | **0** |
+| 有收益案例总 cut-edge | 195887 → 136675（**-30.2%**） |
+| 总节点数（跑通案例） | 379293 → 380940（+0.43%，61/85 案例变胖，在 2% 增长预算内） |
+| 总 hop（跑通案例） | 328 → 317（**-3.4%，净改善**） |
+| 硬约束违规（hop/节点数/cut-net/cut-edge） | **0/85** |
+| 3 次 exact-repeat 确定性 | **85/85 完全一致** |
+| cec 功能等价性 | **85/85 EQ，0 NOT_EQ** |
+| 默认 `-T 1` 运行时几何均值（vs baseline） | **1.99x**（5 倍验收线内） |
+| 运行时超 5 倍的案例 | `EPFL_voter`、`opencores_DMA`、`EPFL_sqrt`、`vtr_boundtop`、`opencores_fpu`、`vtr_bgm`、`vtr_LU8PEEng`（均为增强版多阶段搜索换取更大收益的代价，未违反任何硬约束） |
+| 未跑完的案例（200 秒超时） | 5 个：见上文"已知问题" |
+
+ASan/UBSan：`test_csr` 在 asan 构建下完全无诊断输出退出；`csr.cpp`/`csr_state.cpp`/`csr_hop.cpp` 在实际 `if -K 6` + `csr -T 1` 运行下也没有任何诊断（全部诊断落在 vendored ABC 上游代码，见上文"已知问题"）。
+
+以上数字全部来自 `scripts/run_csr_regression.py --exact-repeats 3 --cec --baseline-foxsyn <799702c 二进制>` 在冻结分区语料库上的实际测得结果，不是历史遗留估算。
 
 典型用法：
 
