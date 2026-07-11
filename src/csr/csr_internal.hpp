@@ -38,6 +38,22 @@ struct CutCandidateLess {
     }
 };
 
+struct ReplicationKey {
+    int driver_id = -1;
+    part_id target_part = ABC_PART_ID_NONE;
+};
+
+struct ReplicationCandidate {
+    ReplicationKey key;
+    int saved_edges = 0;
+    int added_edges = 0;
+    int cutnet_delta = 0;
+    int node_cost = 1;
+    int net_gain() const { return saved_edges - added_edges; }
+};
+
+std::vector<ReplicationCandidate> CollectReplicationCandidates(Abc_Ntk_t *pNtk);
+
 struct TrajectoryResult {
     Abc_Ntk_t *pNtk = nullptr;
     Metrics metrics;

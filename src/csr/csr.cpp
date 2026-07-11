@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <map>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -57,6 +58,116 @@ int ComputeCutEdgeCount(Abc_Ntk_t *pNtk)
         }
     }
     return count;
+}
+
+namespace {
+
+bool NetIsCut(Abc_Obj_t *pDriver, part_id driver_part,
+              part_id ignored_fanout_part = ABC_PART_ID_NONE)
+{
+    Abc_Obj_t *pFanout;
+    int i;
+    Abc_ObjForEachFanout(pDriver, pFanout, i)
+    {
+        if (!Abc_ObjIsNode(pFanout))
+            continue;
+        const part_id fanout_part = Abc_ObjGetPartId(pFanout);
+        if (fanout_part == ABC_PART_ID_NONE
+            || fanout_part == ignored_fanout_part)
+            continue;
+        if (fanout_part != driver_part)
+            return true;
+    }
+    return false;
+}
+
+int PredictReplicationCutnetDelta(Abc_Obj_t *pDriver, part_id target_part)
+{
+    std::vector<Abc_Obj_t *> affected{pDriver};
+    Abc_Obj_t *pFanin;
+    int i;
+    Abc_ObjForEachFanin(pDriver, pFanin, i)
+        if (is_part_stat_vertex(pFanin)
+            && Abc_ObjGetPartId(pFanin) != ABC_PART_ID_NONE)
+            affected.push_back(pFanin);
+    std::sort(affected.begin(), affected.end(),
+              [](Abc_Obj_t *lhs, Abc_Obj_t *rhs) { return lhs->Id < rhs->Id; });
+    affected.erase(std::unique(affected.begin(), affected.end()), affected.end());
+
+    int before = 0;
+    int after = 0;
+    for (Abc_Obj_t *pObj : affected)
+    {
+        const part_id part = Abc_ObjGetPartId(pObj);
+        before += NetIsCut(pObj, part);
+        if (pObj == pDriver)
+            after += NetIsCut(pObj, part, target_part);
+        else
+            after += NetIsCut(pObj, part) || part != target_part;
+    }
+    return after - before;
+}
+
+bool ReplicationCandidateLess(const detail::ReplicationCandidate &lhs,
+                              const detail::ReplicationCandidate &rhs)
+{
+    const long long lhs_ratio = static_cast<long long>(lhs.net_gain()) * rhs.node_cost;
+    const long long rhs_ratio = static_cast<long long>(rhs.net_gain()) * lhs.node_cost;
+    if (lhs_ratio != rhs_ratio)
+        return lhs_ratio > rhs_ratio;
+    return std::tuple{-lhs.net_gain(), lhs.cutnet_delta,
+                      lhs.key.driver_id, lhs.key.target_part}
+         < std::tuple{-rhs.net_gain(), rhs.cutnet_delta,
+                      rhs.key.driver_id, rhs.key.target_part};
+}
+
+} // namespace
+
+std::vector<detail::ReplicationCandidate>
+detail::CollectReplicationCandidates(Abc_Ntk_t *pNtk)
+{
+    std::map<std::pair<int, part_id>, int> saved_edges;
+    Abc_Obj_t *pDriver, *pFanout;
+    int i, k;
+    Abc_NtkForEachNode(pNtk, pDriver, i)
+    {
+        const part_id driver_part = Abc_ObjGetPartId(pDriver);
+        if (driver_part == ABC_PART_ID_NONE)
+            continue;
+        Abc_ObjForEachFanout(pDriver, pFanout, k)
+        {
+            if (!Abc_ObjIsNode(pFanout))
+                continue;
+            const part_id target_part = Abc_ObjGetPartId(pFanout);
+            if (target_part == ABC_PART_ID_NONE || target_part == driver_part)
+                continue;
+            saved_edges[{pDriver->Id, target_part}]++;
+        }
+    }
+
+    std::vector<detail::ReplicationCandidate> candidates;
+    for (const auto &[key, saved] : saved_edges)
+    {
+        pDriver = Abc_NtkObj(pNtk, key.first);
+        if (!pDriver || !Abc_ObjIsNode(pDriver))
+            continue;
+        int added = 0;
+        Abc_Obj_t *pFanin;
+        Abc_ObjForEachFanin(pDriver, pFanin, k)
+            if (is_part_stat_vertex(pFanin)
+                && Abc_ObjGetPartId(pFanin) != ABC_PART_ID_NONE
+                && Abc_ObjGetPartId(pFanin) != key.second)
+                added++;
+        candidates.push_back({
+            {key.first, key.second},
+            saved,
+            added,
+            PredictReplicationCutnetDelta(pDriver, key.second),
+            1,
+        });
+    }
+    std::sort(candidates.begin(), candidates.end(), ReplicationCandidateLess);
+    return candidates;
 }
 
 // ---------------------------------------------------------------------
@@ -764,7 +875,7 @@ static void compute_hop_slack(Abc_Ntk_t *pNtk, HopSlack &hs)
     Vec_PtrFree(vNodes);
 }
 
-static bool try_replicate(Abc_Ntk_t *pNtk, Abc_Obj_t *pDriver, Abc_Obj_t *pConsumer,
+static bool try_replicate(Abc_Ntk_t *pNtk, Abc_Obj_t *pDriver, part_id target_part,
                           const HopSlack &hs, detail::OptimizationState &state,
                           int &cur_cutedges)
 {
@@ -777,7 +888,6 @@ static bool try_replicate(Abc_Ntk_t *pNtk, Abc_Obj_t *pDriver, Abc_Obj_t *pConsu
     if (state.growth.remaining() < 1)
         return false;
 
-    part_id target_part = Abc_ObjGetPartId(pConsumer);
     part_id driver_part  = Abc_ObjGetPartId(pDriver);
     if (target_part == ABC_PART_ID_NONE || driver_part == ABC_PART_ID_NONE
         || target_part == driver_part)
@@ -860,8 +970,8 @@ static void run_phase2_replicate(Abc_Ntk_t *pNtk, const Config &cfg,
             break;
         }
 
-        std::vector<detail::CutCandidate> candidates;
-        collect_cut_candidates(pNtk, candidates);
+        std::vector<detail::ReplicationCandidate> candidates =
+            detail::CollectReplicationCandidates(pNtk);
         if (candidates.empty())
             break;
 
@@ -871,16 +981,13 @@ static void run_phase2_replicate(Abc_Ntk_t *pNtk, const Config &cfg,
             if (state.growth.remaining() < 1)
                 break;
 
-            Abc_Obj_t *pConsumer = Abc_NtkObj(pNtk, cand.node_id);
-            if (!pConsumer || !Abc_ObjIsNode(pConsumer))
+            Abc_Obj_t *pDriver = Abc_NtkObj(pNtk, cand.key.driver_id);
+            if (!pDriver || !Abc_ObjIsNode(pDriver)
+                || Abc_ObjGetPartId(pDriver) == cand.key.target_part)
                 continue;
-            if (cand.iFanin >= Abc_ObjFaninNum(pConsumer))
-                continue;
-            Abc_Obj_t *pDriver = Abc_ObjFanin(pConsumer, cand.iFanin);
-            if (Abc_ObjGetPartId(pDriver) == Abc_ObjGetPartId(pConsumer))
-                continue; // already fixed by an earlier replication this round
 
-            if (try_replicate(pNtk, pDriver, pConsumer, hs, state, cur_cutedges))
+            if (try_replicate(pNtk, pDriver, cand.key.target_part,
+                              hs, state, cur_cutedges))
                 round_fixed++;
         }
 

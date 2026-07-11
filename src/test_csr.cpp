@@ -310,6 +310,39 @@ bool TestHopStateDecreasePropagation()
     return ok;
 }
 
+bool TestReplicationCandidateAggregation()
+{
+    Abc_Ntk_t *pNtk = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    Abc_Obj_t *pA = Abc_NtkCreatePi(pNtk);
+    Abc_Obj_t *pB = Abc_NtkCreatePi(pNtk);
+    Abc_Obj_t *pD = Abc_NtkCreateNode(pNtk);
+    Abc_ObjAddFanin(pD, pA);
+    Abc_ObjAddFanin(pD, pB);
+    SetNodeFunction(pD);
+    Abc_ObjSetPartId(pA, 0);
+    Abc_ObjSetPartId(pB, 2);
+    Abc_ObjSetPartId(pD, 0);
+    for (int i = 0; i < 3; ++i)
+    {
+        Abc_Obj_t *pConsumer = Abc_NtkCreateNode(pNtk);
+        Abc_ObjAddFanin(pConsumer, pD);
+        SetNodeFunction(pConsumer);
+        Abc_ObjSetPartId(pConsumer, 1);
+        Abc_Obj_t *pPo = Abc_NtkCreatePo(pNtk);
+        Abc_ObjAddFanin(pPo, pConsumer);
+    }
+
+    const auto candidates = fox::csr::detail::CollectReplicationCandidates(pNtk);
+    bool ok = true;
+    ok &= ExpectEqual("one driver-target candidate",
+                      static_cast<int>(candidates.size()), 1);
+    ok &= ExpectEqual("saved outgoing edges", candidates[0].saved_edges, 3);
+    ok &= ExpectEqual("added boundary edges", candidates[0].added_edges, 2);
+    ok &= ExpectEqual("net gain", candidates[0].net_gain(), 1);
+    Abc_NtkDelete(pNtk);
+    return ok;
+}
+
 } // namespace
 
 int main()
@@ -324,7 +357,8 @@ int main()
         && TestDuplicatedTrajectoryUsesCapturedBalance()
         && TestCompoundRelocation()
         && TestHopStateIncreaseAndRollback()
-        && TestHopStateDecreasePropagation() ? 0 : 1;
+        && TestHopStateDecreasePropagation()
+        && TestReplicationCandidateAggregation() ? 0 : 1;
     Abc_Stop();
     return result;
 }
