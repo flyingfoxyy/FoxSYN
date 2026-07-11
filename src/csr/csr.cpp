@@ -329,8 +329,16 @@ bool detail::RunPhase1Resub(Abc_Ntk_t *pNtk,
             void *pOldData = pConsumer->pData;
             Abc_ObjRemoveFanins(pConsumer);
             Abc_ObjAddFanin(pConsumer, pDivisor);
-            auto *pMan = static_cast<Mem_Flex_t *>(pNtk->pManFunc);
-            pConsumer->pData = Abc_SopCreateBuf(pMan);
+            // Same representation split as the same_function check above:
+            // a single-fanin passthrough is a SOP buffer cover under
+            // ABC_FUNC_SOP, but under ABC_FUNC_AIG it is just "this node's
+            // function is its one Hop variable" -- Abc_SopCreateBuf here
+            // corrupted the SOP memory manager on if-mapped (AIG) networks.
+            if (Abc_NtkHasAig(pNtk))
+                pConsumer->pData = Hop_IthVar((Hop_Man_t *)pNtk->pManFunc, 0);
+            else
+                pConsumer->pData = Abc_SopCreateBuf(
+                    static_cast<Mem_Flex_t *>(pNtk->pManFunc));
             const detail::Metrics after = detail::ComputeMetrics(pNtk);
             detail::ResubPlan plan;
             plan.divisor_ids = {pDivisor->Id};
