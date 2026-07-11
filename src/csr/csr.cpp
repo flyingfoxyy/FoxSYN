@@ -170,6 +170,57 @@ detail::CollectReplicationCandidates(Abc_Ntk_t *pNtk)
     return candidates;
 }
 
+int detail::ComputeHypotheticalCutNetDelta(
+    Abc_Obj_t *pConsumer,
+    const std::vector<Abc_Obj_t *> &old_fanins,
+    const std::vector<Abc_Obj_t *> &new_fanins)
+{
+    if (!pConsumer || Abc_ObjGetPartId(pConsumer) == ABC_PART_ID_NONE)
+        return 0;
+
+    std::vector<Abc_Obj_t *> affected = old_fanins;
+    affected.insert(affected.end(), new_fanins.begin(), new_fanins.end());
+    affected.erase(std::remove(affected.begin(), affected.end(), nullptr),
+                   affected.end());
+    std::sort(affected.begin(), affected.end(),
+              [](Abc_Obj_t *lhs, Abc_Obj_t *rhs) { return lhs->Id < rhs->Id; });
+    affected.erase(std::unique(affected.begin(), affected.end()), affected.end());
+
+    const auto contains = [](const std::vector<Abc_Obj_t *> &fanins,
+                             Abc_Obj_t *pDriver) {
+        return std::find(fanins.begin(), fanins.end(), pDriver) != fanins.end();
+    };
+    const part_id consumer_part = Abc_ObjGetPartId(pConsumer);
+    int before_count = 0;
+    int after_count = 0;
+    for (Abc_Obj_t *pDriver : affected)
+    {
+        const part_id driver_part = Abc_ObjGetPartId(pDriver);
+        if (!is_part_stat_vertex(pDriver) || driver_part == ABC_PART_ID_NONE)
+            continue;
+
+        bool other_cross = false;
+        Abc_Obj_t *pFanout;
+        int i;
+        Abc_ObjForEachFanout(pDriver, pFanout, i)
+        {
+            if (pFanout == pConsumer || !Abc_ObjIsNode(pFanout))
+                continue;
+            const part_id fanout_part = Abc_ObjGetPartId(pFanout);
+            if (fanout_part != ABC_PART_ID_NONE && fanout_part != driver_part)
+            {
+                other_cross = true;
+                break;
+            }
+        }
+        before_count += other_cross
+            || (contains(old_fanins, pDriver) && driver_part != consumer_part);
+        after_count += other_cross
+            || (contains(new_fanins, pDriver) && driver_part != consumer_part);
+    }
+    return after_count - before_count;
+}
+
 // ---------------------------------------------------------------------
 // Candidate collection: every (consumer, iFanin) pair whose driver crosses
 // into a different partition, weighted by the driver's total number of

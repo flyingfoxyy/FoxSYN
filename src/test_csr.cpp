@@ -426,6 +426,25 @@ bool TestReplicationClusterTransaction()
     return ok;
 }
 
+bool TestDivisorMetadataAndCutNetDelta()
+{
+    fox::csr::detail::DivisorInfo a{3, 1, 4, -1, 0, 3};
+    fox::csr::detail::DivisorInfo b{4, 1, 3, 0, 1, 4};
+    std::vector infos{b, a};
+    std::sort(infos.begin(), infos.end(), fox::csr::detail::DivisorInfoLess{});
+    bool ok = true;
+    ok &= ExpectEqual("coverage first", infos[0].obj_id, 3);
+
+    StateTestNtk t = CreateStateTestNtk();
+    std::vector<Abc_Obj_t *> old_fanins{t.pPi0, t.pPi1};
+    std::vector<Abc_Obj_t *> new_fanins{t.pPi1};
+    const int delta = fox::csr::detail::ComputeHypotheticalCutNetDelta(
+        t.pNode, old_fanins, new_fanins);
+    ok &= ExpectEqual("last crossing fanout clears net", delta, -1);
+    Abc_NtkDelete(t.pNtk);
+    return ok;
+}
+
 } // namespace
 
 int main()
@@ -442,7 +461,8 @@ int main()
         && TestHopStateIncreaseAndRollback()
         && TestHopStateDecreasePropagation()
         && TestReplicationCandidateAggregation()
-        && TestReplicationClusterTransaction() ? 0 : 1;
+        && TestReplicationClusterTransaction()
+        && TestDivisorMetadataAndCutNetDelta() ? 0 : 1;
     Abc_Stop();
     return result;
 }

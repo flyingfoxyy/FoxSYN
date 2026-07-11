@@ -144,6 +144,30 @@ struct SearchBudget {
     bool TryCluster();
 };
 
+struct DivisorInfo {
+    int obj_id = -1;
+    part_id part = ABC_PART_ID_NONE;
+    int cex_coverage = 0;
+    int predicted_cutedge_delta = 0;
+    int predicted_cutnet_delta = 0;
+    int hop_arrival = 0;
+};
+
+struct DivisorInfoLess {
+    bool operator()(const DivisorInfo &a, const DivisorInfo &b) const
+    {
+        return std::tuple{-a.cex_coverage, a.predicted_cutedge_delta,
+                          a.predicted_cutnet_delta, a.hop_arrival, a.obj_id}
+             < std::tuple{-b.cex_coverage, b.predicted_cutedge_delta,
+                          b.predicted_cutnet_delta, b.hop_arrival, b.obj_id};
+    }
+};
+
+int ComputeHypotheticalCutNetDelta(
+    Abc_Obj_t *pConsumer,
+    const std::vector<Abc_Obj_t *> &old_fanins,
+    const std::vector<Abc_Obj_t *> &new_fanins);
+
 struct OptimizationState {
     Abc_Ntk_t *pNtk = nullptr;
     EntryLimits limits;
