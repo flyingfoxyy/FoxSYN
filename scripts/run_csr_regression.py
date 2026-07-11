@@ -96,10 +96,22 @@ def _to_int(value):
         return None
 
 
+def ceil_percentage_limit(count: int, percentage: int) -> int:
+    """Mirrors csr_state.cpp's ComputePercentageLimit(count, percentage, round_up=true):
+    node_limit and cutnet_limit are ceil(entry * pct / 100), not floor. Using a
+    floor-equivalent check here (entry*pct <= after*100) rejects legal results
+    whenever entry*pct isn't a clean multiple of 100 -- e.g. an odd entry cut-net
+    count times 150 always leaves a remainder of 50, so *every* odd-cutnet case
+    would be flagged as a violation despite passing the implementation's own
+    (already-tested) hard constraint.
+    """
+    return -(-(count * percentage) // 100)
+
+
 def compute_constraints(result: Result) -> str:
     """OK only if all four comparisons parsed and every hard constraint holds:
-    hop_after <= hop_before; nodes_after*100 <= nodes_before*102;
-    cutnet_after*100 <= cutnet_before*150; cut_after <= cut_before.
+    hop_after <= hop_before; nodes_after <= ceil(nodes_before*1.02);
+    cutnet_after <= ceil(cutnet_before*1.50); cut_after <= cut_before.
     """
     hop_before, hop_after = _to_int(result.hop_before), _to_int(result.hop_after)
     nodes_before, nodes_after = _to_int(result.nodes_before), _to_int(result.nodes_after)
@@ -113,8 +125,8 @@ def compute_constraints(result: Result) -> str:
 
     ok = (
         hop_after <= hop_before
-        and nodes_after * 100 <= nodes_before * 102
-        and cutnet_after * 100 <= cutnet_before * 150
+        and nodes_after <= ceil_percentage_limit(nodes_before, 102)
+        and cutnet_after <= ceil_percentage_limit(cutnet_before, 150)
         and cut_after <= cut_before
     )
     return "OK" if ok else "FAIL"
