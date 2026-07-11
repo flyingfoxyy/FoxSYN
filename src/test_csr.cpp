@@ -18,6 +18,14 @@ bool ExpectEqual(const char *label, int actual, int expected)
     return false;
 }
 
+bool ExpectLessEqual(const char *label, int actual, int limit)
+{
+    if (actual <= limit)
+        return true;
+    std::fprintf(stderr, "%s: expected <= %d, got %d\n", label, limit, actual);
+    return false;
+}
+
 void SetNodeFunction(Abc_Obj_t *pNode)
 {
     auto *pMan = static_cast<Mem_Flex_t *>(pNode->pNtk->pManFunc);
@@ -34,6 +42,41 @@ struct StateTestNtk {
     Abc_Obj_t *pNode = nullptr;
     Abc_Obj_t *pPo = nullptr;
 };
+
+struct CompoundMoveNtk {
+    Abc_Ntk_t *pNtk = nullptr;
+    Abc_Obj_t *pPi = nullptr;
+    Abc_Obj_t *pA = nullptr;
+    Abc_Obj_t *pB = nullptr;
+    Abc_Obj_t *pSink = nullptr;
+    Abc_Obj_t *pPo = nullptr;
+};
+
+CompoundMoveNtk CreateCompoundMoveNtk()
+{
+    CompoundMoveNtk t;
+    t.pNtk = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    t.pPi = Abc_NtkCreatePi(t.pNtk);
+    t.pA = Abc_NtkCreateNode(t.pNtk);
+    t.pB = Abc_NtkCreateNode(t.pNtk);
+    t.pSink = Abc_NtkCreateNode(t.pNtk);
+    t.pPo = Abc_NtkCreatePo(t.pNtk);
+    Abc_ObjAddFanin(t.pA, t.pPi);
+    Abc_ObjAddFanin(t.pB, t.pA);
+    Abc_ObjAddFanin(t.pSink, t.pB);
+    Abc_ObjAddFanin(t.pPo, t.pSink);
+    SetNodeFunction(t.pA);
+    SetNodeFunction(t.pB);
+    SetNodeFunction(t.pSink);
+    Abc_ObjSetPartId(t.pPi, 0);
+    Abc_ObjSetPartId(t.pA, 1);
+    Abc_ObjSetPartId(t.pB, 1);
+    Abc_ObjSetPartId(t.pSink, 0);
+    Abc_NtkSetPartStats(t.pNtk, 2, Abc_NtkComputeCutSize(t.pNtk),
+                        Abc_NtkComputeHopNum(t.pNtk));
+    t.pNtk->pPdb->set_balance_pct(99);
+    return t;
+}
 
 StateTestNtk CreateStateTestNtk()
 {
@@ -159,6 +202,27 @@ bool TestDuplicatedTrajectoryUsesCapturedBalance()
     return ok;
 }
 
+bool TestCompoundRelocation()
+{
+    CompoundMoveNtk t = CreateCompoundMoveNtk();
+    fox::csr::Config cfg;
+    cfg.balance_pct = 99;
+    const auto limits = fox::csr::detail::CaptureEntryLimits(t.pNtk, cfg);
+    fox::csr::detail::OptimizationState state(t.pNtk, limits, 0);
+    const int entry_hop = Abc_NtkComputeHopNum(t.pNtk);
+    const auto sequence = fox::csr::detail::FindBestRelocationSequence(
+        t.pNtk, state, fox::csr::detail::TrajectoryPolicy::GainFirst);
+
+    bool ok = true;
+    ok &= ExpectEqual("compound move length", static_cast<int>(sequence.steps.size()), 2);
+    ok &= ExpectEqual("compound delta", sequence.cutedge_delta, -2);
+    ok &= ExpectEqual("apply sequence", fox::csr::detail::ApplyRelocationSequence(
+        t.pNtk, state, sequence), 1);
+    ok &= ExpectLessEqual("hop preserved", Abc_NtkComputeHopNum(t.pNtk), entry_hop);
+    Abc_NtkDelete(t.pNtk);
+    return ok;
+}
+
 } // namespace
 
 int main()
@@ -170,7 +234,8 @@ int main()
         && TestSearchBudgetStopsAtExactLimit()
         && TestTrajectoryOrdering()
         && TestCutCandidateTotalOrder()
-        && TestDuplicatedTrajectoryUsesCapturedBalance() ? 0 : 1;
+        && TestDuplicatedTrajectoryUsesCapturedBalance()
+        && TestCompoundRelocation() ? 0 : 1;
     Abc_Stop();
     return result;
 }

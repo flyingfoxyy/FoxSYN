@@ -103,6 +103,22 @@ struct OptimizationState {
     bool Audit();
 };
 
+struct RelocationStep {
+    int node_id = -1;
+    part_id from = ABC_PART_ID_NONE;
+    part_id to = ABC_PART_ID_NONE;
+};
+
+struct RelocationSequence {
+    std::vector<RelocationStep> steps;
+    int cutedge_delta = 0;
+};
+
+RelocationSequence FindBestRelocationSequence(
+    Abc_Ntk_t *pNtk, OptimizationState &state, TrajectoryPolicy policy);
+bool ApplyRelocationSequence(Abc_Ntk_t *pNtk, OptimizationState &state,
+                             const RelocationSequence &sequence);
+
 Metrics ComputeMetrics(Abc_Ntk_t *pNtk);
 int ComputePercentageLimit(int count, int percentage, bool round_up);
 EntryLimits CaptureEntryLimits(Abc_Ntk_t *pNtk, const Config &cfg);

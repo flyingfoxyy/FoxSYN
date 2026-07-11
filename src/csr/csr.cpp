@@ -968,6 +968,266 @@ static part_id best_relocate_target(Abc_Obj_t *pNode, int &best_delta)
     return best;
 }
 
+namespace {
+
+constexpr int kRelocationSeedLimit = 64;
+constexpr int kRelocationBeamWidth = 8;
+constexpr int kRelocationMaxDepth = 3;
+
+struct RelocationCandidate {
+    detail::RelocationStep step;
+    int local_delta = 0;
+    int target_size = 0;
+};
+
+void RollbackRelocation(Abc_Ntk_t *pNtk,
+                        const std::vector<detail::RelocationStep> &steps)
+{
+    for (auto it = steps.rbegin(); it != steps.rend(); ++it)
+    {
+        Abc_Obj_t *pNode = Abc_NtkObj(pNtk, it->node_id);
+        if (pNode)
+            Abc_ObjSetPartId(pNode, it->from);
+    }
+}
+
+bool ApplyRelocationLog(Abc_Ntk_t *pNtk,
+                        const std::vector<detail::RelocationStep> &steps,
+                        std::vector<detail::RelocationStep> &applied)
+{
+    applied.clear();
+    for (const auto &step : steps)
+    {
+        Abc_Obj_t *pNode = Abc_NtkObj(pNtk, step.node_id);
+        if (!pNode || !Abc_ObjIsNode(pNode)
+            || Abc_ObjGetPartId(pNode) != step.from
+            || step.to == ABC_PART_ID_NONE || step.to == step.from)
+        {
+            RollbackRelocation(pNtk, applied);
+            applied.clear();
+            return false;
+        }
+        Abc_ObjSetPartId(pNode, step.to);
+        applied.push_back(step);
+    }
+    return true;
+}
+
+bool RelocationLimitsHold(Abc_Ntk_t *pNtk,
+                          const detail::OptimizationState &state,
+                          const detail::Metrics &metrics)
+{
+    if (metrics.hop > state.limits.hop_limit
+        || metrics.nodes > state.limits.node_limit
+        || metrics.cut_nets > state.limits.cutnet_limit
+        || state.growth.used() > state.limits.growth_budget)
+        return false;
+
+    std::vector<int> part_sizes;
+    fox::cpr::partition_sizes(pNtk, state.limits.num_parts, part_sizes);
+    const int max_allowed = fox::cpr::compute_balance_max_allowed(
+        part_sizes, state.limits.balance_pct);
+    return fox::cpr::compute_balance_overflow(part_sizes, max_allowed) == 0;
+}
+
+bool RelocationSequenceLess(const detail::RelocationSequence &lhs,
+                            const detail::RelocationSequence &rhs)
+{
+    if (lhs.cutedge_delta != rhs.cutedge_delta)
+        return lhs.cutedge_delta < rhs.cutedge_delta;
+    if (lhs.steps.size() != rhs.steps.size())
+        return lhs.steps.size() < rhs.steps.size();
+    for (size_t i = 0; i < lhs.steps.size(); ++i)
+        if (lhs.steps[i].node_id != rhs.steps[i].node_id)
+            return lhs.steps[i].node_id < rhs.steps[i].node_id;
+    for (size_t i = 0; i < lhs.steps.size(); ++i)
+        if (lhs.steps[i].to != rhs.steps[i].to)
+            return lhs.steps[i].to < rhs.steps[i].to;
+    return false;
+}
+
+bool SameRelocationSequence(const detail::RelocationSequence &lhs,
+                            const detail::RelocationSequence &rhs)
+{
+    if (lhs.steps.size() != rhs.steps.size())
+        return false;
+    for (size_t i = 0; i < lhs.steps.size(); ++i)
+        if (lhs.steps[i].node_id != rhs.steps[i].node_id
+            || lhs.steps[i].from != rhs.steps[i].from
+            || lhs.steps[i].to != rhs.steps[i].to)
+            return false;
+    return true;
+}
+
+void CollectRelocationCandidates(Abc_Ntk_t *pNtk,
+                                 const detail::OptimizationState &state,
+                                 detail::TrajectoryPolicy policy,
+                                 std::vector<RelocationCandidate> &candidates)
+{
+    std::vector<int> part_sizes;
+    fox::cpr::partition_sizes(pNtk, state.limits.num_parts, part_sizes);
+    candidates.clear();
+
+    Abc_Obj_t *pNode, *pNeighbor;
+    int i, k;
+    Abc_NtkForEachNode(pNtk, pNode, i)
+    {
+        const part_id from = Abc_ObjGetPartId(pNode);
+        if (from == ABC_PART_ID_NONE)
+            continue;
+
+        std::vector<part_id> targets;
+        Abc_ObjForEachFanin(pNode, pNeighbor, k)
+        {
+            const part_id target = Abc_ObjGetPartId(pNeighbor);
+            if (target != ABC_PART_ID_NONE && target != from)
+                targets.push_back(target);
+        }
+        Abc_ObjForEachFanout(pNode, pNeighbor, k)
+        {
+            if (!Abc_ObjIsNode(pNeighbor))
+                continue;
+            const part_id target = Abc_ObjGetPartId(pNeighbor);
+            if (target != ABC_PART_ID_NONE && target != from)
+                targets.push_back(target);
+        }
+        std::sort(targets.begin(), targets.end());
+        targets.erase(std::unique(targets.begin(), targets.end()), targets.end());
+
+        const int current_cross = node_incident_cross(pNode, from);
+        for (part_id target : targets)
+        {
+            const size_t target_index = static_cast<size_t>(target);
+            const int target_size = target_index < part_sizes.size()
+                ? part_sizes[target_index] : 0;
+            candidates.push_back({
+                {pNode->Id, from, target},
+                node_incident_cross(pNode, target) - current_cross,
+                target_size,
+            });
+        }
+    }
+
+    std::sort(candidates.begin(), candidates.end(), [policy](const auto &lhs,
+                                                              const auto &rhs) {
+        if (policy == detail::TrajectoryPolicy::BoundaryConcentration)
+            return std::tuple{lhs.local_delta, -lhs.target_size,
+                              lhs.step.node_id, lhs.step.to}
+                 < std::tuple{rhs.local_delta, -rhs.target_size,
+                              rhs.step.node_id, rhs.step.to};
+        if (policy == detail::TrajectoryPolicy::ScarcityFirst)
+            return std::tuple{lhs.target_size, lhs.local_delta,
+                              lhs.step.node_id, lhs.step.to}
+                 < std::tuple{rhs.target_size, rhs.local_delta,
+                              rhs.step.node_id, rhs.step.to};
+        return std::tuple{lhs.local_delta, lhs.step.node_id, lhs.step.to}
+             < std::tuple{rhs.local_delta, rhs.step.node_id, rhs.step.to};
+    });
+    if (candidates.size() > kRelocationSeedLimit)
+        candidates.resize(kRelocationSeedLimit);
+}
+
+} // namespace
+
+detail::RelocationSequence detail::FindBestRelocationSequence(
+    Abc_Ntk_t *pNtk, detail::OptimizationState &state,
+    detail::TrajectoryPolicy policy)
+{
+    detail::RelocationSequence best;
+    if (!pNtk || state.pNtk != pNtk)
+        return best;
+
+    const detail::Metrics baseline = detail::ComputeMetrics(pNtk);
+    if (!RelocationLimitsHold(pNtk, state, baseline))
+        return best;
+
+    std::vector<detail::RelocationSequence> beam(1);
+    for (int depth = 0; depth < kRelocationMaxDepth; ++depth)
+    {
+        std::vector<detail::RelocationSequence> next;
+        for (const auto &parent : beam)
+        {
+            std::vector<detail::RelocationStep> parent_log;
+            if (!ApplyRelocationLog(pNtk, parent.steps, parent_log))
+                continue;
+
+            std::vector<RelocationCandidate> candidates;
+            CollectRelocationCandidates(pNtk, state, policy, candidates);
+            for (const auto &candidate : candidates)
+            {
+                const bool repeated = std::any_of(
+                    parent.steps.begin(), parent.steps.end(),
+                    [&](const auto &step) {
+                        return step.node_id == candidate.step.node_id;
+                    });
+                if (repeated)
+                    continue;
+
+                Abc_Obj_t *pNode = Abc_NtkObj(pNtk, candidate.step.node_id);
+                if (!pNode || Abc_ObjGetPartId(pNode) != candidate.step.from)
+                    continue;
+                Abc_ObjSetPartId(pNode, candidate.step.to);
+                const detail::Metrics metrics = detail::ComputeMetrics(pNtk);
+                if (RelocationLimitsHold(pNtk, state, metrics))
+                {
+                    detail::RelocationSequence child = parent;
+                    child.steps.push_back(candidate.step);
+                    child.cutedge_delta = metrics.cut_edges - baseline.cut_edges;
+                    next.push_back(std::move(child));
+                }
+                Abc_ObjSetPartId(pNode, candidate.step.from);
+            }
+            RollbackRelocation(pNtk, parent_log);
+        }
+
+        std::sort(next.begin(), next.end(), RelocationSequenceLess);
+        next.erase(std::unique(next.begin(), next.end(), SameRelocationSequence),
+                   next.end());
+        if (next.size() > kRelocationBeamWidth)
+            next.resize(kRelocationBeamWidth);
+        if (next.empty())
+            break;
+
+        for (const auto &candidate : next)
+            if (candidate.cutedge_delta < 0
+                && (best.steps.empty() || RelocationSequenceLess(candidate, best)))
+                best = candidate;
+        beam = std::move(next);
+    }
+    return best;
+}
+
+bool detail::ApplyRelocationSequence(Abc_Ntk_t *pNtk,
+                                     detail::OptimizationState &state,
+                                     const detail::RelocationSequence &sequence)
+{
+    if (!pNtk || state.pNtk != pNtk || sequence.steps.empty())
+        return false;
+
+    const detail::Metrics before = detail::ComputeMetrics(pNtk);
+    std::vector<detail::RelocationStep> applied;
+    if (!ApplyRelocationLog(pNtk, sequence.steps, applied))
+        return false;
+
+    const detail::Metrics after = detail::ComputeMetrics(pNtk);
+    const int actual_delta = after.cut_edges - before.cut_edges;
+    if (actual_delta >= 0 || actual_delta != sequence.cutedge_delta
+        || !RelocationLimitsHold(pNtk, state, after))
+    {
+        RollbackRelocation(pNtk, applied);
+        state.AttachNetwork(pNtk);
+        return false;
+    }
+
+    state.AttachNetwork(pNtk);
+    if (state.Audit())
+        return true;
+
+    RollbackRelocation(pNtk, applied);
+    state.AttachNetwork(pNtk);
+    return false;
+}
+
 // Enumerate unordered adjacent cross-partition node pairs. Both endpoints are
 // internal NODEs (Phase 0 never relocates PI/CONST1) living in different
 // partitions, connected by at least one fanin/fanout edge. Each unordered pair
@@ -1052,7 +1312,9 @@ static void run_phase0_swap(Abc_Ntk_t *pNtk, const Config &cfg,
                 Abc_ObjSetPartId(pB, pb);
                 continue;
             }
-            if (Abc_NtkComputeHopNum(pNtk) > baseline_hop || !state.Audit())
+            if (Abc_NtkComputeHopNum(pNtk) > baseline_hop
+                || Abc_NtkComputeCutSize(pNtk) > state.limits.cutnet_limit
+                || !state.Audit())
             {
                 Abc_ObjSetPartId(pA, pa); // roll back both
                 Abc_ObjSetPartId(pB, pb);
@@ -1095,7 +1357,8 @@ static void run_phase0_swap(Abc_Ntk_t *pNtk, const Config &cfg,
 // ---------------------------------------------------------------------
 static void run_phase0_relocate(Abc_Ntk_t *pNtk, const Config &cfg,
                                 detail::OptimizationState &state,
-                                int &total_moves, int &total_swaps)
+                                int &total_moves, int &total_swaps,
+                                int &total_compound)
 {
     std::vector<int> sz = state.part_sizes;
     const int max_allowed = fox::cpr::compute_balance_max_allowed(sz, state.limits.balance_pct);
@@ -1155,7 +1418,8 @@ static void run_phase0_relocate(Abc_Ntk_t *pNtk, const Config &cfg,
             // Apply tentatively, then exact global hop check.
             Abc_ObjSetPartId(pNode, tgt);
             int new_hop = Abc_NtkComputeHopNum(pNtk);
-            if (new_hop > baseline_hop)
+            if (new_hop > baseline_hop
+                || Abc_NtkComputeCutSize(pNtk) > state.limits.cutnet_limit)
             {
                 Abc_ObjSetPartId(pNode, cur); // roll back
                 continue;
@@ -1199,6 +1463,19 @@ static void run_phase0_relocate(Abc_Ntk_t *pNtk, const Config &cfg,
     }
 
     run_phase0_swap(pNtk, cfg, state, total_swaps);
+
+    const auto policy = static_cast<detail::TrajectoryPolicy>(
+        std::min(state.trajectory_id, 2));
+    for (int round = 0; round < cfg.max_rounds; ++round)
+    {
+        const auto sequence = detail::FindBestRelocationSequence(pNtk, state, policy);
+        if (sequence.steps.empty()
+            || !detail::ApplyRelocationSequence(pNtk, state, sequence))
+            break;
+        total_compound++;
+    }
+    if (cfg.verbose)
+        printf("csr: phase0 compound=%d\n", total_compound);
 }
 
 static bool run_balance_repair(Abc_Ntk_t *&pNtk, const Config &cfg,
@@ -1243,9 +1520,10 @@ static bool optimize_trajectory(Abc_Ntk_t *&pNtk, const Config &cfg,
     if (cfg.verbose)
         printf("csr: trajectory %d initial cut-edges = %d\n", trajectory_id, initial_cutedges);
 
-    int total_moves = 0, total_swaps = 0;
+    int total_moves = 0, total_swaps = 0, total_compound = 0;
     if (cfg.do_relocate)
-        run_phase0_relocate(pNtk, cfg, state, total_moves, total_swaps);
+        run_phase0_relocate(pNtk, cfg, state, total_moves, total_swaps,
+                            total_compound);
     int after_phase0 = ComputeCutEdgeCount(pNtk);
 
     int total_attempts = 0, total_successes = 0;
@@ -1263,8 +1541,9 @@ static bool optimize_trajectory(Abc_Ntk_t *&pNtk, const Config &cfg,
 
     printf("csr: cut-edges %d -> %d (after phase0=%d, after phase1=%d, after phase2=%d)\n",
            initial_cutedges, final_cutedges, after_phase0, after_phase1, after_phase2);
-    printf("csr: phase0 %d moves / %d swaps; phase1 %d attempts / %d successes; phase2 %d replications\n",
-           total_moves, total_swaps, total_attempts, total_successes, total_replications);
+    printf("csr: phase0 %d moves / %d swaps / %d compound; phase1 %d attempts / %d successes; phase2 %d replications\n",
+           total_moves, total_swaps, total_compound, total_attempts,
+           total_successes, total_replications);
 
     return state.Audit();
 }
