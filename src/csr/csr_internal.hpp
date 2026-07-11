@@ -17,6 +17,27 @@ struct Metrics {
     int nodes = 0;
 };
 
+enum class TrajectoryPolicy {
+    GainFirst = 0,
+    BoundaryConcentration = 1,
+    ScarcityFirst = 2,
+};
+
+struct CutCandidate {
+    int node_id = -1;
+    int iFanin = -1;
+    int weight = 0;
+    int target_options = 0;
+};
+
+struct CutCandidateLess {
+    bool operator()(const CutCandidate &lhs, const CutCandidate &rhs) const
+    {
+        return std::tuple{-lhs.weight, lhs.node_id, lhs.iFanin}
+             < std::tuple{-rhs.weight, rhs.node_id, rhs.iFanin};
+    }
+};
+
 struct TrajectoryResult {
     Abc_Ntk_t *pNtk = nullptr;
     Metrics metrics;

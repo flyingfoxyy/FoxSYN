@@ -1,5 +1,7 @@
 #include <climits>
+#include <algorithm>
 #include <cstdio>
+#include <vector>
 
 #include "base/abc/abc.h"
 #include "base/abc/abcPdb.hpp"
@@ -128,6 +130,20 @@ bool TestTrajectoryOrdering()
     return ok;
 }
 
+bool TestCutCandidateTotalOrder()
+{
+    using fox::csr::detail::CutCandidate;
+    std::vector<CutCandidate> candidates{{9, 1, 5}, {3, 2, 5},
+                                         {3, 0, 5}};
+    std::sort(candidates.begin(), candidates.end(), fox::csr::detail::CutCandidateLess{});
+
+    bool ok = true;
+    ok &= ExpectEqual("first candidate node", candidates.front().node_id, 3);
+    ok &= ExpectEqual("first candidate fanin", candidates.front().iFanin, 0);
+    ok &= ExpectEqual("last candidate node", candidates.back().node_id, 9);
+    return ok;
+}
+
 bool TestDuplicatedTrajectoryUsesCapturedBalance()
 {
     StateTestNtk base = CreateStateTestNtk();
@@ -153,6 +169,7 @@ int main()
         && TestGrowthBudgetDoesNotRefund()
         && TestSearchBudgetStopsAtExactLimit()
         && TestTrajectoryOrdering()
+        && TestCutCandidateTotalOrder()
         && TestDuplicatedTrajectoryUsesCapturedBalance() ? 0 : 1;
     Abc_Stop();
     return result;
