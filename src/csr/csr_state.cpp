@@ -3,6 +3,8 @@
 #include "base/abc/abcPdb.hpp"
 
 #include <algorithm>
+#include <cstdint>
+#include <limits>
 
 namespace fox::csr::detail {
 
@@ -14,6 +16,17 @@ Metrics ComputeMetrics(Abc_Ntk_t *pNtk)
         Abc_NtkComputeHopNum(pNtk),
         Abc_NtkNodeNum(pNtk),
     };
+}
+
+int ComputePercentageLimit(int count, int percentage, bool round_up)
+{
+    if (count <= 0 || percentage <= 0)
+        return 0;
+    const int64_t scaled = static_cast<int64_t>(count) * percentage;
+    const int64_t limit = (scaled + (round_up ? 99 : 0)) / 100;
+    return limit > std::numeric_limits<int>::max()
+        ? std::numeric_limits<int>::max()
+        : static_cast<int>(limit);
 }
 
 EntryLimits CaptureEntryLimits(Abc_Ntk_t *pNtk, const Config &cfg)
@@ -33,15 +46,15 @@ EntryLimits CaptureEntryLimits(Abc_Ntk_t *pNtk, const Config &cfg)
     int balance_pct = cfg.balance_pct >= 0 ? cfg.balance_pct : pNtk->pPdb->balance_pct();
     if (balance_pct < 0)
         balance_pct = 2;
-    const int growth_budget = static_cast<int>(
-        static_cast<long long>(metrics.nodes) * cfg.replicate_growth_pct / 100);
+    const int growth_budget = ComputePercentageLimit(
+        metrics.nodes, cfg.replicate_growth_pct, false);
     return {
         num_parts,
         balance_pct,
         metrics.hop,
-        (metrics.nodes * 102 + 99) / 100,
+        ComputePercentageLimit(metrics.nodes, 102, true),
         growth_budget,
-        (metrics.cut_nets * 150 + 99) / 100,
+        ComputePercentageLimit(metrics.cut_nets, 150, true),
     };
 }
 

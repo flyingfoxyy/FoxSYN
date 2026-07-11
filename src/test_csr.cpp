@@ -1,3 +1,4 @@
+#include <climits>
 #include <cstdio>
 
 #include "base/abc/abc.h"
@@ -63,17 +64,33 @@ bool TestCaptureEntryLimitsBeforeDup()
     Abc_Ntk_t *pDup = Abc_NtkDup(t.pNtk);
 
     bool ok = true;
+    ok &= ExpectEqual("fixture nodes", Abc_NtkNodeNum(t.pNtk), 1);
+    ok &= ExpectEqual("fixture cut size", Abc_NtkComputeCutSize(t.pNtk), 1);
+    ok &= ExpectEqual("fixture hop number", Abc_NtkComputeHopNum(t.pNtk), 1);
     ok &= ExpectEqual("captured num parts", limits.num_parts, 2);
     ok &= ExpectEqual("captured balance", limits.balance_pct, 17);
+    ok &= ExpectEqual("captured hop limit", limits.hop_limit, 1);
+    ok &= ExpectEqual("captured node limit", limits.node_limit, 2);
+    ok &= ExpectEqual("captured growth budget", limits.growth_budget, 0);
+    ok &= ExpectEqual("captured cutnet limit", limits.cutnet_limit, 2);
     ok &= ExpectEqual("dup invalidates balance", pDup->pPdb->balance_pct(), -1);
 
     fox::csr::detail::RestorePdbMetadata(pDup, limits);
     ok &= ExpectEqual("restored balance", pDup->pPdb->balance_pct(), 17);
     ok &= ExpectEqual("restored num parts", pDup->pPdb->num_parts(), 2);
+    ok &= ExpectEqual("restored cut size", pDup->pPdb->cut_size(), 1);
+    ok &= ExpectEqual("restored hop number", pDup->pPdb->hop_num(), 1);
 
     Abc_NtkDelete(pDup);
     Abc_NtkDelete(t.pNtk);
     return ok;
+}
+
+bool TestPercentageLimitSaturates()
+{
+    return ExpectEqual("saturated percentage limit",
+                       fox::csr::detail::ComputePercentageLimit(INT_MAX, 150, true),
+                       INT_MAX);
 }
 
 } // namespace
@@ -81,7 +98,7 @@ bool TestCaptureEntryLimitsBeforeDup()
 int main()
 {
     Abc_Start();
-    const int result = TestCaptureEntryLimitsBeforeDup() ? 0 : 1;
+    const int result = TestCaptureEntryLimitsBeforeDup() && TestPercentageLimitSaturates() ? 0 : 1;
     Abc_Stop();
     return result;
 }

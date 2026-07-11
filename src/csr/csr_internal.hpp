@@ -27,6 +27,7 @@ struct EntryLimits {
 };
 
 Metrics ComputeMetrics(Abc_Ntk_t *pNtk);
+int ComputePercentageLimit(int count, int percentage, bool round_up);
 EntryLimits CaptureEntryLimits(Abc_Ntk_t *pNtk, const Config &cfg);
 void RestorePdbMetadata(Abc_Ntk_t *pNtk, const EntryLimits &limits);
 
