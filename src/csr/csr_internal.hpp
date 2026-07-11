@@ -78,7 +78,12 @@ struct TrajectoryResult {
     bool valid = false;
 };
 
+struct EntryLimits;
 bool BetterResult(const TrajectoryResult &lhs, const TrajectoryResult &rhs);
+using NetworkDeleteFn = void (*)(Abc_Ntk_t *);
+TrajectoryResult TakeBestTrajectory(std::vector<TrajectoryResult> &results,
+                                    const EntryLimits &limits,
+                                    NetworkDeleteFn delete_fn);
 
 struct EntryLimits {
     int num_parts = 0;

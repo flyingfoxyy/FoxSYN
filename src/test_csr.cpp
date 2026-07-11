@@ -10,6 +10,8 @@
 
 namespace {
 
+int g_deleted_count = 0;
+
 bool ExpectEqual(const char *label, int actual, int expected)
 {
     if (actual == expected)
@@ -524,6 +526,33 @@ bool TestResubPlanSelectionAndJointReplacement()
     return ok;
 }
 
+bool TestTrajectoryWinnerCleanup()
+{
+    StateTestNtk base = CreateStateTestNtk();
+    fox::csr::Config cfg;
+    const auto limits = fox::csr::detail::CaptureEntryLimits(base.pNtk, cfg);
+    auto counting_delete = +[](Abc_Ntk_t *pNtk) {
+        ++g_deleted_count;
+        Abc_NtkDelete(pNtk);
+    };
+    std::vector<fox::csr::detail::TrajectoryResult> results = {
+        {Abc_NtkDup(base.pNtk), {90, 12, 4, 100}, 0, true},
+        {Abc_NtkDup(base.pNtk), {90, 11, 4, 101}, 1, true},
+        {Abc_NtkDup(base.pNtk), {91, 1, 1, 1}, 2, true},
+    };
+    g_deleted_count = 0;
+    auto result = fox::csr::detail::TakeBestTrajectory(results, limits,
+                                                       counting_delete);
+    bool ok = true;
+    ok &= ExpectEqual("winner trajectory", result.trajectory_id, 1);
+    ok &= ExpectEqual("two loser networks freed", g_deleted_count, 2);
+    ok &= ExpectEqual("winner metadata balance",
+                      result.pNtk->pPdb->balance_pct(), 17);
+    Abc_NtkDelete(result.pNtk);
+    Abc_NtkDelete(base.pNtk);
+    return ok;
+}
+
 } // namespace
 
 int main()
@@ -542,7 +571,8 @@ int main()
         && TestReplicationCandidateAggregation()
         && TestReplicationClusterTransaction()
         && TestDivisorMetadataAndCutNetDelta()
-        && TestResubPlanSelectionAndJointReplacement() ? 0 : 1;
+        && TestResubPlanSelectionAndJointReplacement()
+        && TestTrajectoryWinnerCleanup() ? 0 : 1;
     Abc_Stop();
     return result;
 }

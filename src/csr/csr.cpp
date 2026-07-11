@@ -5,6 +5,7 @@
 #include "cpr/cpr.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <map>
@@ -2099,6 +2100,37 @@ static bool optimize_trajectory(Abc_Ntk_t *&pNtk, const Config &cfg,
     return state.Audit();
 }
 
+detail::TrajectoryResult detail::TakeBestTrajectory(
+    std::vector<detail::TrajectoryResult> &results,
+    const detail::EntryLimits &limits, detail::NetworkDeleteFn delete_fn)
+{
+    size_t winner = results.size();
+    for (size_t i = 0; i < results.size(); ++i)
+    {
+        if (!results[i].valid || !results[i].pNtk)
+            continue;
+        if (winner == results.size() || detail::BetterResult(results[i], results[winner]))
+            winner = i;
+    }
+
+    detail::TrajectoryResult selected;
+    for (size_t i = 0; i < results.size(); ++i)
+    {
+        if (i == winner)
+        {
+            selected = results[i];
+            detail::RestorePdbMetadata(selected.pNtk, limits);
+        }
+        else if (results[i].pNtk)
+        {
+            delete_fn(results[i].pNtk);
+        }
+        results[i].pNtk = nullptr;
+    }
+    results.clear();
+    return selected;
+}
+
 bool ApplyCsr(Abc_Frame_t *pAbc, const Config &cfg)
 {
     Abc_Ntk_t *pEntry = pAbc ? Abc_FrameReadNtk(pAbc) : nullptr;
@@ -2122,11 +2154,18 @@ bool ApplyCsr(Abc_Frame_t *pAbc, const Config &cfg)
     std::vector<detail::TrajectoryResult> results;
     for (int trajectory_id = 0; trajectory_id < cfg.num_trajectories; ++trajectory_id)
     {
+        const auto start = std::chrono::steady_clock::now();
         Abc_Ntk_t *pTrajectory = Abc_NtkDup(pEntry);
         if (!pTrajectory)
             continue;
         detail::OptimizationState state(pTrajectory, limits, trajectory_id);
-        if (optimize_trajectory(pTrajectory, cfg, state, trajectory_id))
+        const bool valid = optimize_trajectory(pTrajectory, cfg, state, trajectory_id);
+        const double seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - start).count();
+        printf("csr: trajectory %d cut-edge=%d cut-net=%d hop=%d nodes=%d sec=%.2f valid=%d\n",
+               trajectory_id, state.current.cut_edges, state.current.cut_nets,
+               state.current.hop, state.current.nodes, seconds, valid);
+        if (valid)
             results.push_back({pTrajectory, state.current, trajectory_id, true});
         else
             Abc_NtkDelete(pTrajectory);
@@ -2135,17 +2174,11 @@ bool ApplyCsr(Abc_Frame_t *pAbc, const Config &cfg)
     if (results.empty())
         return false;
 
-    size_t winner = 0;
-    for (size_t i = 1; i < results.size(); ++i)
-        if (detail::BetterResult(results[i], results[winner]))
-            winner = i;
-
-    Abc_Ntk_t *pWinner = results[winner].pNtk;
-    detail::RestorePdbMetadata(pWinner, limits);
-    for (size_t i = 0; i < results.size(); ++i)
-        if (i != winner)
-            Abc_NtkDelete(results[i].pNtk);
-    Abc_FrameReplaceCurrentNetwork(pAbc, pWinner);
+    auto selected = detail::TakeBestTrajectory(results, limits, Abc_NtkDelete);
+    if (!selected.pNtk)
+        return false;
+    printf("csr: selected trajectory %d\n", selected.trajectory_id);
+    Abc_FrameReplaceCurrentNetwork(pAbc, selected.pNtk);
     return true;
 }
 
