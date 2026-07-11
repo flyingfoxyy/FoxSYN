@@ -1,12 +1,92 @@
 #include "csr_internal.hpp"
 
 #include "base/abc/abcPdb.hpp"
+#include "cpr/cpr.hpp"
 
 #include <algorithm>
 #include <cstdint>
 #include <limits>
 
 namespace fox::csr::detail {
+
+bool GrowthTracker::TryConsume(int positive_net_growth)
+{
+    if (positive_net_growth <= 0)
+        return true;
+    if (static_cast<int64_t>(used_) + positive_net_growth > budget_)
+        return false;
+    used_ += positive_net_growth;
+    return true;
+}
+
+bool SearchBudget::TryBeamState()
+{
+    if (beam_states >= kMaxBeamStatesPerRound)
+        return false;
+    ++beam_states;
+    return true;
+}
+
+bool SearchBudget::TryDivisorSet()
+{
+    if (divisor_sets >= kMaxDivisorSetsPerNode)
+        return false;
+    ++divisor_sets;
+    return true;
+}
+
+bool SearchBudget::TrySatCall()
+{
+    if (sat_calls >= kMaxSatCallsPerNode)
+        return false;
+    ++sat_calls;
+    return true;
+}
+
+bool SearchBudget::TrySuccessfulPlan()
+{
+    if (successful_plans >= kMaxSuccessfulPlansPerNode)
+        return false;
+    ++successful_plans;
+    return true;
+}
+
+bool SearchBudget::TryCluster()
+{
+    if (clusters >= kMaxClustersPerDriverPart)
+        return false;
+    ++clusters;
+    return true;
+}
+
+OptimizationState::OptimizationState(Abc_Ntk_t *pNetwork,
+                                     const EntryLimits &entry_limits,
+                                     int tid)
+    : pNtk(pNetwork)
+    , limits(entry_limits)
+    , entry(ComputeMetrics(pNetwork))
+    , current(ComputeMetrics(pNetwork))
+    , growth(entry_limits.growth_budget)
+    , trajectory_id(tid)
+{
+    fox::cpr::partition_sizes(pNtk, limits.num_parts, part_sizes);
+}
+
+void OptimizationState::AttachNetwork(Abc_Ntk_t *pNetwork)
+{
+    pNtk = pNetwork;
+    current = ComputeMetrics(pNtk);
+    fox::cpr::partition_sizes(pNtk, limits.num_parts, part_sizes);
+}
+
+bool OptimizationState::Audit()
+{
+    current = ComputeMetrics(pNtk);
+    return current.hop <= limits.hop_limit
+        && current.nodes <= limits.node_limit
+        && current.cut_nets <= limits.cutnet_limit
+        && growth.used() <= limits.growth_budget;
+}
 
 Metrics ComputeMetrics(Abc_Ntk_t *pNtk)
 {

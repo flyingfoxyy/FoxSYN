@@ -93,12 +93,38 @@ bool TestPercentageLimitSaturates()
                        INT_MAX);
 }
 
+bool TestGrowthBudgetDoesNotRefund()
+{
+    fox::csr::detail::GrowthTracker growth(5);
+    bool ok = true;
+    ok &= ExpectEqual("initial growth", growth.used(), 0);
+    ok &= ExpectEqual("consume three", growth.TryConsume(3), 1);
+    growth.RecordDeletion(2);
+    ok &= ExpectEqual("deletion does not refund", growth.used(), 3);
+    ok &= ExpectEqual("reject over budget", growth.TryConsume(3), 0);
+    ok &= ExpectEqual("consume remainder", growth.TryConsume(2), 1);
+    return ok;
+}
+
+bool TestSearchBudgetStopsAtExactLimit()
+{
+    fox::csr::detail::SearchBudget budget;
+    bool ok = true;
+    for (int i = 0; i < 128; ++i)
+        ok &= ExpectEqual("sat call allowed", budget.TrySatCall(), 1);
+    ok &= ExpectEqual("sat call 129 rejected", budget.TrySatCall(), 0);
+    return ok;
+}
+
 } // namespace
 
 int main()
 {
     Abc_Start();
-    const int result = TestCaptureEntryLimitsBeforeDup() && TestPercentageLimitSaturates() ? 0 : 1;
+    const int result = TestCaptureEntryLimitsBeforeDup()
+        && TestPercentageLimitSaturates()
+        && TestGrowthBudgetDoesNotRefund()
+        && TestSearchBudgetStopsAtExactLimit() ? 0 : 1;
     Abc_Stop();
     return result;
 }
