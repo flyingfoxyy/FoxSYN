@@ -796,12 +796,6 @@ int Csr_Command(Abc_Frame_t *pAbc, int argc, char **argv)
             cfg.stall_limit = std::atoi(argv[++i]);
             if (cfg.stall_limit < 1) { printf("csr: invalid stall_limit %d\n", cfg.stall_limit); return 1; }
             break;
-        case 'T':
-            if (i + 1 >= argc) { printf("csr: -T requires a number\n"); return 1; }
-            cfg.num_trajectories = std::atoi(argv[++i]);
-            if (cfg.num_trajectories < 1 || cfg.num_trajectories > 3)
-            { printf("csr: -T must be 1-3\n"); return 1; }
-            break;
         case 'X':
             if (i + 1 >= argc) { printf("csr: -X requires a number\n"); return 1; }
             cfg.maxTempLut = std::atoi(argv[++i]);
@@ -844,11 +838,10 @@ int Csr_Command(Abc_Frame_t *pAbc, int argc, char **argv)
     return fox::csr::ApplyCsr(pAbc, cfg) ? 0 : 1;
 
 usage:
-    Abc_Print(-2, "usage: csr [-R num] [-S num] [-T num] [-X num] [-G num] [-B num] [-bLv]\n");
+    Abc_Print(-2, "usage: csr [-R num] [-S num] [-X num] [-G num] [-B num] [-bLv]\n");
     Abc_Print(-2, "\t           cut-edge reduction via resub-first + replication-fallback logic synthesis\n");
     Abc_Print(-2, "\t-R num  : max optimization rounds per phase [default = %d]\n", cfg.max_rounds);
     Abc_Print(-2, "\t-S num  : stall limit (rounds without improvement) per phase [default = %d]\n", cfg.stall_limit);
-    Abc_Print(-2, "\t-T num  : number of optimization trajectories (1-3) [default = %d]\n", cfg.num_trajectories);
     Abc_Print(-2, "\t-X num  : max temp LUT size for Shannon decomp (0=off, 7-12), Phase 1 only [default = %d]\n", cfg.maxTempLut);
     Abc_Print(-2, "\t-G num  : Phase 2 replication node growth cap, %% of original node count [default = %d]\n", cfg.replicate_growth_pct);
     Abc_Print(-2, "\t-B num  : balance percentage (1-99) [default = inherit from pdb]\n");

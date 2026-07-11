@@ -133,8 +133,8 @@ bool TestTrajectoryOrdering()
 bool TestCutCandidateTotalOrder()
 {
     using fox::csr::detail::CutCandidate;
-    std::vector<CutCandidate> candidates{{9, 1, 5}, {3, 2, 5},
-                                         {3, 0, 5}};
+    std::vector<CutCandidate> candidates{{9, 1, 5, 2}, {3, 2, 5, 1},
+                                         {3, 0, 5, 1}};
     std::sort(candidates.begin(), candidates.end(), fox::csr::detail::CutCandidateLess{});
 
     bool ok = true;

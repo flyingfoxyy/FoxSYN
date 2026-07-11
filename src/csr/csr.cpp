@@ -66,7 +66,13 @@ int ComputeCutEdgeCount(Abc_Ntk_t *pNtk)
 // not path-dependent), unlike cmfs's top-K critical-path scan.
 // ---------------------------------------------------------------------
 
-static void collect_cut_candidates(Abc_Ntk_t *pNtk, std::vector<detail::CutCandidate> &candidates)
+struct CutCandidate {
+    int node_id;
+    int iFanin;
+    int weight;
+};
+
+static void collect_cut_candidates(Abc_Ntk_t *pNtk, std::vector<CutCandidate> &candidates)
 {
     std::unordered_map<int, int> driver_cross_count;
 
@@ -101,7 +107,7 @@ static void collect_cut_candidates(Abc_Ntk_t *pNtk, std::vector<detail::CutCandi
             part_id fanin_part = Abc_ObjGetPartId(pFanin);
             if (fanin_part == ABC_PART_ID_NONE || fanin_part == obj_part)
                 continue;
-            detail::CutCandidate c;
+            CutCandidate c;
             c.node_id = pObj->Id;
             c.iFanin  = k;
             c.weight  = driver_cross_count[pFanin->Id];
@@ -109,7 +115,10 @@ static void collect_cut_candidates(Abc_Ntk_t *pNtk, std::vector<detail::CutCandi
         }
     }
 
-    std::sort(candidates.begin(), candidates.end(), detail::CutCandidateLess{});
+    std::sort(candidates.begin(), candidates.end(),
+              [](const CutCandidate &a, const CutCandidate &b) {
+                  return a.weight > b.weight;
+              });
 }
 
 // ---------------------------------------------------------------------
@@ -547,7 +556,7 @@ static void run_phase1_resub(Abc_Ntk_t *&pNtk, const Config &cfg,
             break;
         }
 
-        std::vector<detail::CutCandidate> candidates;
+        std::vector<CutCandidate> candidates;
         collect_cut_candidates(pNtk, candidates);
         if (candidates.empty())
         {
@@ -860,7 +869,7 @@ static void run_phase2_replicate(Abc_Ntk_t *pNtk, const Config &cfg,
             break;
         }
 
-        std::vector<detail::CutCandidate> candidates;
+        std::vector<CutCandidate> candidates;
         collect_cut_candidates(pNtk, candidates);
         if (candidates.empty())
             break;
