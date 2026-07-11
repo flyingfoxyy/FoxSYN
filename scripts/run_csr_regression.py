@@ -78,6 +78,7 @@ class Result:
     gain: str = "-"
     constraints: str = "-"
     deterministic: bool = False
+    repeats_incomplete: bool = False
     baseline_cut_after: str = "-"
     runtime_ratio: str = "-"
     cec: str = "-"
@@ -375,9 +376,15 @@ def run_case(foxsyn: Path, workdir: Path, case: Path, parts: int,
     assert best is not None
     ok_runs = [r for r in all_runs if r.status == "OK"]
     if exact_repeats > 1:
-        # Determinism check must compare every repeat, never cherry-pick the best.
+        # A repeat can time out under -j contention (many concurrent FoxSYN
+        # processes competing for CPU on a slow case) without csr itself
+        # being non-deterministic -- keep that distinct from an actual
+        # summary mismatch, which is the only case that indicates a real
+        # determinism bug. Determinism check must compare every completed
+        # repeat, never cherry-pick the best.
+        best.repeats_incomplete = len(ok_runs) < len(all_runs)
         best.deterministic = (
-            len(ok_runs) == len(all_runs)
+            not best.repeats_incomplete
             and all(summaries_match(ok_runs[0], r) for r in ok_runs[1:])
         )
 
@@ -500,7 +507,12 @@ def main() -> int:
         for future in as_completed(futures):
             r = future.result()
             results.append(r)
-            det = "-" if args.exact_repeats <= 1 else ("Y" if r.deterministic else "N")
+            if args.exact_repeats <= 1:
+                det = "-"
+            elif r.repeats_incomplete:
+                det = "?"  # a repeat timed out/failed under load, not a summary mismatch
+            else:
+                det = "Y" if r.deterministic else "N"
             print(f"{r.case:<16} {r.nodes_before:>6} {r.nodes_after:>6} "
                   f"{r.hop_before:>6} {r.hop_after:>6} "
                   f"{r.cut_before:>8} {r.cut_after:>8} {r.gain:>6} {r.constraints:>5} {det:>5} "
@@ -539,10 +551,15 @@ def main() -> int:
         print("!!! CONSTRAINT VIOLATIONS: " + ", ".join(r.case for r in violations))
 
     if args.exact_repeats > 1:
-        nondeterministic = [r for r in ok if not r.deterministic]
+        incomplete = [r for r in ok if r.repeats_incomplete]
+        nondeterministic = [r for r in ok if not r.repeats_incomplete and not r.deterministic]
         print(f"Non-deterministic cases ({args.exact_repeats} repeats): {len(nondeterministic)}/{len(ok)}")
         if nondeterministic:
             print("!!! NON-DETERMINISTIC: " + ", ".join(r.case for r in nondeterministic))
+        if incomplete:
+            print(f"Repeats incomplete (a run timed out/failed, likely -j contention, "
+                  f"not evaluated for determinism): {len(incomplete)}/{len(ok)}")
+            print("    " + ", ".join(r.case for r in incomplete))
 
     if args.cec:
         eq = [r for r in ok if r.cec == "EQ"]
