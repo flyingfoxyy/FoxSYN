@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <map>
 #include <unordered_map>
 #include <utility>
@@ -219,6 +220,129 @@ int detail::ComputeHypotheticalCutNetDelta(
             || (contains(new_fanins, pDriver) && driver_part != consumer_part);
     }
     return after_count - before_count;
+}
+
+std::optional<detail::ResubPlan> detail::SelectBestResubPlan(
+    const std::vector<detail::ResubPlan> &plans)
+{
+    if (plans.empty())
+        return std::nullopt;
+    return *std::min_element(plans.begin(), plans.end(),
+        [](const auto &lhs, const auto &rhs) {
+            return std::tuple{lhs.cutedge_delta, lhs.cutnet_delta,
+                              lhs.predicted_hop, lhs.new_fanin_count,
+                              lhs.divisor_ids}
+                 < std::tuple{rhs.cutedge_delta, rhs.cutnet_delta,
+                              rhs.predicted_hop, rhs.new_fanin_count,
+                              rhs.divisor_ids};
+        });
+}
+
+bool detail::ExternalDivisorPlanAllowed(int removed_crossings,
+                                        int added_crossings)
+{
+    return added_crossings < removed_crossings;
+}
+
+bool detail::ResubPlanAllowed(const detail::ResubPlan &plan,
+                              const detail::OptimizationState &state)
+{
+    return plan.cutedge_delta < 0
+        && state.current.cut_nets + plan.cutnet_delta <= state.limits.cutnet_limit
+        && plan.predicted_hop <= state.limits.hop_limit
+        && plan.positive_net_growth <= state.growth.remaining();
+}
+
+bool detail::RunPhase1Resub(Abc_Ntk_t *pNtk,
+                            detail::OptimizationState &state,
+                            const Config &, detail::Phase1Stats &stats)
+{
+    if (!pNtk || state.pNtk != pNtk)
+        return false;
+
+    Abc_Obj_t *pConsumer;
+    int i;
+    Abc_NtkForEachNode(pNtk, pConsumer, i)
+    {
+        const part_id consumer_part = Abc_ObjGetPartId(pConsumer);
+        if (consumer_part == ABC_PART_ID_NONE)
+            continue;
+        std::vector<Abc_Obj_t *> old_fanins;
+        int removed_crossings = 0;
+        Abc_Obj_t *pFanin;
+        int k;
+        Abc_ObjForEachFanin(pConsumer, pFanin, k)
+        {
+            old_fanins.push_back(pFanin);
+            const part_id fanin_part = Abc_ObjGetPartId(pFanin);
+            removed_crossings += fanin_part != ABC_PART_ID_NONE
+                && fanin_part != consumer_part;
+        }
+        if (removed_crossings < 2 || old_fanins.size() < 2)
+            continue;
+
+        Abc_Obj_t *pDivisor;
+        int j;
+        Abc_NtkForEachNode(pNtk, pDivisor, j)
+        {
+            if (pDivisor == pConsumer
+                || Abc_ObjFaninNum(pDivisor) != static_cast<int>(old_fanins.size())
+                || !pDivisor->pData || !pConsumer->pData)
+                continue;
+            std::vector<int> divisor_fanins;
+            Abc_ObjForEachFanin(pDivisor, pFanin, k)
+                divisor_fanins.push_back(pFanin->Id);
+            std::vector<int> consumer_fanins;
+            for (Abc_Obj_t *pOld : old_fanins)
+                consumer_fanins.push_back(pOld->Id);
+            std::sort(divisor_fanins.begin(), divisor_fanins.end());
+            std::sort(consumer_fanins.begin(), consumer_fanins.end());
+            if (divisor_fanins != consumer_fanins
+                || std::strcmp(static_cast<const char *>(pDivisor->pData),
+                               static_cast<const char *>(pConsumer->pData)) != 0)
+                continue;
+
+            const int added_crossings =
+                Abc_ObjGetPartId(pDivisor) != consumer_part;
+            if (!detail::ExternalDivisorPlanAllowed(removed_crossings,
+                                                    added_crossings))
+                continue;
+            stats.attempts++;
+            const detail::Metrics before = detail::ComputeMetrics(pNtk);
+            std::vector<Abc_Obj_t *> new_fanins{pDivisor};
+            const int cutnet_delta = detail::ComputeHypotheticalCutNetDelta(
+                pConsumer, old_fanins, new_fanins);
+            void *pOldData = pConsumer->pData;
+            Abc_ObjRemoveFanins(pConsumer);
+            Abc_ObjAddFanin(pConsumer, pDivisor);
+            auto *pMan = static_cast<Mem_Flex_t *>(pNtk->pManFunc);
+            pConsumer->pData = Abc_SopCreateBuf(pMan);
+            const detail::Metrics after = detail::ComputeMetrics(pNtk);
+            detail::ResubPlan plan;
+            plan.divisor_ids = {pDivisor->Id};
+            plan.cutedge_delta = after.cut_edges - before.cut_edges;
+            plan.cutnet_delta = cutnet_delta;
+            plan.predicted_hop = after.hop;
+            plan.new_fanin_count = 1;
+            if (detail::ResubPlanAllowed(plan, state))
+            {
+                state.AttachNetwork(pNtk);
+                if (state.Audit())
+                {
+                    stats.successes++;
+                    stats.joint_replacements++;
+                    return true;
+                }
+            }
+
+            Abc_ObjRemoveFanins(pConsumer);
+            for (Abc_Obj_t *pOld : old_fanins)
+                Abc_ObjAddFanin(pConsumer, pOld);
+            pConsumer->pData = pOldData;
+            state.AttachNetwork(pNtk);
+        }
+    }
+    return false;
 }
 
 // ---------------------------------------------------------------------
@@ -1946,6 +2070,10 @@ static bool optimize_trajectory(Abc_Ntk_t *&pNtk, const Config &cfg,
     int after_phase0 = ComputeCutEdgeCount(pNtk);
 
     int total_attempts = 0, total_successes = 0;
+    detail::Phase1Stats plan_stats;
+    detail::RunPhase1Resub(pNtk, state, cfg, plan_stats);
+    total_attempts += plan_stats.attempts;
+    total_successes += plan_stats.successes;
     run_phase1_resub(pNtk, cfg, state, total_attempts, total_successes);
     int after_phase1 = ComputeCutEdgeCount(pNtk);
 
@@ -1963,6 +2091,10 @@ static bool optimize_trajectory(Abc_Ntk_t *&pNtk, const Config &cfg,
     printf("csr: phase0 %d moves / %d swaps / %d compound; phase1 %d attempts / %d successes; phase2 %d replications\n",
            total_moves, total_swaps, total_compound, total_attempts,
            total_successes, total_replications);
+    if (cfg.verbose)
+        printf("csr: phase1 plans single-remove=%d joint-remove=%d joint-replace=%d multi-divisor=%d\n",
+               plan_stats.single_removals, plan_stats.joint_removals,
+               plan_stats.joint_replacements, plan_stats.multi_divisor);
 
     return state.Audit();
 }

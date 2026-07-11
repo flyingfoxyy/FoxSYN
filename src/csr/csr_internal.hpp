@@ -168,6 +168,34 @@ int ComputeHypotheticalCutNetDelta(
     const std::vector<Abc_Obj_t *> &old_fanins,
     const std::vector<Abc_Obj_t *> &new_fanins);
 
+struct ResubPlan {
+    std::vector<int> removed_fanin_indices;
+    std::vector<int> divisor_ids;
+    Hop_Obj_t *pFunc = nullptr;
+    int cutedge_delta = 0;
+    int cutnet_delta = 0;
+    int predicted_hop = 0;
+    int new_fanin_count = 0;
+    int positive_net_growth = 0;
+};
+
+std::optional<ResubPlan> SelectBestResubPlan(
+    const std::vector<ResubPlan> &plans);
+bool ExternalDivisorPlanAllowed(int removed_crossings, int added_crossings);
+bool ResubPlanAllowed(const ResubPlan &plan, const OptimizationState &state);
+
+struct Phase1Stats {
+    int attempts = 0;
+    int successes = 0;
+    int single_removals = 0;
+    int joint_removals = 0;
+    int joint_replacements = 0;
+    int multi_divisor = 0;
+};
+
+bool RunPhase1Resub(Abc_Ntk_t *pNtk, OptimizationState &state,
+                    const Config &cfg, Phase1Stats &stats);
+
 struct OptimizationState {
     Abc_Ntk_t *pNtk = nullptr;
     EntryLimits limits;

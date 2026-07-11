@@ -68,6 +68,40 @@ struct ReplicationClusterNtk {
     Abc_Obj_t *pD = nullptr;
 };
 
+struct JointResubNtk {
+    Abc_Ntk_t *pNtk = nullptr;
+    Abc_Obj_t *pDivisor = nullptr;
+    Abc_Obj_t *pConsumer = nullptr;
+};
+
+JointResubNtk CreateJointResubNtk()
+{
+    JointResubNtk t;
+    t.pNtk = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    Abc_Obj_t *pX = Abc_NtkCreatePi(t.pNtk);
+    Abc_Obj_t *pY = Abc_NtkCreatePi(t.pNtk);
+    t.pDivisor = Abc_NtkCreateNode(t.pNtk);
+    t.pConsumer = Abc_NtkCreateNode(t.pNtk);
+    Abc_Obj_t *pPo = Abc_NtkCreatePo(t.pNtk);
+    Abc_Obj_t *pDivisorPo = Abc_NtkCreatePo(t.pNtk);
+    Abc_ObjAddFanin(t.pDivisor, pX);
+    Abc_ObjAddFanin(t.pDivisor, pY);
+    Abc_ObjAddFanin(t.pConsumer, pX);
+    Abc_ObjAddFanin(t.pConsumer, pY);
+    Abc_ObjAddFanin(pPo, t.pConsumer);
+    Abc_ObjAddFanin(pDivisorPo, t.pDivisor);
+    SetNodeFunction(t.pDivisor);
+    SetNodeFunction(t.pConsumer);
+    Abc_ObjSetPartId(pX, 0);
+    Abc_ObjSetPartId(pY, 0);
+    Abc_ObjSetPartId(t.pDivisor, 0);
+    Abc_ObjSetPartId(t.pConsumer, 2);
+    Abc_NtkSetPartStats(t.pNtk, 3, Abc_NtkComputeCutSize(t.pNtk),
+                        Abc_NtkComputeHopNum(t.pNtk));
+    t.pNtk->pPdb->set_balance_pct(99);
+    return t;
+}
+
 ReplicationClusterNtk CreateReplicationClusterNtk()
 {
     ReplicationClusterNtk t;
@@ -445,6 +479,51 @@ bool TestDivisorMetadataAndCutNetDelta()
     return ok;
 }
 
+bool TestResubPlanSelectionAndJointReplacement()
+{
+    fox::csr::detail::ResubPlan first;
+    first.cutedge_delta = -1;
+    first.cutnet_delta = 0;
+    first.predicted_hop = 3;
+    first.new_fanin_count = 2;
+    first.divisor_ids = {8};
+    fox::csr::detail::ResubPlan second;
+    second.cutedge_delta = -2;
+    second.cutnet_delta = 1;
+    second.predicted_hop = 3;
+    second.new_fanin_count = 1;
+    second.divisor_ids = {9};
+    std::vector plans{first, second};
+    auto best = fox::csr::detail::SelectBestResubPlan(plans);
+    bool ok = true;
+    ok &= ExpectEqual("largest cutedge gain wins", best->divisor_ids[0], 9);
+    ok &= ExpectEqual("external divisor reduces two crossings",
+                      fox::csr::detail::ExternalDivisorPlanAllowed(2, 1), 1);
+    ok &= ExpectEqual("one for one external replacement rejected",
+                      fox::csr::detail::ExternalDivisorPlanAllowed(1, 1), 0);
+
+    auto t = CreateJointResubNtk();
+    fox::csr::Config cfg;
+    cfg.do_relocate = false;
+    cfg.replicate_growth_pct = 0;
+    auto limits = fox::csr::detail::CaptureEntryLimits(t.pNtk, cfg);
+    limits.balance_pct = 250;
+    fox::csr::detail::OptimizationState state(t.pNtk, limits, 0);
+    fox::csr::detail::Phase1Stats stats;
+    ok &= ExpectEqual("joint phase1 succeeds",
+                      fox::csr::detail::RunPhase1Resub(t.pNtk, state, cfg, stats), 1);
+    ok &= ExpectEqual("joint replacement counted", stats.joint_replacements, 1);
+    ok &= ExpectEqual("consumer now has one fanin",
+                      Abc_ObjFaninNum(t.pConsumer), 1);
+    ok &= ExpectEqual("external divisor installed",
+                      Abc_ObjFanin(t.pConsumer, 0)->Id, t.pDivisor->Id);
+    ok &= ExpectEqual("joint resub cutedge",
+                      fox::csr::ComputeCutEdgeCount(t.pNtk), 1);
+    ok &= ExpectEqual("joint resub hop", Abc_NtkComputeHopNum(t.pNtk), 1);
+    Abc_NtkDelete(t.pNtk);
+    return ok;
+}
+
 } // namespace
 
 int main()
@@ -462,7 +541,8 @@ int main()
         && TestHopStateDecreasePropagation()
         && TestReplicationCandidateAggregation()
         && TestReplicationClusterTransaction()
-        && TestDivisorMetadataAndCutNetDelta() ? 0 : 1;
+        && TestDivisorMetadataAndCutNetDelta()
+        && TestResubPlanSelectionAndJointReplacement() ? 0 : 1;
     Abc_Stop();
     return result;
 }
