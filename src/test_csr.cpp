@@ -63,6 +63,40 @@ struct HopPropagationNtk {
     Abc_Obj_t *pPoSink = nullptr;
 };
 
+struct ReplicationClusterNtk {
+    Abc_Ntk_t *pNtk = nullptr;
+    Abc_Obj_t *pD = nullptr;
+};
+
+ReplicationClusterNtk CreateReplicationClusterNtk()
+{
+    ReplicationClusterNtk t;
+    t.pNtk = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    Abc_Obj_t *pZ = Abc_NtkCreatePi(t.pNtk);
+    Abc_Obj_t *pX = Abc_NtkCreatePi(t.pNtk);
+    Abc_Obj_t *pF = Abc_NtkCreateNode(t.pNtk);
+    t.pD = Abc_NtkCreateNode(t.pNtk);
+    Abc_ObjAddFanin(pF, pZ);
+    Abc_ObjAddFanin(t.pD, pF);
+    Abc_ObjAddFanin(t.pD, pX);
+    SetNodeFunction(pF);
+    SetNodeFunction(t.pD);
+    Abc_ObjSetPartId(pZ, 1);
+    Abc_ObjSetPartId(pX, 2);
+    Abc_ObjSetPartId(pF, 0);
+    Abc_ObjSetPartId(t.pD, 0);
+    for (int i = 0; i < 2; ++i)
+    {
+        Abc_Obj_t *pConsumer = Abc_NtkCreateNode(t.pNtk);
+        Abc_ObjAddFanin(pConsumer, t.pD);
+        SetNodeFunction(pConsumer);
+        Abc_ObjSetPartId(pConsumer, 1);
+        Abc_Obj_t *pPo = Abc_NtkCreatePo(t.pNtk);
+        Abc_ObjAddFanin(pPo, pConsumer);
+    }
+    return t;
+}
+
 HopPropagationNtk CreateHopPropagationNtk()
 {
     HopPropagationNtk t;
@@ -343,6 +377,55 @@ bool TestReplicationCandidateAggregation()
     return ok;
 }
 
+bool TestReplicationClusterTransaction()
+{
+    auto test = CreateReplicationClusterNtk();
+    fox::csr::Config cfg;
+    cfg.balance_pct = 99;
+    auto limits = fox::csr::detail::CaptureEntryLimits(test.pNtk, cfg);
+    limits.balance_pct = 150;
+    limits.growth_budget = 2;
+    limits.node_limit = Abc_NtkNodeNum(test.pNtk) + 2;
+    fox::csr::detail::OptimizationState state(test.pNtk, limits, 0);
+    fox::csr::detail::HopState hop;
+    hop.Initialize(test.pNtk);
+    auto candidate = fox::csr::detail::CollectReplicationCandidates(test.pNtk).front();
+    auto cluster = fox::csr::detail::FindBestReplicationCluster(
+        test.pNtk, state, candidate, hop);
+    bool ok = true;
+    ok &= ExpectEqual("cluster size", static_cast<int>(cluster.node_ids.size()), 2);
+    ok &= ExpectEqual("cluster positive gain", cluster.cutedge_delta < 0, 1);
+    ok &= ExpectEqual("apply cluster", fox::csr::detail::TryReplicationCluster(
+        test.pNtk, state, hop, cluster), 1);
+    ok &= ExpectEqual("hop exact", hop.VerifyAgainstFull(test.pNtk), 1);
+
+    auto blocked = CreateReplicationClusterNtk();
+    auto blocked_limits = fox::csr::detail::CaptureEntryLimits(blocked.pNtk, cfg);
+    blocked_limits.balance_pct = 150;
+    blocked_limits.growth_budget = 2;
+    blocked_limits.node_limit = Abc_NtkNodeNum(blocked.pNtk) + 2;
+    fox::csr::detail::OptimizationState blocked_state(blocked.pNtk,
+                                                      blocked_limits, 0);
+    fox::csr::detail::HopState blocked_hop;
+    blocked_hop.Initialize(blocked.pNtk);
+    auto blocked_candidate =
+        fox::csr::detail::CollectReplicationCandidates(blocked.pNtk).front();
+    auto blocked_cluster = fox::csr::detail::FindBestReplicationCluster(
+        blocked.pNtk, blocked_state, blocked_candidate, blocked_hop);
+    ok &= ExpectEqual("consume all shared growth",
+                      blocked_state.growth.TryConsume(blocked_limits.growth_budget), 1);
+    const int nodes_before = Abc_NtkNodeNum(blocked.pNtk);
+    ok &= ExpectEqual("phase2 rejected after phase1 budget exhaustion",
+                      fox::csr::detail::TryReplicationCluster(
+                          blocked.pNtk, blocked_state, blocked_hop,
+                          blocked_cluster), 0);
+    ok &= ExpectEqual("rejected cluster leaves node count",
+                      Abc_NtkNodeNum(blocked.pNtk), nodes_before);
+    Abc_NtkDelete(test.pNtk);
+    Abc_NtkDelete(blocked.pNtk);
+    return ok;
+}
+
 } // namespace
 
 int main()
@@ -358,7 +441,8 @@ int main()
         && TestCompoundRelocation()
         && TestHopStateIncreaseAndRollback()
         && TestHopStateDecreasePropagation()
-        && TestReplicationCandidateAggregation() ? 0 : 1;
+        && TestReplicationCandidateAggregation()
+        && TestReplicationClusterTransaction() ? 0 : 1;
     Abc_Stop();
     return result;
 }

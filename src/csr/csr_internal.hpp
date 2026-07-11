@@ -54,6 +54,23 @@ struct ReplicationCandidate {
 
 std::vector<ReplicationCandidate> CollectReplicationCandidates(Abc_Ntk_t *pNtk);
 
+struct ReplicationCluster {
+    ReplicationKey key;
+    std::vector<int> node_ids;
+    int cutedge_delta = 0;
+    int cutnet_delta = 0;
+    int positive_net_growth = 0;
+};
+
+struct OptimizationState;
+class HopState;
+
+ReplicationCluster FindBestReplicationCluster(
+    Abc_Ntk_t *pNtk, OptimizationState &state,
+    const ReplicationCandidate &candidate, HopState &hop);
+bool TryReplicationCluster(Abc_Ntk_t *pNtk, OptimizationState &state,
+                           HopState &hop, const ReplicationCluster &cluster);
+
 struct TrajectoryResult {
     Abc_Ntk_t *pNtk = nullptr;
     Metrics metrics;

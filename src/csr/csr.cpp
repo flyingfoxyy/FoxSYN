@@ -791,6 +791,263 @@ static Abc_Obj_t *duplicate_node_csr(Abc_Ntk_t *pNtk, Abc_Obj_t *pObj)
     return pDup;
 }
 
+namespace {
+
+constexpr int kMaxClusterDepth = 2;
+constexpr int kMaxClusterNodes = 3;
+
+struct ClusterPatch {
+    Abc_Obj_t *pConsumer = nullptr;
+    Abc_Obj_t *pOldDriver = nullptr;
+    Abc_Obj_t *pNewDriver = nullptr;
+};
+
+struct ClusterTransaction {
+    std::vector<ClusterPatch> patches;
+    std::vector<Abc_Obj_t *> duplicates;
+};
+
+void RollbackCluster(Abc_Ntk_t *pNtk, ClusterTransaction &txn)
+{
+    for (auto it = txn.patches.rbegin(); it != txn.patches.rend(); ++it)
+        Abc_ObjPatchFanin(it->pConsumer, it->pNewDriver, it->pOldDriver);
+    for (auto it = txn.duplicates.rbegin(); it != txn.duplicates.rend(); ++it)
+        Abc_NtkDeleteObj(*it);
+    txn.patches.clear();
+    txn.duplicates.clear();
+}
+
+std::vector<int> OrderClusterNodes(const detail::ReplicationCluster &cluster,
+                                   const detail::HopState &hop)
+{
+    std::vector<int> ordered = cluster.node_ids;
+    std::sort(ordered.begin(), ordered.end(), [&](int lhs, int rhs) {
+        const int lhs_rank = hop.topo_rank(lhs);
+        const int rhs_rank = hop.topo_rank(rhs);
+        return std::tuple{lhs_rank, lhs} < std::tuple{rhs_rank, rhs};
+    });
+    return ordered;
+}
+
+bool BuildCluster(Abc_Ntk_t *pNtk, const detail::ReplicationCluster &cluster,
+                  const detail::HopState &hop, ClusterTransaction &txn)
+{
+    txn = {};
+    if (cluster.node_ids.empty())
+        return false;
+
+    const std::vector<int> ordered = OrderClusterNodes(cluster, hop);
+    std::map<int, Abc_Obj_t *> duplicates;
+    for (int node_id : ordered)
+    {
+        Abc_Obj_t *pOriginal = Abc_NtkObj(pNtk, node_id);
+        if (!pOriginal || !Abc_ObjIsNode(pOriginal))
+        {
+            RollbackCluster(pNtk, txn);
+            return false;
+        }
+        Abc_Obj_t *pDup = duplicate_node_csr(pNtk, pOriginal);
+        if (!pDup)
+        {
+            RollbackCluster(pNtk, txn);
+            return false;
+        }
+        Abc_ObjSetPartId(pDup, cluster.key.target_part);
+        duplicates[node_id] = pDup;
+        txn.duplicates.push_back(pDup);
+
+        Abc_Obj_t *pFanin;
+        int i;
+        Abc_ObjForEachFanin(pOriginal, pFanin, i)
+        {
+            auto it = duplicates.find(pFanin->Id);
+            if (it != duplicates.end())
+                Abc_ObjPatchFanin(pDup, pFanin, it->second);
+        }
+    }
+
+    auto root_it = duplicates.find(cluster.key.driver_id);
+    Abc_Obj_t *pRoot = Abc_NtkObj(pNtk, cluster.key.driver_id);
+    if (!pRoot || root_it == duplicates.end())
+    {
+        RollbackCluster(pNtk, txn);
+        return false;
+    }
+
+    std::vector<Abc_Obj_t *> target_fanouts;
+    Abc_Obj_t *pFanout;
+    int i;
+    Abc_ObjForEachFanout(pRoot, pFanout, i)
+        if (Abc_ObjIsNode(pFanout)
+            && Abc_ObjGetPartId(pFanout) == cluster.key.target_part)
+            target_fanouts.push_back(pFanout);
+    if (target_fanouts.empty())
+    {
+        RollbackCluster(pNtk, txn);
+        return false;
+    }
+    for (Abc_Obj_t *pConsumer : target_fanouts)
+    {
+        Abc_ObjPatchFanin(pConsumer, pRoot, root_it->second);
+        txn.patches.push_back({pConsumer, pRoot, root_it->second});
+    }
+    return true;
+}
+
+bool ClusterLimitsHold(Abc_Ntk_t *pNtk,
+                       const detail::OptimizationState &state,
+                       const detail::Metrics &metrics)
+{
+    if (metrics.hop > state.limits.hop_limit
+        || metrics.nodes > state.limits.node_limit
+        || metrics.cut_nets > state.limits.cutnet_limit)
+        return false;
+    std::vector<int> part_sizes;
+    fox::cpr::partition_sizes(pNtk, state.limits.num_parts, part_sizes);
+    const int max_allowed = fox::cpr::compute_balance_max_allowed(
+        part_sizes, state.limits.balance_pct);
+    return fox::cpr::compute_balance_overflow(part_sizes, max_allowed) == 0;
+}
+
+bool EvaluateCluster(Abc_Ntk_t *pNtk, detail::OptimizationState &state,
+                     detail::HopState &hop, detail::ReplicationCluster &cluster)
+{
+    if (cluster.node_ids.empty()
+        || static_cast<int>(cluster.node_ids.size()) > kMaxClusterNodes
+        || state.growth.remaining() < static_cast<int>(cluster.node_ids.size()))
+        return false;
+    const detail::Metrics before = detail::ComputeMetrics(pNtk);
+    ClusterTransaction txn;
+    if (!BuildCluster(pNtk, cluster, hop, txn))
+    {
+        hop.Initialize(pNtk);
+        return false;
+    }
+
+    const detail::Metrics after = detail::ComputeMetrics(pNtk);
+    detail::HopState tentative_hop = hop;
+    const bool hop_ok = tentative_hop.Initialize(pNtk)
+        && after.hop <= state.limits.hop_limit;
+    cluster.cutedge_delta = after.cut_edges - before.cut_edges;
+    cluster.cutnet_delta = after.cut_nets - before.cut_nets;
+    cluster.positive_net_growth = static_cast<int>(cluster.node_ids.size());
+    const bool legal = cluster.cutedge_delta < 0 && hop_ok
+        && ClusterLimitsHold(pNtk, state, after);
+    RollbackCluster(pNtk, txn);
+    hop.Initialize(pNtk);
+    return legal;
+}
+
+bool ClusterLess(const detail::ReplicationCluster &lhs,
+                 const detail::ReplicationCluster &rhs)
+{
+    return std::tuple{lhs.cutedge_delta, lhs.node_ids.size(), lhs.cutnet_delta,
+                      lhs.node_ids}
+         < std::tuple{rhs.cutedge_delta, rhs.node_ids.size(), rhs.cutnet_delta,
+                      rhs.node_ids};
+}
+
+} // namespace
+
+detail::ReplicationCluster detail::FindBestReplicationCluster(
+    Abc_Ntk_t *pNtk, detail::OptimizationState &state,
+    const detail::ReplicationCandidate &candidate, detail::HopState &hop)
+{
+    detail::ReplicationCluster best;
+    if (!pNtk || state.pNtk != pNtk)
+        return best;
+
+    std::vector<std::vector<int>> frontier{{candidate.key.driver_id}};
+    int evaluated = 0;
+    for (int depth = 0; depth <= kMaxClusterDepth && !frontier.empty(); ++depth)
+    {
+        std::vector<std::vector<int>> next;
+        for (auto node_ids : frontier)
+        {
+            std::sort(node_ids.begin(), node_ids.end());
+            node_ids.erase(std::unique(node_ids.begin(), node_ids.end()),
+                           node_ids.end());
+            detail::ReplicationCluster cluster{candidate.key, node_ids};
+            if (evaluated++ < detail::SearchBudget::kMaxClustersPerDriverPart
+                && EvaluateCluster(pNtk, state, hop, cluster)
+                && (best.node_ids.empty() || ClusterLess(cluster, best)))
+                best = cluster;
+            if (depth == kMaxClusterDepth
+                || static_cast<int>(node_ids.size()) >= kMaxClusterNodes)
+                continue;
+
+            for (int node_id : node_ids)
+            {
+                Abc_Obj_t *pNode = Abc_NtkObj(pNtk, node_id);
+                if (!pNode)
+                    continue;
+                Abc_Obj_t *pFanin;
+                int i;
+                Abc_ObjForEachFanin(pNode, pFanin, i)
+                {
+                    if (!Abc_ObjIsNode(pFanin)
+                        || Abc_ObjGetPartId(pFanin) == candidate.key.target_part
+                        || std::find(node_ids.begin(), node_ids.end(), pFanin->Id)
+                            != node_ids.end())
+                        continue;
+                    auto expanded = node_ids;
+                    expanded.push_back(pFanin->Id);
+                    std::sort(expanded.begin(), expanded.end());
+                    if (std::find(next.begin(), next.end(), expanded) == next.end())
+                        next.push_back(std::move(expanded));
+                }
+            }
+        }
+        frontier = std::move(next);
+    }
+    if (!best.node_ids.empty())
+    {
+        detail::ReplicationCluster ordered = best;
+        ordered.node_ids = OrderClusterNodes(best, hop);
+        return ordered;
+    }
+    return best;
+}
+
+bool detail::TryReplicationCluster(Abc_Ntk_t *pNtk,
+                                   detail::OptimizationState &state,
+                                   detail::HopState &hop,
+                                   const detail::ReplicationCluster &cluster)
+{
+    const int growth = static_cast<int>(cluster.node_ids.size());
+    if (!pNtk || state.pNtk != pNtk || growth <= 0
+        || growth > kMaxClusterNodes || state.growth.remaining() < growth)
+        return false;
+
+    const detail::Metrics before = detail::ComputeMetrics(pNtk);
+    ClusterTransaction txn;
+    if (!BuildCluster(pNtk, cluster, hop, txn))
+    {
+        hop.Initialize(pNtk);
+        return false;
+    }
+
+    const detail::Metrics after = detail::ComputeMetrics(pNtk);
+    const int cutedge_delta = after.cut_edges - before.cut_edges;
+    const int cutnet_delta = after.cut_nets - before.cut_nets;
+    const bool legal = cutedge_delta < 0
+        && cutedge_delta == cluster.cutedge_delta
+        && cutnet_delta == cluster.cutnet_delta
+        && hop.Initialize(pNtk)
+        && ClusterLimitsHold(pNtk, state, after);
+    if (legal)
+    {
+        state.AttachNetwork(pNtk);
+        if (state.Audit() && state.growth.TryConsume(growth))
+            return true;
+    }
+
+    RollbackCluster(pNtk, txn);
+    hop.Initialize(pNtk);
+    state.AttachNetwork(pNtk);
+    return false;
+}
+
 // Hop-slack snapshot, computed once before Phase 2 starts (the network is
 // stable at that point -- Phase 1 has already converged). Same shape as
 // timing slack: hop_arrival is a forward DFS max over fanins (+1 per
@@ -953,12 +1210,9 @@ static void run_phase2_replicate(Abc_Ntk_t *pNtk, const Config &cfg,
     int cur_cutedges = ComputeCutEdgeCount(pNtk);
     int stall_count = 0;
 
-    // Snapshot taken once, before Phase 2 starts (Phase 1 has already
-    // converged, so the network is stable at this point). Later rounds
-    // reuse the same snapshot -- see docs/superpowers/specs for the
-    // rationale (a conservative, not dynamically-updated, hop budget).
-    HopSlack hs;
-    compute_hop_slack(pNtk, hs);
+    detail::HopState hop;
+    if (!hop.Initialize(pNtk))
+        return;
 
     for (int round = 0; round < cfg.max_rounds; ++round)
     {
@@ -981,14 +1235,21 @@ static void run_phase2_replicate(Abc_Ntk_t *pNtk, const Config &cfg,
             if (state.growth.remaining() < 1)
                 break;
 
-            Abc_Obj_t *pDriver = Abc_NtkObj(pNtk, cand.key.driver_id);
-            if (!pDriver || !Abc_ObjIsNode(pDriver)
-                || Abc_ObjGetPartId(pDriver) == cand.key.target_part)
-                continue;
-
-            if (try_replicate(pNtk, pDriver, cand.key.target_part,
-                              hs, state, cur_cutedges))
+            const auto cluster = detail::FindBestReplicationCluster(
+                pNtk, state, cand, hop);
+            if (!cluster.node_ids.empty()
+                && detail::TryReplicationCluster(pNtk, state, hop, cluster))
+            {
+                cur_cutedges = ComputeCutEdgeCount(pNtk);
                 round_fixed++;
+            }
+        }
+
+        if (!hop.VerifyAgainstFull(pNtk))
+        {
+            if (cfg.verbose)
+                printf("csr: phase2 incremental hop verification failed\n");
+            break;
         }
 
         if (cfg.verbose)
