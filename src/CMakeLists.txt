@@ -97,3 +97,11 @@ target_link_libraries(test_cpr PRIVATE
     timer
     cpr
 )
+
+add_executable(test_csr "test_csr.cpp")
+target_link_libraries(test_csr PRIVATE
+    libabc
+    timer
+    cpr
+    csr
+)
