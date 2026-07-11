@@ -52,6 +52,46 @@ struct CompoundMoveNtk {
     Abc_Obj_t *pPo = nullptr;
 };
 
+struct HopPropagationNtk {
+    Abc_Ntk_t *pNtk = nullptr;
+    Abc_Obj_t *pPi = nullptr;
+    Abc_Obj_t *pLow = nullptr;
+    Abc_Obj_t *pCross = nullptr;
+    Abc_Obj_t *pHigh = nullptr;
+    Abc_Obj_t *pSink = nullptr;
+    Abc_Obj_t *pPoHigh = nullptr;
+    Abc_Obj_t *pPoSink = nullptr;
+};
+
+HopPropagationNtk CreateHopPropagationNtk()
+{
+    HopPropagationNtk t;
+    t.pNtk = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    t.pPi = Abc_NtkCreatePi(t.pNtk);
+    t.pLow = Abc_NtkCreateNode(t.pNtk);
+    t.pCross = Abc_NtkCreateNode(t.pNtk);
+    t.pHigh = Abc_NtkCreateNode(t.pNtk);
+    t.pSink = Abc_NtkCreateNode(t.pNtk);
+    t.pPoHigh = Abc_NtkCreatePo(t.pNtk);
+    t.pPoSink = Abc_NtkCreatePo(t.pNtk);
+    Abc_ObjAddFanin(t.pLow, t.pPi);
+    Abc_ObjAddFanin(t.pCross, t.pPi);
+    Abc_ObjAddFanin(t.pHigh, t.pCross);
+    Abc_ObjAddFanin(t.pSink, t.pLow);
+    Abc_ObjAddFanin(t.pPoHigh, t.pHigh);
+    Abc_ObjAddFanin(t.pPoSink, t.pSink);
+    SetNodeFunction(t.pLow);
+    SetNodeFunction(t.pCross);
+    SetNodeFunction(t.pHigh);
+    SetNodeFunction(t.pSink);
+    Abc_ObjSetPartId(t.pPi, 0);
+    Abc_ObjSetPartId(t.pLow, 0);
+    Abc_ObjSetPartId(t.pCross, 1);
+    Abc_ObjSetPartId(t.pHigh, 2);
+    Abc_ObjSetPartId(t.pSink, 0);
+    return t;
+}
+
 CompoundMoveNtk CreateCompoundMoveNtk()
 {
     CompoundMoveNtk t;
@@ -223,6 +263,53 @@ bool TestCompoundRelocation()
     return ok;
 }
 
+bool TestHopStateIncreaseAndRollback()
+{
+    HopPropagationNtk t = CreateHopPropagationNtk();
+    const int entry_hop = Abc_NtkComputeHopNum(t.pNtk);
+    fox::csr::detail::HopState hop;
+    bool ok = true;
+    ok &= ExpectEqual("hop init", hop.Initialize(t.pNtk), 1);
+    auto txn = hop.BeginTransaction();
+    Abc_ObjPatchFanin(t.pSink, t.pLow, t.pHigh);
+    ok &= ExpectEqual("propagate detects limit", hop.PropagateFrom(
+        t.pNtk, {t.pSink->Id}, entry_hop, txn), 0);
+    hop.Rollback(txn);
+    Abc_ObjPatchFanin(t.pSink, t.pHigh, t.pLow);
+    ok &= ExpectEqual("rollback matches full", hop.VerifyAgainstFull(t.pNtk), 1);
+    Abc_NtkDelete(t.pNtk);
+    return ok;
+}
+
+bool TestHopStateDecreasePropagation()
+{
+    HopPropagationNtk t = CreateHopPropagationNtk();
+    Abc_Obj_t *pTail1 = Abc_NtkCreateNode(t.pNtk);
+    Abc_Obj_t *pTail2 = Abc_NtkCreateNode(t.pNtk);
+    Abc_ObjAddFanin(pTail1, t.pSink);
+    Abc_ObjAddFanin(pTail2, pTail1);
+    SetNodeFunction(pTail1);
+    SetNodeFunction(pTail2);
+    Abc_ObjSetPartId(pTail1, 0);
+    Abc_ObjSetPartId(pTail2, 0);
+    Abc_ObjPatchFanin(t.pSink, t.pLow, t.pHigh);
+
+    fox::csr::detail::HopState hop;
+    bool ok = true;
+    ok &= ExpectEqual("decrease init", hop.Initialize(t.pNtk), 1);
+    ok &= ExpectEqual("decrease entry hop", Abc_NtkComputeHopNum(t.pNtk), 3);
+    auto txn = hop.BeginTransaction();
+    Abc_ObjPatchFanin(t.pSink, t.pHigh, t.pLow);
+    ok &= ExpectEqual("decrease propagate", hop.PropagateFrom(
+        t.pNtk, {t.pSink->Id}, 3, txn), 1);
+    ok &= ExpectEqual("sink arrival decreases", hop.arrival(t.pSink->Id), 0);
+    ok &= ExpectEqual("tail1 arrival decreases", hop.arrival(pTail1->Id), 0);
+    ok &= ExpectEqual("tail2 arrival decreases", hop.arrival(pTail2->Id), 0);
+    ok &= ExpectEqual("decrease matches full", hop.VerifyAgainstFull(t.pNtk), 1);
+    Abc_NtkDelete(t.pNtk);
+    return ok;
+}
+
 } // namespace
 
 int main()
@@ -235,7 +322,9 @@ int main()
         && TestTrajectoryOrdering()
         && TestCutCandidateTotalOrder()
         && TestDuplicatedTrajectoryUsesCapturedBalance()
-        && TestCompoundRelocation() ? 0 : 1;
+        && TestCompoundRelocation()
+        && TestHopStateIncreaseAndRollback()
+        && TestHopStateDecreasePropagation() ? 0 : 1;
     Abc_Stop();
     return result;
 }

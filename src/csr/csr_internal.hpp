@@ -69,6 +69,28 @@ private:
     int used_ = 0;
 };
 
+class HopState {
+public:
+    struct Change { int obj_id; int old_arrival; };
+    struct Transaction {
+        std::vector<Change> changes;
+        std::vector<char> logged;
+    };
+
+    bool Initialize(Abc_Ntk_t *pNtk);
+    Transaction BeginTransaction() const;
+    bool PropagateFrom(Abc_Ntk_t *pNtk, const std::vector<int> &start_ids,
+                       int hop_limit, Transaction &txn);
+    void Rollback(Transaction &txn);
+    bool VerifyAgainstFull(Abc_Ntk_t *pNtk) const;
+    int arrival(int obj_id) const;
+    int topo_rank(int obj_id) const;
+
+private:
+    std::vector<int> arrival_;
+    std::vector<int> topo_rank_;
+};
+
 struct SearchBudget {
     static constexpr int kMaxBeamStatesPerRound = 512;
     static constexpr int kMaxDivisorSetsPerNode = 32;

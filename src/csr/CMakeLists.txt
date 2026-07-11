@@ -1,5 +1,6 @@
 add_library(csr
     csr.cpp
+    csr_hop.cpp
     csr_state.cpp
 )
 
