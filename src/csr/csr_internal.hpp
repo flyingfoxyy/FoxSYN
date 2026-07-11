@@ -92,6 +92,13 @@ struct EntryLimits {
     int node_limit = 0;
     int growth_budget = 0;
     int cutnet_limit = 0;
+    // Balance overflow already present in the entry partition, under
+    // balance_pct's formula. hmetis's own partitions routinely exceed the
+    // nominal tolerance (recursive bisection compounds error across levels),
+    // so the audit gate must not regress past the entry, not enforce zero
+    // overflow outright -- mirrors hop_limit/node_limit/cutnet_limit, which
+    // are all measured from the entry state rather than fixed absolutes.
+    int balance_overflow_limit = 0;
 };
 
 class GrowthTracker {

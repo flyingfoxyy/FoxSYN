@@ -87,7 +87,7 @@ bool OptimizationState::Audit()
     return current.hop <= limits.hop_limit
         && current.nodes <= limits.node_limit
         && current.cut_nets <= limits.cutnet_limit
-        && fox::cpr::compute_balance_overflow(part_sizes, max_allowed) == 0
+        && fox::cpr::compute_balance_overflow(part_sizes, max_allowed) <= limits.balance_overflow_limit
         && growth.used() <= limits.growth_budget;
 }
 
@@ -139,6 +139,21 @@ EntryLimits CaptureEntryLimits(Abc_Ntk_t *pNtk, const Config &cfg)
         balance_pct = 2;
     const int growth_budget = ComputePercentageLimit(
         metrics.nodes, cfg.replicate_growth_pct, false);
+
+    // hmetis's recursive bisection routinely leaves the entry partition
+    // past balance_pct's nominal tolerance (error compounds across levels
+    // for num_parts > 2), so the overflow limit is measured from the
+    // entry state itself rather than fixed at zero -- otherwise a legal
+    // hmetis result could fail the very first audit before any operation
+    // runs, the same way hop_limit/node_limit/cutnet_limit are all
+    // measured from the entry state.
+    std::vector<int> entry_part_sizes;
+    fox::cpr::partition_sizes(pNtk, num_parts, entry_part_sizes);
+    const int entry_max_allowed = fox::cpr::compute_balance_max_allowed(
+        entry_part_sizes, balance_pct);
+    const int balance_overflow_limit = fox::cpr::compute_balance_overflow(
+        entry_part_sizes, entry_max_allowed);
+
     return {
         num_parts,
         balance_pct,
@@ -146,6 +161,7 @@ EntryLimits CaptureEntryLimits(Abc_Ntk_t *pNtk, const Config &cfg)
         ComputePercentageLimit(metrics.nodes, 102, true),
         growth_budget,
         ComputePercentageLimit(metrics.cut_nets, 150, true),
+        balance_overflow_limit,
     };
 }
 

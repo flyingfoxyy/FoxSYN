@@ -1095,7 +1095,8 @@ bool ClusterLimitsHold(Abc_Ntk_t *pNtk,
     fox::cpr::partition_sizes(pNtk, state.limits.num_parts, part_sizes);
     const int max_allowed = fox::cpr::compute_balance_max_allowed(
         part_sizes, state.limits.balance_pct);
-    return fox::cpr::compute_balance_overflow(part_sizes, max_allowed) == 0;
+    return fox::cpr::compute_balance_overflow(part_sizes, max_allowed)
+        <= state.limits.balance_overflow_limit;
 }
 
 bool EvaluateCluster(Abc_Ntk_t *pNtk, detail::OptimizationState &state,
@@ -1584,7 +1585,8 @@ bool RelocationLimitsHold(Abc_Ntk_t *pNtk,
     fox::cpr::partition_sizes(pNtk, state.limits.num_parts, part_sizes);
     const int max_allowed = fox::cpr::compute_balance_max_allowed(
         part_sizes, state.limits.balance_pct);
-    return fox::cpr::compute_balance_overflow(part_sizes, max_allowed) == 0;
+    return fox::cpr::compute_balance_overflow(part_sizes, max_allowed)
+        <= state.limits.balance_overflow_limit;
 }
 
 bool RelocationSequenceLess(const detail::RelocationSequence &lhs,
