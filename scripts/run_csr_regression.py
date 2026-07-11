@@ -419,6 +419,8 @@ def main() -> int:
     parser.add_argument("-j", "--jobs", type=int,
                         default=max(1, min(os.cpu_count() or 4, 8)))
     parser.add_argument("--match", default="")
+    parser.add_argument("--exclude", default="",
+                        help="Comma-separated substrings; cases matching any are skipped")
     parser.add_argument("--runs", type=int, default=1,
                         help="Run each case N times, report best (mitigates hmetis randomness)")
     parser.add_argument("--exact-repeats", type=int, default=1,
@@ -477,6 +479,9 @@ def main() -> int:
     cases = [c for c in cases if "mapped" not in c.stem]
     if args.match:
         cases = [c for c in cases if args.match in c.as_posix()]
+    if args.exclude:
+        excludes = [e for e in args.exclude.split(",") if e]
+        cases = [c for c in cases if not any(e in c.as_posix() for e in excludes)]
 
     if not cases:
         print("error: no cases found", file=sys.stderr)

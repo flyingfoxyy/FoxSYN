@@ -814,6 +814,11 @@ int Csr_Command(Abc_Frame_t *pAbc, int argc, char **argv)
             if (cfg.replicate_growth_pct < 0 || cfg.replicate_growth_pct > 100)
             { printf("csr: invalid growth percentage %d (must be between 0 and 100)\n", cfg.replicate_growth_pct); return 1; }
             break;
+        case 'N':
+            if (i + 1 >= argc) { printf("csr: -N requires a cut-net growth percentage\n"); return 1; }
+            cfg.cutnet_growth_pct = std::atoi(argv[++i]);
+            if (cfg.cutnet_growth_pct < 100) { printf("csr: invalid cut-net growth percentage %d (must be >= 100)\n", cfg.cutnet_growth_pct); return 1; }
+            break;
         case 'B':
             if (i + 1 >= argc) { printf("csr: -B requires a balance percentage\n"); return 1; }
             cfg.balance_pct = std::atoi(argv[++i]);
@@ -844,13 +849,14 @@ int Csr_Command(Abc_Frame_t *pAbc, int argc, char **argv)
     return fox::csr::ApplyCsr(pAbc, cfg) ? 0 : 1;
 
 usage:
-    Abc_Print(-2, "usage: csr [-R num] [-S num] [-T num] [-X num] [-G num] [-B num] [-bLv]\n");
+    Abc_Print(-2, "usage: csr [-R num] [-S num] [-T num] [-X num] [-G num] [-N num] [-B num] [-bLv]\n");
     Abc_Print(-2, "\t           cut-edge reduction via resub-first + replication-fallback logic synthesis\n");
     Abc_Print(-2, "\t-R num  : max optimization rounds per phase [default = %d]\n", cfg.max_rounds);
     Abc_Print(-2, "\t-S num  : stall limit (rounds without improvement) per phase [default = %d]\n", cfg.stall_limit);
     Abc_Print(-2, "\t-T num  : number of optimization trajectories (1-3) [default = %d]\n", cfg.num_trajectories);
     Abc_Print(-2, "\t-X num  : max temp LUT size for Shannon decomp (0=off, 7-12), Phase 1 only [default = %d]\n", cfg.maxTempLut);
     Abc_Print(-2, "\t-G num  : Phase 2 replication node growth cap, %% of original node count [default = %d]\n", cfg.replicate_growth_pct);
+    Abc_Print(-2, "\t-N num  : max cut-net count, %% of entry cut-net count, shared Phase 1/2 budget [default = %d]\n", cfg.cutnet_growth_pct);
     Abc_Print(-2, "\t-B num  : balance percentage (1-99) [default = inherit from pdb]\n");
     Abc_Print(-2, "\t-b      : run cpr-style balance repair after phase1/2 [default = %s]\n", cfg.do_balance_repair ? "on" : "off");
     Abc_Print(-2, "\t-L      : disable phase 0 hop-preserving relocation [default = on]\n");

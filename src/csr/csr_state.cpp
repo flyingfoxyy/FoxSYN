@@ -160,7 +160,7 @@ EntryLimits CaptureEntryLimits(Abc_Ntk_t *pNtk, const Config &cfg)
         metrics.hop,
         ComputePercentageLimit(metrics.nodes, 102, true),
         growth_budget,
-        ComputePercentageLimit(metrics.cut_nets, 150, true),
+        ComputePercentageLimit(metrics.cut_nets, cfg.cutnet_growth_pct, true),
         balance_overflow_limit,
     };
 }

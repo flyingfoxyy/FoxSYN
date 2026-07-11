@@ -111,13 +111,14 @@ hop_slack(n)    = hop_required(n) - hop_arrival(n)
 ## 命令接口
 
 ```
-usage: csr [-R num] [-S num] [-T num] [-X num] [-G num] [-B num] [-bLv]
+usage: csr [-R num] [-S num] [-T num] [-X num] [-G num] [-N num] [-B num] [-bLv]
            cut-edge reduction via resub-first + replication-fallback logic synthesis
     -R num  : max optimization rounds per phase [default = 20]
     -S num  : stall limit (rounds without improvement) per phase [default = 3]
     -T num  : deterministic search trajectories, 1-3 [default = 1]
     -X num  : max temp LUT size for Shannon decomp (0=off, 7-12), Phase 1 only [default = 0]
     -G num  : Phase 1/2 shared non-refunding growth budget, % of entry node count [default = 2]
+    -N num  : max cut-net count, % of entry cut-net count, shared Phase 1/2 budget [default = 300]
     -B num  : balance percentage (1-99) [default = inherit from pdb]
     -b      : run cpr-style balance repair after phase1/2 [default = off]
     -L      : disable phase 0 hop-preserving relocation [default = on]
@@ -143,11 +144,11 @@ CSR 现在以 `Abc_Frame_t *` 为公开入口(`ApplyCsr(Abc_Frame_t *, const Con
 hop_limit             = entry_hop                      (不允许任何轨迹的最终 hop 超过入口)
 node_limit             = ceil(entry_nodes * 1.02)        (存活节点数上限)
 growth_budget          = floor(entry_nodes * 0.02)       (Phase 1/2 共享，不返还)
-cutnet_limit           = ceil(entry_cutnet * 1.50)
+cutnet_limit           = ceil(entry_cutnet * cutnet_growth_pct / 100)  (`-N`，默认 300)
 balance_overflow_limit = compute_balance_overflow(entry_part_sizes, entry 分区在 balance_pct 下的 max_allowed)
 ```
 
-除 `balance_overflow_limit` 外，这四个值全部来自 `docs/superpowers/specs/2026-07-11-csr-optimization-enhancement-design.md` 的原始设计。`balance_overflow_limit` 是实现过程中发现必须补的第五个值：hmetis 的递归二分在 `num_parts > 2` 时天然会让实际分区大小超过 `balance_pct` 声明的名义容差（误差逐层复合），而不像 hop/node/cutnet 三个约束一样"入口值天然满足自己的门槛"。若直接要求 `overflow == 0`，冻结分区语料库里 19/90 个案例会在任何优化开始之前就在入口审计失败。`balance_overflow_limit` 改为"入口态本身已有的 overflow"，审计只要求不比入口更差，与其余三个约束同构。
+除 `balance_overflow_limit` 外，这四个值全部来自 `docs/superpowers/specs/2026-07-11-csr-optimization-enhancement-design.md` 的原始设计（`cutnet_limit` 的初始比例定为 150%，`-N` 选项和 300% 默认值是后续调查发现的修正，见下文"cutnet 预算与 Phase 2 的相互作用"）。`balance_overflow_limit` 是实现过程中发现必须补的第五个值：hmetis 的递归二分在 `num_parts > 2` 时天然会让实际分区大小超过 `balance_pct` 声明的名义容差（误差逐层复合），而不像 hop/node/cutnet 三个约束一样"入口值天然满足自己的门槛"。若直接要求 `overflow == 0`，冻结分区语料库里 19/90 个案例会在任何优化开始之前就在入口审计失败。`balance_overflow_limit` 改为"入口态本身已有的 overflow"，审计只要求不比入口更差，与其余三个约束同构。
 
 `node_limit` 是防御性的硬上限；正常语义下 `growth_budget` 的"不返还"规则已经保证不会触达它。
 
@@ -190,11 +191,21 @@ Hop 门槛从静态的入口态 hop-slack 快照，改为可增量更新的 `Hop
 - **`-b` balance repair 语义未变**：默认关闭，`-b` 显式开启后仍可能牺牲 cutsize 收益（见上文历史记录），行为经 `cec` 验证过。
 - **`-T 2/3` 未纳入默认 5 倍运行时间验收范围**：设计上是显式开启的额外搜索，仍受确定的操作次数预算约束，但运行时间需单独评估。
 - **vendored ABC 上游代码存在 UBSan 未定义行为诊断**：ASan/UBSan 构建下运行 `if -K` LUT 映射会在 `src/abc/src/map/if/{ifCut,ifMap,ifMan}.c` 和 `src/abc/src/sat/bsat/{satSolver,satStore}.c` 报告约 91 条"misaligned address"诊断（8 字节对齐要求上的未对齐访问）。这些文件自"Vendor ABC sources into repo"提交后未被 csr 相关改动触碰过，是上游代码的既有问题，不是 csr 引入的；`csr.cpp`/`csr_state.cpp`/`csr_hop.cpp` 本身在同一次 ASan/UBSan 运行下没有任何诊断，`test_csr` 在 ASan/UBSan 下完全无诊断退出。
-- **5 个语料库案例在 200 秒超时下未跑完**：`EPFL_div`、`EPFL_hyp`、`vtr_LU32PEEng`、`vtr_mcml`、`vtr_sha`，均为超时而非崩溃或断言失败；未逐个排查是否存在可优化的候选收集热点。
+- **7 个语料库案例在 200 秒超时下未跑完**：`EPFL_div`、`EPFL_hyp`、`EPFL_mem_ctrl`、`vtr_LU32PEEng`、`vtr_LU8PEEng`、`vtr_mcml`、`vtr_sha`，均为超时而非崩溃或断言失败；未逐个排查是否存在可优化的候选收集热点。
+- **`-N` 不是单调参数，个别电路需要反向调整**：`opencores_wb_conmax` 在 `-N 200` 下与 pre-enhancement baseline 的差距（+402）比 `-N 300` 下（+1026）更小——多数电路"预算越松、Phase 2 收益越多"，但这个电路反过来。默认 300% 是对语料库整体最优的取值，不是对每个电路都最优；差距较大时可尝试手动调低或调高 `-N` 重跑对比。
+- **仍有 14/82 个案例的 cutsize 比 pre-enhancement baseline（799702c）差**（`-N 300`，同一冻结分区）：`opencores_wb_conmax`（+1026）、`EPFL_multiplier`（+421）、`mcnc_spla`（+252）、`mcnc_pdc`（+233）、`opencores_tv80`（+220）等，未逐个排查是否为同一 cutnet 预算机制或其他原因导致，见下文"cutnet 预算与 Phase 2 的相互作用"。
+
+### cutnet 预算与 Phase 2 的相互作用（`-N` 选项，2026-07-11 补充调查）
+
+增强版上线后发现一个此前未暴露的问题：在同一冻结分区上，25/83 个案例的最终 cutsize 比 pre-enhancement baseline（799702c）还差，其中 `opencores_systemcase` 差距最大（+94.3%，baseline 1392 vs 增强版 2704）。
+
+根因排查（`opencores_systemcase`，入口 cut-net=76）：`cutnet_limit` 是 Phase 1（resub）和 Phase 2（replication）**共享**的硬约束，旧实现里固定为 `ceil(entry_cutnet * 1.5)`。verbose 日志显示 Phase 1 跑完后 cut-net 已经**正好**顶到 114/114（150% 上限），Phase 2 开始尝试复制候选簇时，420 次全部被 `ClusterLimitsHold` 拒绝——包括 `cutedge_delta` 达到 -184、-137、-130 这种收益巨大的候选，拒绝原因清一色是共享预算已被 Phase 1 耗尽，不是候选本身不合法或 hop 超限。旧版基线没有这个约束，Phase 2 直接把 cut-net 推到 220（entry 的 290%），换来 cut-edge 2654→1392 的大幅收益。
+
+修复：把 150% 这个比例从硬编码改成可调的 `-N` 选项（`cfg.cutnet_growth_pct`，`CaptureEntryLimits`/`csr_state.cpp` 消费）。用 `systemcase` 测试不同取值：150%/200% 下 Phase 2 replicated 数始终是 0，直到把限制放宽到接近不设上限，Phase 2 才能正常工作（最终 cut-net 落在 entry 的 296%）。在全量语料库上扫了 150%/200%/300% 三档，300% 是让**总量**从"比 baseline 差 4.4%"翻到"比 baseline 好 1.2%"的取值，遂定为新默认值。这不是一次性调对——`wb_conmax` 在 300% 下反而比 200% 更差（见上文已知问题），说明固定比例这条路本身有结构性局限：不同电路需要的 cutnet 宽裕度方向不一致，真正根治需要把 Phase 1/Phase 2 的预算分开计算，而不是共享一个入口相对值；这次调查止于把默认值调到语料库整体最优，未做预算隔离。
 
 ## 实测结果（增强版，2026-07-11）
 
-在 90 个 SimpleCircuits benchmark（MCNC + EPFL + OpenCores + VTR）上，N=4 hmetis 分区（**冻结分区**，`--save-part`/`--load-part` 保证可复现），`csr -T 1 -v`，对比增强前 commit `799702c`，3 次 exact-repeat 验证确定性，`--cec` 验证功能等价：
+在 90 个 SimpleCircuits benchmark（MCNC + EPFL + OpenCores + VTR）上，N=4 hmetis 分区（**冻结分区**，`--save-part`/`--load-part` 保证可复现），`csr -T 1 -v`，对比**入口态**（不跑 csr 时的 cut-edge），3 次 exact-repeat 验证确定性，`--cec` 验证功能等价：
 
 | 指标 | 数值 |
 |---|---|
@@ -211,6 +222,30 @@ Hop 门槛从静态的入口态 hop-slack 快照，改为可增量更新的 `Hop
 | 未跑完的案例（200 秒超时） | 5 个：见上文"已知问题" |
 
 ASan/UBSan：`test_csr` 在 asan 构建下完全无诊断输出退出；`csr.cpp`/`csr_state.cpp`/`csr_hop.cpp` 在实际 `if -K 6` + `csr -T 1` 运行下也没有任何诊断（全部诊断落在 vendored ABC 上游代码，见上文"已知问题"）。
+
+### 与 pre-enhancement baseline（799702c）的对比
+
+上一节的数字是"增强版 vs 不跑 csr 的入口态"，衡量的是 csr 本身有没有用。这一节换一个基准：**同一份冻结分区，增强版 vs 增强前 commit 799702c**，衡量的是这次 Tasks 1-11 的重构本身让 csr 变好了还是变差了。两者都是有效指标，但回答的是不同问题，不能互相替代。
+
+在 `-N` 默认值调整过程中（见上文"cutnet 预算与 Phase 2 的相互作用"），这个对比先后在三档 `-N` 取值下测过：
+
+| `-N` 取值 | 总 cut-edge 新版 vs 老版 | 相对变化 | 变好/变差/持平 | 运行时几何均值 |
+|---|---|---|---|---|
+| 150%（未加此选项前的固定值） | 132026 vs 126507 | **+4.4%（更差）** | 48/25/10 | 1.99x |
+| 200% | 129253 vs 128824 | +0.3% | 53/21/10 | 未单独测 |
+| **300%（当前默认）** | 118889 vs 120330 | **-1.2%（更好）** | **58/14/10** | **1.64x** |
+
+`-N 300` 下的完整数据（84/90 案例跑通并有 baseline 数据，`csr -T 1 -v`）：
+
+| 指标 | 数值 |
+|---|---|
+| 参与对比的案例 | 82（另 7 个案例双方均超 200 秒超时或缺基线数据，1 个 `vtr_bgm` 入口即为 0） |
+| 比老版更好 / 更差 / 持平 | 58 / 14 / 10 |
+| 总 cut-edge（新版 vs 老版） | 118889 vs 120330（**-1.2%**） |
+| 运行时几何均值（新版 vs 老版） | **1.64x** |
+| 仍比老版差的案例（前 5） | `opencores_wb_conmax`（+1026）、`EPFL_multiplier`（+421）、`mcnc_spla`（+252）、`mcnc_pdc`（+233）、`opencores_tv80`（+220） |
+
+结论：把 `cutnet_limit` 比例从硬编码 150% 提到可调的 `-N`，默认值定为 300%，是让增强版在"同分区对比老版"这个指标上由负转正的关键调整；单看"vs 入口态"的 -30.2% 收益数字不受这次调整影响（该对比不涉及老版基线），但"vs 老版基线"这个更严格的指标在改之前是隐藏的负收益。
 
 以上数字全部来自 `scripts/run_csr_regression.py --exact-repeats 3 --cec --baseline-foxsyn <799702c 二进制>` 在冻结分区语料库上的实际测得结果，不是历史遗留估算。
 
