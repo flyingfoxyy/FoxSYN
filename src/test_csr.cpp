@@ -116,6 +116,33 @@ bool TestSearchBudgetStopsAtExactLimit()
     return ok;
 }
 
+bool TestTrajectoryOrdering()
+{
+    using fox::csr::detail::TrajectoryResult;
+    TrajectoryResult a{nullptr, {90, 12, 4, 100}, 1, true};
+    TrajectoryResult b{nullptr, {90, 11, 4, 101}, 2, true};
+    TrajectoryResult c{nullptr, {91, 1, 1, 1}, 0, true};
+    bool ok = true;
+    ok &= ExpectEqual("lower cutnet wins tie", fox::csr::detail::BetterResult(b, a), 1);
+    ok &= ExpectEqual("cutedge remains primary", fox::csr::detail::BetterResult(c, a), 0);
+    return ok;
+}
+
+bool TestDuplicatedTrajectoryUsesCapturedBalance()
+{
+    StateTestNtk base = CreateStateTestNtk();
+    fox::csr::Config cfg;
+    auto limits = fox::csr::detail::CaptureEntryLimits(base.pNtk, cfg);
+    Abc_Ntk_t *pDup = Abc_NtkDup(base.pNtk);
+    fox::csr::detail::OptimizationState state(pDup, limits, 0);
+    bool ok = true;
+    ok &= ExpectEqual("duplicate Pdb balance invalid", pDup->pPdb->balance_pct(), -1);
+    ok &= ExpectEqual("state keeps entry balance", state.limits.balance_pct, 17);
+    Abc_NtkDelete(pDup);
+    Abc_NtkDelete(base.pNtk);
+    return ok;
+}
+
 } // namespace
 
 int main()
@@ -124,7 +151,9 @@ int main()
     const int result = TestCaptureEntryLimitsBeforeDup()
         && TestPercentageLimitSaturates()
         && TestGrowthBudgetDoesNotRefund()
-        && TestSearchBudgetStopsAtExactLimit() ? 0 : 1;
+        && TestSearchBudgetStopsAtExactLimit()
+        && TestTrajectoryOrdering()
+        && TestDuplicatedTrajectoryUsesCapturedBalance() ? 0 : 1;
     Abc_Stop();
     return result;
 }

@@ -835,7 +835,7 @@ int Csr_Command(Abc_Frame_t *pAbc, int argc, char **argv)
     if (!Abc_NtkIsLogic(pNtk)) { printf("csr: network must be logic (not AIG)\n"); return 1; }
     if (!pNtk->pPdb) { printf("csr: no partition database (run hpart first)\n"); return 1; }
 
-    return fox::csr::ApplyCsr(pNtk, cfg) ? 0 : 1;
+    return fox::csr::ApplyCsr(pAbc, cfg) ? 0 : 1;
 
 usage:
     Abc_Print(-2, "usage: csr [-R num] [-S num] [-X num] [-G num] [-B num] [-bLv]\n");

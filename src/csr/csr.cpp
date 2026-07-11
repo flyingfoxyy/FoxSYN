@@ -1,4 +1,4 @@
-#include "csr.hpp"
+#include "csr_internal.hpp"
 
 #include "base/abc/abc.h"
 #include "base/abc/abcPdb.hpp"
@@ -536,7 +536,8 @@ phase4:
     return 0;
 }
 
-static void run_phase1_resub(Abc_Ntk_t *pNtk, const Config &cfg,
+static void run_phase1_resub(Abc_Ntk_t *&pNtk, const Config &cfg,
+                             detail::OptimizationState &state,
                              int &total_attempts, int &total_successes)
 {
     int best_cutedges = ComputeCutEdgeCount(pNtk);
@@ -544,14 +545,24 @@ static void run_phase1_resub(Abc_Ntk_t *pNtk, const Config &cfg,
 
     for (int round = 0; round < cfg.max_rounds; ++round)
     {
+        Abc_Ntk_t *pSnapshot = Abc_NtkDup(pNtk);
+        if (!pSnapshot)
+            break;
+        const int nodes_before = Abc_NtkNodeNum(pSnapshot);
         Abc_NtkToSop(pNtk, -1, ABC_INFINITY);
         if (!Abc_NtkToAig(pNtk))
+        {
+            Abc_NtkDelete(pSnapshot);
             break;
+        }
 
         std::vector<CutCandidate> candidates;
         collect_cut_candidates(pNtk, candidates);
         if (candidates.empty())
+        {
+            Abc_NtkDelete(pSnapshot);
             break;
+        }
 
         Abc_NtkLevel(pNtk);
         Abc_NtkStartReverseLevels(pNtk, 0);
@@ -622,6 +633,19 @@ static void run_phase1_resub(Abc_Ntk_t *pNtk, const Config &cfg,
         // runs after pdecomp. Abc_NtkCleanup only drops nodes unreachable
         // from the POs and leaves live single-input nodes alone.
         Abc_NtkCleanup(pNtk, 0);
+
+        const int growth = std::max(0, Abc_NtkNodeNum(pNtk) - nodes_before);
+        if (state.growth.remaining() < growth || !state.Audit())
+        {
+            Abc_NtkDelete(pNtk);
+            pNtk = pSnapshot;
+            state.AttachNetwork(pNtk);
+            if (cfg.verbose)
+                printf("csr: phase1 round %2d rolled back by hard constraints\n", round);
+            break;
+        }
+        state.growth.TryConsume(growth);
+        Abc_NtkDelete(pSnapshot);
 
         int new_cutedges = ComputeCutEdgeCount(pNtk);
         if (cfg.verbose)
@@ -750,13 +774,16 @@ static void compute_hop_slack(Abc_Ntk_t *pNtk, HopSlack &hs)
 }
 
 static bool try_replicate(Abc_Ntk_t *pNtk, Abc_Obj_t *pDriver, Abc_Obj_t *pConsumer,
-                          const HopSlack &hs, int &cur_cutedges, int &extra_nodes)
+                          const HopSlack &hs, detail::OptimizationState &state,
+                          int &cur_cutedges)
 {
     // Only logic nodes can be duplicated. A PI/CONST1 driver is a single
     // physical pin/constant in the design; "duplicating" it would fabricate
     // a second primary input, corrupting the network (matches cpr's
     // restriction in ordered_path_nodes/try_replicate_on_path).
     if (!Abc_ObjIsNode(pDriver))
+        return false;
+    if (state.growth.remaining() < 1)
         return false;
 
     part_id target_part = Abc_ObjGetPartId(pConsumer);
@@ -805,26 +832,23 @@ static bool try_replicate(Abc_Ntk_t *pNtk, Abc_Obj_t *pDriver, Abc_Obj_t *pConsu
         Abc_ObjPatchFanin(pF, pDriver, pDup);
 
     int new_cutedges = ComputeCutEdgeCount(pNtk);
-    if (new_cutedges < cur_cutedges)
+    if (new_cutedges < cur_cutedges && state.Audit() && state.growth.TryConsume(1))
     {
         cur_cutedges = new_cutedges;
-        extra_nodes += 1;
         return true;
     }
 
     for (Abc_Obj_t *pF : fanouts)
         Abc_ObjPatchFanin(pF, pDup, pDriver);
     Abc_NtkDeleteObj(pDup);
+    state.Audit();
     return false;
 }
 
 static void run_phase2_replicate(Abc_Ntk_t *pNtk, const Config &cfg,
+                                 detail::OptimizationState &state,
                                  int &total_replications)
 {
-    const int initial_nodes = Abc_NtkNodeNum(pNtk);
-    const int max_extra_nodes =
-        static_cast<int>(static_cast<long long>(initial_nodes) * cfg.replicate_growth_pct / 100);
-    int extra_nodes = 0;
     int cur_cutedges = ComputeCutEdgeCount(pNtk);
     int stall_count = 0;
 
@@ -837,11 +861,11 @@ static void run_phase2_replicate(Abc_Ntk_t *pNtk, const Config &cfg,
 
     for (int round = 0; round < cfg.max_rounds; ++round)
     {
-        if (extra_nodes >= max_extra_nodes)
+        if (state.growth.remaining() < 1)
         {
             if (cfg.verbose)
                 printf("csr: phase2 node budget exhausted (%d/%d), stopping\n",
-                       extra_nodes, max_extra_nodes);
+                       state.growth.used(), state.limits.growth_budget);
             break;
         }
 
@@ -853,7 +877,7 @@ static void run_phase2_replicate(Abc_Ntk_t *pNtk, const Config &cfg,
         int round_fixed = 0;
         for (const auto &cand : candidates)
         {
-            if (extra_nodes >= max_extra_nodes)
+            if (state.growth.remaining() < 1)
                 break;
 
             Abc_Obj_t *pConsumer = Abc_NtkObj(pNtk, cand.node_id);
@@ -865,7 +889,7 @@ static void run_phase2_replicate(Abc_Ntk_t *pNtk, const Config &cfg,
             if (Abc_ObjGetPartId(pDriver) == Abc_ObjGetPartId(pConsumer))
                 continue; // already fixed by an earlier replication this round
 
-            if (try_replicate(pNtk, pDriver, pConsumer, hs, cur_cutedges, extra_nodes))
+            if (try_replicate(pNtk, pDriver, pConsumer, hs, state, cur_cutedges))
                 round_fixed++;
         }
 
@@ -873,7 +897,7 @@ static void run_phase2_replicate(Abc_Ntk_t *pNtk, const Config &cfg,
             printf("csr: phase2 round %2d  candidates=%3zu  replicated=%3d"
                    "  cut-edges=%d  nodes=%d/%d\n",
                    round, candidates.size(), round_fixed, cur_cutedges,
-                   extra_nodes, max_extra_nodes);
+                   state.growth.used(), state.limits.growth_budget);
 
         total_replications += round_fixed;
 
@@ -887,24 +911,6 @@ static void run_phase2_replicate(Abc_Ntk_t *pNtk, const Config &cfg,
             stall_count = 0;
         }
     }
-}
-
-static int resolve_num_parts(Abc_Ntk_t *pNtk)
-{
-    int np = pNtk->pPdb->num_parts();
-    if (np > 0)
-        return np;
-
-    int max_part = 0;
-    int i;
-    Abc_Obj_t *pObj;
-    Abc_NtkForEachObj(pNtk, pObj, i)
-    {
-        part_id p = Abc_ObjGetPartId(pObj);
-        if (p != ABC_PART_ID_NONE && p > max_part)
-            max_part = p;
-    }
-    return max_part + 1;
 }
 
 // Count pNode's incident cross-partition cut-edges assuming it lives in
@@ -1017,9 +1023,10 @@ static void collect_swap_candidates(Abc_Ntk_t *pNtk,
 // this sidesteps double-counting the A-B edge that a hand-written local
 // delta would have to special-case.
 // ---------------------------------------------------------------------
-static void run_phase0_swap(Abc_Ntk_t *pNtk, const Config &cfg, int &total_swaps)
+static void run_phase0_swap(Abc_Ntk_t *pNtk, const Config &cfg,
+                            detail::OptimizationState &state, int &total_swaps)
 {
-    const int baseline_hop = Abc_NtkComputeHopNum(pNtk);
+    const int baseline_hop = state.limits.hop_limit;
     int best_cutedges = ComputeCutEdgeCount(pNtk);
     int stall_count = 0;
 
@@ -1054,10 +1061,11 @@ static void run_phase0_swap(Abc_Ntk_t *pNtk, const Config &cfg, int &total_swaps
                 Abc_ObjSetPartId(pB, pb);
                 continue;
             }
-            if (Abc_NtkComputeHopNum(pNtk) > baseline_hop)
+            if (Abc_NtkComputeHopNum(pNtk) > baseline_hop || !state.Audit())
             {
                 Abc_ObjSetPartId(pA, pa); // roll back both
                 Abc_ObjSetPartId(pB, pb);
+                state.Audit();
                 continue;
             }
             round_swapped++;
@@ -1094,20 +1102,14 @@ static void run_phase0_swap(Abc_Ntk_t *pNtk, const Config &cfg, int &total_swaps
 // relabel (zero area, zero logic). Gated by strict cut-edge decrease, an
 // exact global-hop-non-worsening check, and a per-partition balance cap.
 // ---------------------------------------------------------------------
-void run_phase0_relocate(Abc_Ntk_t *pNtk, const Config &cfg, int &total_moves, int &total_swaps)
+static void run_phase0_relocate(Abc_Ntk_t *pNtk, const Config &cfg,
+                                detail::OptimizationState &state,
+                                int &total_moves, int &total_swaps)
 {
-    int num_parts = resolve_num_parts(pNtk);
-    int balance_pct = cfg.balance_pct;
-    if (balance_pct < 0)
-        balance_pct = pNtk->pPdb->balance_pct();
-    if (balance_pct < 0)
-        balance_pct = 2;
+    std::vector<int> sz = state.part_sizes;
+    const int max_allowed = fox::cpr::compute_balance_max_allowed(sz, state.limits.balance_pct);
 
-    std::vector<int> sz;
-    fox::cpr::partition_sizes(pNtk, num_parts, sz);
-    int max_allowed = fox::cpr::compute_balance_max_allowed(sz, balance_pct);
-
-    const int baseline_hop = Abc_NtkComputeHopNum(pNtk);
+    const int baseline_hop = state.limits.hop_limit;
     int best_cutedges = ComputeCutEdgeCount(pNtk);
     int stall_count = 0;
 
@@ -1170,6 +1172,14 @@ void run_phase0_relocate(Abc_Ntk_t *pNtk, const Config &cfg, int &total_moves, i
 
             sz[cur] -= 1;
             sz[tgt] += 1;
+            if (!state.Audit())
+            {
+                Abc_ObjSetPartId(pNode, cur);
+                sz[cur] += 1;
+                sz[tgt] -= 1;
+                state.Audit();
+                continue;
+            }
             round_moved++;
         }
 
@@ -1197,65 +1207,66 @@ void run_phase0_relocate(Abc_Ntk_t *pNtk, const Config &cfg, int &total_moves, i
             break;
     }
 
-    run_phase0_swap(pNtk, cfg, total_swaps);
+    run_phase0_swap(pNtk, cfg, state, total_swaps);
 }
 
-bool ApplyCsr(Abc_Ntk_t *pNtk, const Config &cfg)
+static bool run_balance_repair(Abc_Ntk_t *&pNtk, const Config &cfg,
+                               detail::OptimizationState &state)
 {
-    if (!pNtk)
-    {
-        printf("csr: network is null\n");
+    Abc_Ntk_t *pRepair = Abc_NtkDup(pNtk);
+    if (!pRepair)
         return false;
-    }
-    if (!Abc_NtkIsLogic(pNtk))
+
+    detail::RestorePdbMetadata(pRepair, state.limits);
+    const int cut_edges_before = ComputeCutEdgeCount(pNtk);
+    std::vector<float> zero_arrival(Abc_NtkObjNumMax(pRepair), 0.0f);
+    const bool repaired = fox::cpr::enforce_balance(
+        pRepair, state.limits.num_parts, state.limits.balance_pct,
+        zero_arrival, cfg.verbose);
+
+    state.AttachNetwork(pRepair);
+    const bool accept = repaired && ComputeCutEdgeCount(pRepair) <= cut_edges_before
+        && state.Audit();
+    if (accept)
     {
-        printf("csr: network must be logic (not AIG)\n");
-        return false;
+        Abc_NtkDelete(pNtk);
+        pNtk = pRepair;
+        return true;
     }
-    if (!pNtk->pPdb)
+
+    Abc_NtkDelete(pRepair);
+    state.AttachNetwork(pNtk);
+    return false;
+}
+
+static bool optimize_trajectory(Abc_Ntk_t *&pNtk, const Config &cfg,
+                                detail::OptimizationState &state,
+                                int trajectory_id)
+{
+    if (!state.Audit())
     {
-        printf("csr: no partition database (run hpart first)\n");
         return false;
     }
 
-    int initial_cutedges = ComputeCutEdgeCount(pNtk);
+    const int initial_cutedges = state.entry.cut_edges;
     if (cfg.verbose)
-        printf("csr: initial cut-edges = %d\n", initial_cutedges);
+        printf("csr: trajectory %d initial cut-edges = %d\n", trajectory_id, initial_cutedges);
 
     int total_moves = 0, total_swaps = 0;
     if (cfg.do_relocate)
-        run_phase0_relocate(pNtk, cfg, total_moves, total_swaps);
+        run_phase0_relocate(pNtk, cfg, state, total_moves, total_swaps);
     int after_phase0 = ComputeCutEdgeCount(pNtk);
 
     int total_attempts = 0, total_successes = 0;
-    run_phase1_resub(pNtk, cfg, total_attempts, total_successes);
+    run_phase1_resub(pNtk, cfg, state, total_attempts, total_successes);
     int after_phase1 = ComputeCutEdgeCount(pNtk);
 
     int total_replications = 0;
-    run_phase2_replicate(pNtk, cfg, total_replications);
+    run_phase2_replicate(pNtk, cfg, state, total_replications);
     int after_phase2 = ComputeCutEdgeCount(pNtk);
 
-    // Known limitation: enforce_balance optimizes only partition size, not
-    // cutsize, so this final repair can raise cut-edges above the phase1/2
-    // result (observed on adder.v: 12 -> 21). Functional correctness is
-    // unaffected (cec-clean); only the cutsize objective can regress here.
-    // Off by default (-b to enable) for exactly this reason.
     if (cfg.do_balance_repair)
-    {
-        int num_parts = resolve_num_parts(pNtk);
-        int balance_pct = cfg.balance_pct;
-        if (balance_pct < 0)
-            balance_pct = pNtk->pPdb->balance_pct();
-        if (balance_pct < 0)
-            balance_pct = 2;
-
-        // csr has no arrival/timing model; a zero vector means
-        // enforce_balance's "move lowest-arrival node first" tie-break
-        // degenerates to an unspecified (but still correct) choice among
-        // balance-violating nodes.
-        std::vector<float> zero_arrival(Abc_NtkObjNumMax(pNtk), 0.0f);
-        fox::cpr::enforce_balance(pNtk, num_parts, balance_pct, zero_arrival, cfg.verbose);
-    }
+        run_balance_repair(pNtk, cfg, state);
 
     int final_cutedges = ComputeCutEdgeCount(pNtk);
 
@@ -1264,6 +1275,56 @@ bool ApplyCsr(Abc_Ntk_t *pNtk, const Config &cfg)
     printf("csr: phase0 %d moves / %d swaps; phase1 %d attempts / %d successes; phase2 %d replications\n",
            total_moves, total_swaps, total_attempts, total_successes, total_replications);
 
+    return state.Audit();
+}
+
+bool ApplyCsr(Abc_Frame_t *pAbc, const Config &cfg)
+{
+    Abc_Ntk_t *pEntry = pAbc ? Abc_FrameReadNtk(pAbc) : nullptr;
+    if (!pEntry)
+    {
+        printf("csr: current network is empty\n");
+        return false;
+    }
+    if (!Abc_NtkIsLogic(pEntry))
+    {
+        printf("csr: network must be logic (not AIG)\n");
+        return false;
+    }
+    if (!pEntry->pPdb)
+    {
+        printf("csr: no partition database (run hpart first)\n");
+        return false;
+    }
+
+    const detail::EntryLimits limits = detail::CaptureEntryLimits(pEntry, cfg);
+    std::vector<detail::TrajectoryResult> results;
+    for (int trajectory_id = 0; trajectory_id < cfg.num_trajectories; ++trajectory_id)
+    {
+        Abc_Ntk_t *pTrajectory = Abc_NtkDup(pEntry);
+        if (!pTrajectory)
+            continue;
+        detail::OptimizationState state(pTrajectory, limits, trajectory_id);
+        if (optimize_trajectory(pTrajectory, cfg, state, trajectory_id))
+            results.push_back({pTrajectory, state.current, trajectory_id, true});
+        else
+            Abc_NtkDelete(pTrajectory);
+    }
+
+    if (results.empty())
+        return false;
+
+    size_t winner = 0;
+    for (size_t i = 1; i < results.size(); ++i)
+        if (detail::BetterResult(results[i], results[winner]))
+            winner = i;
+
+    Abc_Ntk_t *pWinner = results[winner].pNtk;
+    detail::RestorePdbMetadata(pWinner, limits);
+    for (size_t i = 0; i < results.size(); ++i)
+        if (i != winner)
+            Abc_NtkDelete(results[i].pNtk);
+    Abc_FrameReplaceCurrentNetwork(pAbc, pWinner);
     return true;
 }
 

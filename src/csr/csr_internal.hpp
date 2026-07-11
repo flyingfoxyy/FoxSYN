@@ -17,6 +17,15 @@ struct Metrics {
     int nodes = 0;
 };
 
+struct TrajectoryResult {
+    Abc_Ntk_t *pNtk = nullptr;
+    Metrics metrics;
+    int trajectory_id = 0;
+    bool valid = false;
+};
+
+bool BetterResult(const TrajectoryResult &lhs, const TrajectoryResult &rhs);
+
 struct EntryLimits {
     int num_parts = 0;
     int balance_pct = 2;

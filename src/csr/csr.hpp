@@ -16,12 +16,13 @@ struct Config {
     int  maxTempLut            = 0;   // -X: Shannon decomp max temp LUT size (0=off, 7-12), Phase 1 only
     int  replicate_growth_pct = 2;    // -G: Phase 2 node growth cap, % of original node count
     int  balance_pct          = -1;   // -B: -1 = inherit from pdb (falls back to 2 like cpr)
+    int  num_trajectories     = 1;
     bool do_balance_repair    = false; // -b: run cpr-style enforce_balance after phase1/2 (off by default)
     bool do_relocate          = true;  // -L disables: phase 0 hop-preserving node relocation
     bool verbose              = false;
 };
 
-bool ApplyCsr(Abc_Ntk_t *pNtk, const Config &cfg);
+bool ApplyCsr(Abc_Frame_t *pAbc, const Config &cfg);
 
 // Cut-edge count: number of (driver, consumer) pairs whose partitions
 // differ. Distinct from Abc_NtkComputeCutSize()'s cut-NET count, which

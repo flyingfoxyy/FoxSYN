@@ -82,10 +82,21 @@ void OptimizationState::AttachNetwork(Abc_Ntk_t *pNetwork)
 bool OptimizationState::Audit()
 {
     current = ComputeMetrics(pNtk);
+    fox::cpr::partition_sizes(pNtk, limits.num_parts, part_sizes);
+    const int max_allowed = fox::cpr::compute_balance_max_allowed(part_sizes, limits.balance_pct);
     return current.hop <= limits.hop_limit
         && current.nodes <= limits.node_limit
         && current.cut_nets <= limits.cutnet_limit
+        && fox::cpr::compute_balance_overflow(part_sizes, max_allowed) == 0
         && growth.used() <= limits.growth_budget;
+}
+
+bool BetterResult(const TrajectoryResult &lhs, const TrajectoryResult &rhs)
+{
+    return std::tie(lhs.metrics.cut_edges, lhs.metrics.cut_nets,
+                    lhs.metrics.hop, lhs.metrics.nodes, lhs.trajectory_id)
+        < std::tie(rhs.metrics.cut_edges, rhs.metrics.cut_nets,
+                   rhs.metrics.hop, rhs.metrics.nodes, rhs.trajectory_id);
 }
 
 Metrics ComputeMetrics(Abc_Ntk_t *pNtk)
