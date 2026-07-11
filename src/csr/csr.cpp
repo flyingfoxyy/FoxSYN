@@ -298,9 +298,22 @@ bool detail::RunPhase1Resub(Abc_Ntk_t *pNtk,
                 consumer_fanins.push_back(pOld->Id);
             std::sort(divisor_fanins.begin(), divisor_fanins.end());
             std::sort(consumer_fanins.begin(), consumer_fanins.end());
-            if (divisor_fanins != consumer_fanins
-                || std::strcmp(static_cast<const char *>(pDivisor->pData),
-                               static_cast<const char *>(pConsumer->pData)) != 0)
+            if (divisor_fanins != consumer_fanins)
+                continue;
+            // pData's type is representation-dependent: a SOP cover string
+            // under ABC_FUNC_SOP, but a structurally hashed Hop_Obj_t* under
+            // ABC_FUNC_AIG (the representation "if"-mapped networks use).
+            // Treating an AIG pData as a string here previously corrupted
+            // the SOP memory manager and crashed on every if-mapped input.
+            bool same_function;
+            if (Abc_NtkHasAig(pNtk))
+                same_function = pDivisor->pData == pConsumer->pData;
+            else if (Abc_NtkHasSop(pNtk))
+                same_function = std::strcmp(static_cast<const char *>(pDivisor->pData),
+                                            static_cast<const char *>(pConsumer->pData)) == 0;
+            else
+                same_function = false;
+            if (!same_function)
                 continue;
 
             const int added_crossings =
