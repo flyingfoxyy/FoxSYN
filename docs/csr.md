@@ -1,5 +1,7 @@
 # csr — Cut-Edge Reducer
 
+这是最初实现，直接接管当前网络（`ApplyCsr(Abc_Ntk_t *, const Config &)`）。增强版 `csr2`（Frame 事务模型、`-T` 多轨迹搜索、`-N` cutnet 预算等）见 `docs/csr2.md`，两者作为独立命令并存于 `main.cpp`。
+
 ## 背景
 
 `hpart` 对映射后的网表做 hmetis 划分后，跨分区边（cutsize）是后续物理实现代价的直接来源。FoxSYN 已有两个跟分区打交道的优化命令：

@@ -45,6 +45,8 @@ add_subdirectory(timer)
 add_subdirectory(cpr)
 add_subdirectory(cmfs)
 add_subdirectory(csr)
+add_subdirectory(csr2)
+add_subdirectory(pdecomp)
 add_subdirectory(agdmap)
 add_subdirectory(curvemap)
 
@@ -63,6 +65,8 @@ target_link_libraries(FoxSYN PRIVATE
     cpr
     cmfs
     csr
+    csr2
+    pdecomp
     agdmap
     curvemap
 )
@@ -94,4 +98,12 @@ target_link_libraries(test_cpr PRIVATE
     libabc
     timer
     cpr
+)
+
+add_executable(test_csr2 "test_csr2.cpp")
+target_link_libraries(test_csr2 PRIVATE
+    libabc
+    timer
+    cpr
+    csr2
 )

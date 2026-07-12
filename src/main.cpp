@@ -21,6 +21,8 @@
 #include "cpr/cpr.hpp"
 #include "cmfs/cmfs.hpp"
 #include "csr/csr.hpp"
+#include "csr2/csr2.hpp"
+#include "pdecomp/pdecomp.hpp"
 #include "agdmap/AgdmapCommand.h"
 #include "curvemap/curvemap.h"
 
@@ -851,6 +853,143 @@ usage:
     return 1;
 }
 
+int Csr2_Command(Abc_Frame_t *pAbc, int argc, char **argv)
+{
+    fox::csr2::Config cfg;
+    Abc_Ntk_t *pNtk = Abc_FrameReadNtk(pAbc);
+
+    if (argc > 1 && !strcmp(argv[1], "-h"))
+        goto usage;
+
+    for (int i = 1; i != argc; ++i)
+    {
+        if (argv[i][0] != '-')
+        {
+            std::cout << "csr2: unexpected argument " << argv[i] << "\n";
+            goto usage;
+        }
+        const char arg = *(argv[i] + 1);
+        switch (arg)
+        {
+        case 'R':
+            if (i + 1 >= argc) { printf("csr2: -R requires a number\n"); return 1; }
+            cfg.max_rounds = std::atoi(argv[++i]);
+            if (cfg.max_rounds < 1) { printf("csr2: invalid max_rounds %d\n", cfg.max_rounds); return 1; }
+            break;
+        case 'S':
+            if (i + 1 >= argc) { printf("csr2: -S requires a number\n"); return 1; }
+            cfg.stall_limit = std::atoi(argv[++i]);
+            if (cfg.stall_limit < 1) { printf("csr2: invalid stall_limit %d\n", cfg.stall_limit); return 1; }
+            break;
+        case 'T':
+            if (i + 1 >= argc) { printf("csr2: -T requires a number\n"); return 1; }
+            cfg.num_trajectories = std::atoi(argv[++i]);
+            if (cfg.num_trajectories < 1 || cfg.num_trajectories > 3)
+            { printf("csr2: -T must be 1-3\n"); return 1; }
+            break;
+        case 'X':
+            if (i + 1 >= argc) { printf("csr2: -X requires a number\n"); return 1; }
+            cfg.maxTempLut = std::atoi(argv[++i]);
+            if (cfg.maxTempLut != 0 && (cfg.maxTempLut < 7 || cfg.maxTempLut > 12))
+            { printf("csr2: -X must be 0 (off) or 7-12\n"); return 1; }
+            break;
+        case 'G':
+            if (i + 1 >= argc) { printf("csr2: -G requires a growth percentage\n"); return 1; }
+            cfg.replicate_growth_pct = std::atoi(argv[++i]);
+            if (cfg.replicate_growth_pct < 0 || cfg.replicate_growth_pct > 100)
+            { printf("csr2: invalid growth percentage %d (must be between 0 and 100)\n", cfg.replicate_growth_pct); return 1; }
+            break;
+        case 'N':
+            if (i + 1 >= argc) { printf("csr2: -N requires a cut-net growth percentage\n"); return 1; }
+            cfg.cutnet_growth_pct = std::atoi(argv[++i]);
+            if (cfg.cutnet_growth_pct < 100) { printf("csr2: invalid cut-net growth percentage %d (must be >= 100)\n", cfg.cutnet_growth_pct); return 1; }
+            break;
+        case 'B':
+            if (i + 1 >= argc) { printf("csr2: -B requires a balance percentage\n"); return 1; }
+            cfg.balance_pct = std::atoi(argv[++i]);
+            if (cfg.balance_pct < 1 || cfg.balance_pct > 99)
+            { printf("csr2: invalid balance percentage %d (must be between 1 and 99)\n", cfg.balance_pct); return 1; }
+            break;
+        case 'b':
+            cfg.do_balance_repair ^= 1;
+            break;
+        case 'L':
+            cfg.do_relocate ^= 1;
+            break;
+        case 'v':
+            cfg.verbose ^= 1;
+            break;
+        case 'h':
+            goto usage;
+        default:
+            std::cout << "csr2: unknown argument -" << arg << "\n";
+            goto usage;
+        }
+    }
+
+    if (!pNtk) { printf("csr2: current network is empty\n"); return 1; }
+    if (!Abc_NtkIsLogic(pNtk)) { printf("csr2: network must be logic (not AIG)\n"); return 1; }
+    if (!pNtk->pPdb) { printf("csr2: no partition database (run hpart first)\n"); return 1; }
+
+    return fox::csr2::ApplyCsr(pAbc, cfg) ? 0 : 1;
+
+usage:
+    Abc_Print(-2, "usage: csr2 [-R num] [-S num] [-T num] [-X num] [-G num] [-N num] [-B num] [-bLv]\n");
+    Abc_Print(-2, "\t           cut-edge reduction via resub-first + replication-fallback logic synthesis\n");
+    Abc_Print(-2, "\t-R num  : max optimization rounds per phase [default = %d]\n", cfg.max_rounds);
+    Abc_Print(-2, "\t-S num  : stall limit (rounds without improvement) per phase [default = %d]\n", cfg.stall_limit);
+    Abc_Print(-2, "\t-T num  : number of optimization trajectories (1-3) [default = %d]\n", cfg.num_trajectories);
+    Abc_Print(-2, "\t-X num  : max temp LUT size for Shannon decomp (0=off, 7-12), Phase 1 only [default = %d]\n", cfg.maxTempLut);
+    Abc_Print(-2, "\t-G num  : Phase 2 replication node growth cap, %% of original node count [default = %d]\n", cfg.replicate_growth_pct);
+    Abc_Print(-2, "\t-N num  : max cut-net count, %% of entry cut-net count, shared Phase 1/2 budget [default = %d]\n", cfg.cutnet_growth_pct);
+    Abc_Print(-2, "\t-B num  : balance percentage (1-99) [default = inherit from pdb]\n");
+    Abc_Print(-2, "\t-b      : run cpr-style balance repair after phase1/2 [default = %s]\n", cfg.do_balance_repair ? "on" : "off");
+    Abc_Print(-2, "\t-L      : disable phase 0 hop-preserving relocation [default = on]\n");
+    Abc_Print(-2, "\t-v      : toggles verbose output\n");
+    Abc_Print(-2, "\n");
+    return 1;
+}
+
+int Pdecomp_Command(Abc_Frame_t *pAbc, int argc, char **argv)
+{
+    fox::pdecomp::Config cfg;
+
+    if (argc > 1 && !strcmp(argv[1], "-h"))
+        goto usage;
+
+    for (int i = 1; i != argc; ++i)
+    {
+        if (argv[i][0] != '-')
+        {
+            std::cout << "pdecomp: unexpected argument " << argv[i] << "\n";
+            goto usage;
+        }
+        const char arg = *(argv[i] + 1);
+        switch (arg)
+        {
+        case 'K':
+            if (i + 1 >= argc) { printf("pdecomp: -K requires a number\n"); return 1; }
+            cfg.K = std::atoi(argv[++i]);
+            if (cfg.K < 2 || cfg.K > 6) { printf("pdecomp: -K must be 2-6\n"); return 1; }
+            break;
+        case 'h':
+            goto usage;
+        default:
+            std::cout << "pdecomp: unknown argument -" << arg << "\n";
+            goto usage;
+        }
+    }
+
+    return fox::pdecomp::ApplyPdecomp(pAbc, cfg) ? 0 : 1;
+
+usage:
+    Abc_Print(-2, "usage: pdecomp [-K num]\n");
+    Abc_Print(-2, "\t           partition-preserving LUT decomposition to <= K inputs\n");
+    Abc_Print(-2, "\t-K num  : target max fanin count after decomposition (2-6) [default = %d]\n", cfg.K);
+    Abc_Print(-2, "\n");
+    return 1;
+}
+
 int Curvemap_Command(Abc_Frame_t* pAbc, int argc, char** argv) {
     using namespace fox::curvemap;
 
@@ -926,6 +1065,8 @@ struct CmdRegister
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "cpr", Cpr_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "cmfs", Cmfs_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "csr", Csr_Command, 1);
+        Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "csr2", Csr2_Command, 1);
+        Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "pdecomp", Pdecomp_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "curvemap", Curvemap_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FPGA mapping", "agdmap", Agdmap, 1);
     }
