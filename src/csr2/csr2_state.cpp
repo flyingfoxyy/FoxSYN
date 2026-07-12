@@ -1,4 +1,4 @@
-#include "csr_internal.hpp"
+#include "csr2_internal.hpp"
 
 #include "base/abc/abcPdb.hpp"
 #include "cpr/cpr.hpp"
@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <limits>
 
-namespace fox::csr::detail {
+namespace fox::csr2::detail {
 
 bool GrowthTracker::TryConsume(int positive_net_growth)
 {
@@ -172,4 +172,4 @@ void RestorePdbMetadata(Abc_Ntk_t *pNtk, const EntryLimits &limits)
     pNtk->pPdb->set_balance_pct(limits.balance_pct);
 }
 
-} // namespace fox::csr::detail
+} // namespace fox::csr2::detail

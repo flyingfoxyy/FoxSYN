@@ -1,10 +1,10 @@
-#ifndef CSR_HPP
-#define CSR_HPP
+#ifndef CSR2_HPP
+#define CSR2_HPP
 
 #include "misc/util/abc_global.h"
 #include "base/main/main.h"
 
-namespace fox::csr {
+namespace fox::csr2 {
 
 struct Config {
     int  max_rounds           = 20;   // per-phase round cap (Phase 1 and Phase 2 each use this independently)
@@ -15,13 +15,15 @@ struct Config {
     int  nWinMax                = 300;
     int  maxTempLut            = 0;   // -X: Shannon decomp max temp LUT size (0=off, 7-12), Phase 1 only
     int  replicate_growth_pct = 2;    // -G: Phase 2 node growth cap, % of original node count
+    int  cutnet_growth_pct    = 300;  // -N: max cut-net count, % of entry cut-net count (shared Phase 1/2 budget)
     int  balance_pct          = -1;   // -B: -1 = inherit from pdb (falls back to 2 like cpr)
+    int  num_trajectories     = 1;
     bool do_balance_repair    = false; // -b: run cpr-style enforce_balance after phase1/2 (off by default)
     bool do_relocate          = true;  // -L disables: phase 0 hop-preserving node relocation
     bool verbose              = false;
 };
 
-bool ApplyCsr(Abc_Ntk_t *pNtk, const Config &cfg);
+bool ApplyCsr(Abc_Frame_t *pAbc, const Config &cfg);
 
 // Cut-edge count: number of (driver, consumer) pairs whose partitions
 // differ. Distinct from Abc_NtkComputeCutSize()'s cut-NET count, which
@@ -29,6 +31,6 @@ bool ApplyCsr(Abc_Ntk_t *pNtk, const Config &cfg);
 // fanouts span.
 int ComputeCutEdgeCount(Abc_Ntk_t *pNtk);
 
-} // namespace fox::csr
+} // namespace fox::csr2
 
-#endif // CSR_HPP
+#endif // CSR2_HPP

@@ -1,11 +1,11 @@
-#include "csr_internal.hpp"
+#include "csr2_internal.hpp"
 
 #include <algorithm>
 #include <functional>
 #include <queue>
 #include <tuple>
 
-namespace fox::csr::detail {
+namespace fox::csr2::detail {
 
 namespace {
 
@@ -173,4 +173,4 @@ int HopState::topo_rank(int obj_id) const
         ? topo_rank_[obj_id] : -1;
 }
 
-} // namespace fox::csr::detail
+} // namespace fox::csr2::detail

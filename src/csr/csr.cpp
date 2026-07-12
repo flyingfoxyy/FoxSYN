@@ -1,14 +1,11 @@
-#include "csr_internal.hpp"
+#include "csr.hpp"
 
 #include "base/abc/abc.h"
 #include "base/abc/abcPdb.hpp"
 #include "cpr/cpr.hpp"
 
 #include <algorithm>
-#include <chrono>
 #include <cstdio>
-#include <cstring>
-#include <map>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -62,311 +59,6 @@ int ComputeCutEdgeCount(Abc_Ntk_t *pNtk)
     return count;
 }
 
-namespace {
-
-bool NetIsCut(Abc_Obj_t *pDriver, part_id driver_part,
-              part_id ignored_fanout_part = ABC_PART_ID_NONE)
-{
-    Abc_Obj_t *pFanout;
-    int i;
-    Abc_ObjForEachFanout(pDriver, pFanout, i)
-    {
-        if (!Abc_ObjIsNode(pFanout))
-            continue;
-        const part_id fanout_part = Abc_ObjGetPartId(pFanout);
-        if (fanout_part == ABC_PART_ID_NONE
-            || fanout_part == ignored_fanout_part)
-            continue;
-        if (fanout_part != driver_part)
-            return true;
-    }
-    return false;
-}
-
-int PredictReplicationCutnetDelta(Abc_Obj_t *pDriver, part_id target_part)
-{
-    std::vector<Abc_Obj_t *> affected{pDriver};
-    Abc_Obj_t *pFanin;
-    int i;
-    Abc_ObjForEachFanin(pDriver, pFanin, i)
-        if (is_part_stat_vertex(pFanin)
-            && Abc_ObjGetPartId(pFanin) != ABC_PART_ID_NONE)
-            affected.push_back(pFanin);
-    std::sort(affected.begin(), affected.end(),
-              [](Abc_Obj_t *lhs, Abc_Obj_t *rhs) { return lhs->Id < rhs->Id; });
-    affected.erase(std::unique(affected.begin(), affected.end()), affected.end());
-
-    int before = 0;
-    int after = 0;
-    for (Abc_Obj_t *pObj : affected)
-    {
-        const part_id part = Abc_ObjGetPartId(pObj);
-        before += NetIsCut(pObj, part);
-        if (pObj == pDriver)
-            after += NetIsCut(pObj, part, target_part);
-        else
-            after += NetIsCut(pObj, part) || part != target_part;
-    }
-    return after - before;
-}
-
-bool ReplicationCandidateLess(const detail::ReplicationCandidate &lhs,
-                              const detail::ReplicationCandidate &rhs)
-{
-    const long long lhs_ratio = static_cast<long long>(lhs.net_gain()) * rhs.node_cost;
-    const long long rhs_ratio = static_cast<long long>(rhs.net_gain()) * lhs.node_cost;
-    if (lhs_ratio != rhs_ratio)
-        return lhs_ratio > rhs_ratio;
-    return std::tuple{-lhs.net_gain(), lhs.cutnet_delta,
-                      lhs.key.driver_id, lhs.key.target_part}
-         < std::tuple{-rhs.net_gain(), rhs.cutnet_delta,
-                      rhs.key.driver_id, rhs.key.target_part};
-}
-
-} // namespace
-
-std::vector<detail::ReplicationCandidate>
-detail::CollectReplicationCandidates(Abc_Ntk_t *pNtk)
-{
-    std::map<std::pair<int, part_id>, int> saved_edges;
-    Abc_Obj_t *pDriver, *pFanout;
-    int i, k;
-    Abc_NtkForEachNode(pNtk, pDriver, i)
-    {
-        const part_id driver_part = Abc_ObjGetPartId(pDriver);
-        if (driver_part == ABC_PART_ID_NONE)
-            continue;
-        Abc_ObjForEachFanout(pDriver, pFanout, k)
-        {
-            if (!Abc_ObjIsNode(pFanout))
-                continue;
-            const part_id target_part = Abc_ObjGetPartId(pFanout);
-            if (target_part == ABC_PART_ID_NONE || target_part == driver_part)
-                continue;
-            saved_edges[{pDriver->Id, target_part}]++;
-        }
-    }
-
-    std::vector<detail::ReplicationCandidate> candidates;
-    for (const auto &[key, saved] : saved_edges)
-    {
-        pDriver = Abc_NtkObj(pNtk, key.first);
-        if (!pDriver || !Abc_ObjIsNode(pDriver))
-            continue;
-        int added = 0;
-        Abc_Obj_t *pFanin;
-        Abc_ObjForEachFanin(pDriver, pFanin, k)
-            if (is_part_stat_vertex(pFanin)
-                && Abc_ObjGetPartId(pFanin) != ABC_PART_ID_NONE
-                && Abc_ObjGetPartId(pFanin) != key.second)
-                added++;
-        candidates.push_back({
-            {key.first, key.second},
-            saved,
-            added,
-            PredictReplicationCutnetDelta(pDriver, key.second),
-            1,
-        });
-    }
-    std::sort(candidates.begin(), candidates.end(), ReplicationCandidateLess);
-    return candidates;
-}
-
-int detail::ComputeHypotheticalCutNetDelta(
-    Abc_Obj_t *pConsumer,
-    const std::vector<Abc_Obj_t *> &old_fanins,
-    const std::vector<Abc_Obj_t *> &new_fanins)
-{
-    if (!pConsumer || Abc_ObjGetPartId(pConsumer) == ABC_PART_ID_NONE)
-        return 0;
-
-    std::vector<Abc_Obj_t *> affected = old_fanins;
-    affected.insert(affected.end(), new_fanins.begin(), new_fanins.end());
-    affected.erase(std::remove(affected.begin(), affected.end(), nullptr),
-                   affected.end());
-    std::sort(affected.begin(), affected.end(),
-              [](Abc_Obj_t *lhs, Abc_Obj_t *rhs) { return lhs->Id < rhs->Id; });
-    affected.erase(std::unique(affected.begin(), affected.end()), affected.end());
-
-    const auto contains = [](const std::vector<Abc_Obj_t *> &fanins,
-                             Abc_Obj_t *pDriver) {
-        return std::find(fanins.begin(), fanins.end(), pDriver) != fanins.end();
-    };
-    const part_id consumer_part = Abc_ObjGetPartId(pConsumer);
-    int before_count = 0;
-    int after_count = 0;
-    for (Abc_Obj_t *pDriver : affected)
-    {
-        const part_id driver_part = Abc_ObjGetPartId(pDriver);
-        if (!is_part_stat_vertex(pDriver) || driver_part == ABC_PART_ID_NONE)
-            continue;
-
-        bool other_cross = false;
-        Abc_Obj_t *pFanout;
-        int i;
-        Abc_ObjForEachFanout(pDriver, pFanout, i)
-        {
-            if (pFanout == pConsumer || !Abc_ObjIsNode(pFanout))
-                continue;
-            const part_id fanout_part = Abc_ObjGetPartId(pFanout);
-            if (fanout_part != ABC_PART_ID_NONE && fanout_part != driver_part)
-            {
-                other_cross = true;
-                break;
-            }
-        }
-        before_count += other_cross
-            || (contains(old_fanins, pDriver) && driver_part != consumer_part);
-        after_count += other_cross
-            || (contains(new_fanins, pDriver) && driver_part != consumer_part);
-    }
-    return after_count - before_count;
-}
-
-std::optional<detail::ResubPlan> detail::SelectBestResubPlan(
-    const std::vector<detail::ResubPlan> &plans)
-{
-    if (plans.empty())
-        return std::nullopt;
-    return *std::min_element(plans.begin(), plans.end(),
-        [](const auto &lhs, const auto &rhs) {
-            return std::tuple{lhs.cutedge_delta, lhs.cutnet_delta,
-                              lhs.predicted_hop, lhs.new_fanin_count,
-                              lhs.divisor_ids}
-                 < std::tuple{rhs.cutedge_delta, rhs.cutnet_delta,
-                              rhs.predicted_hop, rhs.new_fanin_count,
-                              rhs.divisor_ids};
-        });
-}
-
-bool detail::ExternalDivisorPlanAllowed(int removed_crossings,
-                                        int added_crossings)
-{
-    return added_crossings < removed_crossings;
-}
-
-bool detail::ResubPlanAllowed(const detail::ResubPlan &plan,
-                              const detail::OptimizationState &state)
-{
-    return plan.cutedge_delta < 0
-        && state.current.cut_nets + plan.cutnet_delta <= state.limits.cutnet_limit
-        && plan.predicted_hop <= state.limits.hop_limit
-        && plan.positive_net_growth <= state.growth.remaining();
-}
-
-bool detail::RunPhase1Resub(Abc_Ntk_t *pNtk,
-                            detail::OptimizationState &state,
-                            const Config &, detail::Phase1Stats &stats)
-{
-    if (!pNtk || state.pNtk != pNtk)
-        return false;
-
-    Abc_Obj_t *pConsumer;
-    int i;
-    Abc_NtkForEachNode(pNtk, pConsumer, i)
-    {
-        const part_id consumer_part = Abc_ObjGetPartId(pConsumer);
-        if (consumer_part == ABC_PART_ID_NONE)
-            continue;
-        std::vector<Abc_Obj_t *> old_fanins;
-        int removed_crossings = 0;
-        Abc_Obj_t *pFanin;
-        int k;
-        Abc_ObjForEachFanin(pConsumer, pFanin, k)
-        {
-            old_fanins.push_back(pFanin);
-            const part_id fanin_part = Abc_ObjGetPartId(pFanin);
-            removed_crossings += fanin_part != ABC_PART_ID_NONE
-                && fanin_part != consumer_part;
-        }
-        if (removed_crossings < 2 || old_fanins.size() < 2)
-            continue;
-
-        Abc_Obj_t *pDivisor;
-        int j;
-        Abc_NtkForEachNode(pNtk, pDivisor, j)
-        {
-            if (pDivisor == pConsumer
-                || Abc_ObjFaninNum(pDivisor) != static_cast<int>(old_fanins.size())
-                || !pDivisor->pData || !pConsumer->pData)
-                continue;
-            std::vector<int> divisor_fanins;
-            Abc_ObjForEachFanin(pDivisor, pFanin, k)
-                divisor_fanins.push_back(pFanin->Id);
-            std::vector<int> consumer_fanins;
-            for (Abc_Obj_t *pOld : old_fanins)
-                consumer_fanins.push_back(pOld->Id);
-            std::sort(divisor_fanins.begin(), divisor_fanins.end());
-            std::sort(consumer_fanins.begin(), consumer_fanins.end());
-            if (divisor_fanins != consumer_fanins)
-                continue;
-            // pData's type is representation-dependent: a SOP cover string
-            // under ABC_FUNC_SOP, but a structurally hashed Hop_Obj_t* under
-            // ABC_FUNC_AIG (the representation "if"-mapped networks use).
-            // Treating an AIG pData as a string here previously corrupted
-            // the SOP memory manager and crashed on every if-mapped input.
-            bool same_function;
-            if (Abc_NtkHasAig(pNtk))
-                same_function = pDivisor->pData == pConsumer->pData;
-            else if (Abc_NtkHasSop(pNtk))
-                same_function = std::strcmp(static_cast<const char *>(pDivisor->pData),
-                                            static_cast<const char *>(pConsumer->pData)) == 0;
-            else
-                same_function = false;
-            if (!same_function)
-                continue;
-
-            const int added_crossings =
-                Abc_ObjGetPartId(pDivisor) != consumer_part;
-            if (!detail::ExternalDivisorPlanAllowed(removed_crossings,
-                                                    added_crossings))
-                continue;
-            stats.attempts++;
-            const detail::Metrics before = detail::ComputeMetrics(pNtk);
-            std::vector<Abc_Obj_t *> new_fanins{pDivisor};
-            const int cutnet_delta = detail::ComputeHypotheticalCutNetDelta(
-                pConsumer, old_fanins, new_fanins);
-            void *pOldData = pConsumer->pData;
-            Abc_ObjRemoveFanins(pConsumer);
-            Abc_ObjAddFanin(pConsumer, pDivisor);
-            // Same representation split as the same_function check above:
-            // a single-fanin passthrough is a SOP buffer cover under
-            // ABC_FUNC_SOP, but under ABC_FUNC_AIG it is just "this node's
-            // function is its one Hop variable" -- Abc_SopCreateBuf here
-            // corrupted the SOP memory manager on if-mapped (AIG) networks.
-            if (Abc_NtkHasAig(pNtk))
-                pConsumer->pData = Hop_IthVar((Hop_Man_t *)pNtk->pManFunc, 0);
-            else
-                pConsumer->pData = Abc_SopCreateBuf(
-                    static_cast<Mem_Flex_t *>(pNtk->pManFunc));
-            const detail::Metrics after = detail::ComputeMetrics(pNtk);
-            detail::ResubPlan plan;
-            plan.divisor_ids = {pDivisor->Id};
-            plan.cutedge_delta = after.cut_edges - before.cut_edges;
-            plan.cutnet_delta = cutnet_delta;
-            plan.predicted_hop = after.hop;
-            plan.new_fanin_count = 1;
-            if (detail::ResubPlanAllowed(plan, state))
-            {
-                state.AttachNetwork(pNtk);
-                if (state.Audit())
-                {
-                    stats.successes++;
-                    stats.joint_replacements++;
-                    return true;
-                }
-            }
-
-            Abc_ObjRemoveFanins(pConsumer);
-            for (Abc_Obj_t *pOld : old_fanins)
-                Abc_ObjAddFanin(pConsumer, pOld);
-            pConsumer->pData = pOldData;
-            state.AttachNetwork(pNtk);
-        }
-    }
-    return false;
-}
-
 // ---------------------------------------------------------------------
 // Candidate collection: every (consumer, iFanin) pair whose driver crosses
 // into a different partition, weighted by the driver's total number of
@@ -374,7 +66,13 @@ bool detail::RunPhase1Resub(Abc_Ntk_t *pNtk,
 // not path-dependent), unlike cmfs's top-K critical-path scan.
 // ---------------------------------------------------------------------
 
-static void collect_cut_candidates(Abc_Ntk_t *pNtk, std::vector<detail::CutCandidate> &candidates)
+struct CutCandidate {
+    int node_id;
+    int iFanin;
+    int weight;
+};
+
+static void collect_cut_candidates(Abc_Ntk_t *pNtk, std::vector<CutCandidate> &candidates)
 {
     std::unordered_map<int, int> driver_cross_count;
 
@@ -409,7 +107,7 @@ static void collect_cut_candidates(Abc_Ntk_t *pNtk, std::vector<detail::CutCandi
             part_id fanin_part = Abc_ObjGetPartId(pFanin);
             if (fanin_part == ABC_PART_ID_NONE || fanin_part == obj_part)
                 continue;
-            detail::CutCandidate c;
+            CutCandidate c;
             c.node_id = pObj->Id;
             c.iFanin  = k;
             c.weight  = driver_cross_count[pFanin->Id];
@@ -417,7 +115,10 @@ static void collect_cut_candidates(Abc_Ntk_t *pNtk, std::vector<detail::CutCandi
         }
     }
 
-    std::sort(candidates.begin(), candidates.end(), detail::CutCandidateLess{});
+    std::sort(candidates.begin(), candidates.end(),
+              [](const CutCandidate &a, const CutCandidate &b) {
+                  return a.weight > b.weight;
+              });
 }
 
 // ---------------------------------------------------------------------
@@ -835,8 +536,7 @@ phase4:
     return 0;
 }
 
-static void run_phase1_resub(Abc_Ntk_t *&pNtk, const Config &cfg,
-                             detail::OptimizationState &state,
+static void run_phase1_resub(Abc_Ntk_t *pNtk, const Config &cfg,
                              int &total_attempts, int &total_successes)
 {
     int best_cutedges = ComputeCutEdgeCount(pNtk);
@@ -844,24 +544,14 @@ static void run_phase1_resub(Abc_Ntk_t *&pNtk, const Config &cfg,
 
     for (int round = 0; round < cfg.max_rounds; ++round)
     {
-        Abc_Ntk_t *pSnapshot = Abc_NtkDup(pNtk);
-        if (!pSnapshot)
-            break;
-        const int nodes_before = Abc_NtkNodeNum(pSnapshot);
         Abc_NtkToSop(pNtk, -1, ABC_INFINITY);
         if (!Abc_NtkToAig(pNtk))
-        {
-            Abc_NtkDelete(pSnapshot);
             break;
-        }
 
-        std::vector<detail::CutCandidate> candidates;
+        std::vector<CutCandidate> candidates;
         collect_cut_candidates(pNtk, candidates);
         if (candidates.empty())
-        {
-            Abc_NtkDelete(pSnapshot);
             break;
-        }
 
         Abc_NtkLevel(pNtk);
         Abc_NtkStartReverseLevels(pNtk, 0);
@@ -925,26 +615,8 @@ static void run_phase1_resub(Abc_Ntk_t *&pNtk, const Config &cfg,
         Mfs_ManStop(p);
         Abc_NtkStopReverseLevels(pNtk);
 
-        // Abc_NtkSweep is skipped here: it converts to BDD and patches out
-        // any <2-fanin node via Abc_ObjPatchFanin, which would delete
-        // pdecomp's cross-partition identity buffers (see pdecomp.cpp) and
-        // reopen the fanout-explosion bug they exist to prevent, if csr
-        // runs after pdecomp. Abc_NtkCleanup only drops nodes unreachable
-        // from the POs and leaves live single-input nodes alone.
+        Abc_NtkSweep(pNtk, 0);
         Abc_NtkCleanup(pNtk, 0);
-
-        const int growth = std::max(0, Abc_NtkNodeNum(pNtk) - nodes_before);
-        if (state.growth.remaining() < growth || !state.Audit())
-        {
-            Abc_NtkDelete(pNtk);
-            pNtk = pSnapshot;
-            state.AttachNetwork(pNtk);
-            if (cfg.verbose)
-                printf("csr: phase1 round %2d rolled back by hard constraints\n", round);
-            break;
-        }
-        state.growth.TryConsume(growth);
-        Abc_NtkDelete(pSnapshot);
 
         int new_cutedges = ComputeCutEdgeCount(pNtk);
         if (cfg.verbose)
@@ -986,264 +658,6 @@ static Abc_Obj_t *duplicate_node_csr(Abc_Ntk_t *pNtk, Abc_Obj_t *pObj)
     Abc_ObjForEachFanin(pObj, pFanin, i)
         Abc_ObjAddFanin(pDup, pFanin);
     return pDup;
-}
-
-namespace {
-
-constexpr int kMaxClusterDepth = 2;
-constexpr int kMaxClusterNodes = 3;
-
-struct ClusterPatch {
-    Abc_Obj_t *pConsumer = nullptr;
-    Abc_Obj_t *pOldDriver = nullptr;
-    Abc_Obj_t *pNewDriver = nullptr;
-};
-
-struct ClusterTransaction {
-    std::vector<ClusterPatch> patches;
-    std::vector<Abc_Obj_t *> duplicates;
-};
-
-void RollbackCluster(Abc_Ntk_t *pNtk, ClusterTransaction &txn)
-{
-    for (auto it = txn.patches.rbegin(); it != txn.patches.rend(); ++it)
-        Abc_ObjPatchFanin(it->pConsumer, it->pNewDriver, it->pOldDriver);
-    for (auto it = txn.duplicates.rbegin(); it != txn.duplicates.rend(); ++it)
-        Abc_NtkDeleteObj(*it);
-    txn.patches.clear();
-    txn.duplicates.clear();
-}
-
-std::vector<int> OrderClusterNodes(const detail::ReplicationCluster &cluster,
-                                   const detail::HopState &hop)
-{
-    std::vector<int> ordered = cluster.node_ids;
-    std::sort(ordered.begin(), ordered.end(), [&](int lhs, int rhs) {
-        const int lhs_rank = hop.topo_rank(lhs);
-        const int rhs_rank = hop.topo_rank(rhs);
-        return std::tuple{lhs_rank, lhs} < std::tuple{rhs_rank, rhs};
-    });
-    return ordered;
-}
-
-bool BuildCluster(Abc_Ntk_t *pNtk, const detail::ReplicationCluster &cluster,
-                  const detail::HopState &hop, ClusterTransaction &txn)
-{
-    txn = {};
-    if (cluster.node_ids.empty())
-        return false;
-
-    const std::vector<int> ordered = OrderClusterNodes(cluster, hop);
-    std::map<int, Abc_Obj_t *> duplicates;
-    for (int node_id : ordered)
-    {
-        Abc_Obj_t *pOriginal = Abc_NtkObj(pNtk, node_id);
-        if (!pOriginal || !Abc_ObjIsNode(pOriginal))
-        {
-            RollbackCluster(pNtk, txn);
-            return false;
-        }
-        Abc_Obj_t *pDup = duplicate_node_csr(pNtk, pOriginal);
-        if (!pDup)
-        {
-            RollbackCluster(pNtk, txn);
-            return false;
-        }
-        Abc_ObjSetPartId(pDup, cluster.key.target_part);
-        duplicates[node_id] = pDup;
-        txn.duplicates.push_back(pDup);
-
-        Abc_Obj_t *pFanin;
-        int i;
-        Abc_ObjForEachFanin(pOriginal, pFanin, i)
-        {
-            auto it = duplicates.find(pFanin->Id);
-            if (it != duplicates.end())
-                Abc_ObjPatchFanin(pDup, pFanin, it->second);
-        }
-    }
-
-    auto root_it = duplicates.find(cluster.key.driver_id);
-    Abc_Obj_t *pRoot = Abc_NtkObj(pNtk, cluster.key.driver_id);
-    if (!pRoot || root_it == duplicates.end())
-    {
-        RollbackCluster(pNtk, txn);
-        return false;
-    }
-
-    std::vector<Abc_Obj_t *> target_fanouts;
-    Abc_Obj_t *pFanout;
-    int i;
-    Abc_ObjForEachFanout(pRoot, pFanout, i)
-        if (Abc_ObjIsNode(pFanout)
-            && Abc_ObjGetPartId(pFanout) == cluster.key.target_part)
-            target_fanouts.push_back(pFanout);
-    if (target_fanouts.empty())
-    {
-        RollbackCluster(pNtk, txn);
-        return false;
-    }
-    for (Abc_Obj_t *pConsumer : target_fanouts)
-    {
-        Abc_ObjPatchFanin(pConsumer, pRoot, root_it->second);
-        txn.patches.push_back({pConsumer, pRoot, root_it->second});
-    }
-    return true;
-}
-
-bool ClusterLimitsHold(Abc_Ntk_t *pNtk,
-                       const detail::OptimizationState &state,
-                       const detail::Metrics &metrics)
-{
-    if (metrics.hop > state.limits.hop_limit
-        || metrics.nodes > state.limits.node_limit
-        || metrics.cut_nets > state.limits.cutnet_limit)
-        return false;
-    std::vector<int> part_sizes;
-    fox::cpr::partition_sizes(pNtk, state.limits.num_parts, part_sizes);
-    const int max_allowed = fox::cpr::compute_balance_max_allowed(
-        part_sizes, state.limits.balance_pct);
-    return fox::cpr::compute_balance_overflow(part_sizes, max_allowed)
-        <= state.limits.balance_overflow_limit;
-}
-
-bool EvaluateCluster(Abc_Ntk_t *pNtk, detail::OptimizationState &state,
-                     detail::HopState &hop, detail::ReplicationCluster &cluster)
-{
-    if (cluster.node_ids.empty()
-        || static_cast<int>(cluster.node_ids.size()) > kMaxClusterNodes
-        || state.growth.remaining() < static_cast<int>(cluster.node_ids.size()))
-        return false;
-    const detail::Metrics before = detail::ComputeMetrics(pNtk);
-    ClusterTransaction txn;
-    if (!BuildCluster(pNtk, cluster, hop, txn))
-    {
-        hop.Initialize(pNtk);
-        return false;
-    }
-
-    const detail::Metrics after = detail::ComputeMetrics(pNtk);
-    detail::HopState tentative_hop = hop;
-    const bool hop_ok = tentative_hop.Initialize(pNtk)
-        && after.hop <= state.limits.hop_limit;
-    cluster.cutedge_delta = after.cut_edges - before.cut_edges;
-    cluster.cutnet_delta = after.cut_nets - before.cut_nets;
-    cluster.positive_net_growth = static_cast<int>(cluster.node_ids.size());
-    const bool legal = cluster.cutedge_delta < 0 && hop_ok
-        && ClusterLimitsHold(pNtk, state, after);
-    RollbackCluster(pNtk, txn);
-    hop.Initialize(pNtk);
-    return legal;
-}
-
-bool ClusterLess(const detail::ReplicationCluster &lhs,
-                 const detail::ReplicationCluster &rhs)
-{
-    return std::tuple{lhs.cutedge_delta, lhs.node_ids.size(), lhs.cutnet_delta,
-                      lhs.node_ids}
-         < std::tuple{rhs.cutedge_delta, rhs.node_ids.size(), rhs.cutnet_delta,
-                      rhs.node_ids};
-}
-
-} // namespace
-
-detail::ReplicationCluster detail::FindBestReplicationCluster(
-    Abc_Ntk_t *pNtk, detail::OptimizationState &state,
-    const detail::ReplicationCandidate &candidate, detail::HopState &hop)
-{
-    detail::ReplicationCluster best;
-    if (!pNtk || state.pNtk != pNtk)
-        return best;
-
-    std::vector<std::vector<int>> frontier{{candidate.key.driver_id}};
-    int evaluated = 0;
-    for (int depth = 0; depth <= kMaxClusterDepth && !frontier.empty(); ++depth)
-    {
-        std::vector<std::vector<int>> next;
-        for (auto node_ids : frontier)
-        {
-            std::sort(node_ids.begin(), node_ids.end());
-            node_ids.erase(std::unique(node_ids.begin(), node_ids.end()),
-                           node_ids.end());
-            detail::ReplicationCluster cluster{candidate.key, node_ids};
-            if (evaluated++ < detail::SearchBudget::kMaxClustersPerDriverPart
-                && EvaluateCluster(pNtk, state, hop, cluster)
-                && (best.node_ids.empty() || ClusterLess(cluster, best)))
-                best = cluster;
-            if (depth == kMaxClusterDepth
-                || static_cast<int>(node_ids.size()) >= kMaxClusterNodes)
-                continue;
-
-            for (int node_id : node_ids)
-            {
-                Abc_Obj_t *pNode = Abc_NtkObj(pNtk, node_id);
-                if (!pNode)
-                    continue;
-                Abc_Obj_t *pFanin;
-                int i;
-                Abc_ObjForEachFanin(pNode, pFanin, i)
-                {
-                    if (!Abc_ObjIsNode(pFanin)
-                        || Abc_ObjGetPartId(pFanin) == candidate.key.target_part
-                        || std::find(node_ids.begin(), node_ids.end(), pFanin->Id)
-                            != node_ids.end())
-                        continue;
-                    auto expanded = node_ids;
-                    expanded.push_back(pFanin->Id);
-                    std::sort(expanded.begin(), expanded.end());
-                    if (std::find(next.begin(), next.end(), expanded) == next.end())
-                        next.push_back(std::move(expanded));
-                }
-            }
-        }
-        frontier = std::move(next);
-    }
-    if (!best.node_ids.empty())
-    {
-        detail::ReplicationCluster ordered = best;
-        ordered.node_ids = OrderClusterNodes(best, hop);
-        return ordered;
-    }
-    return best;
-}
-
-bool detail::TryReplicationCluster(Abc_Ntk_t *pNtk,
-                                   detail::OptimizationState &state,
-                                   detail::HopState &hop,
-                                   const detail::ReplicationCluster &cluster)
-{
-    const int growth = static_cast<int>(cluster.node_ids.size());
-    if (!pNtk || state.pNtk != pNtk || growth <= 0
-        || growth > kMaxClusterNodes || state.growth.remaining() < growth)
-        return false;
-
-    const detail::Metrics before = detail::ComputeMetrics(pNtk);
-    ClusterTransaction txn;
-    if (!BuildCluster(pNtk, cluster, hop, txn))
-    {
-        hop.Initialize(pNtk);
-        return false;
-    }
-
-    const detail::Metrics after = detail::ComputeMetrics(pNtk);
-    const int cutedge_delta = after.cut_edges - before.cut_edges;
-    const int cutnet_delta = after.cut_nets - before.cut_nets;
-    const bool legal = cutedge_delta < 0
-        && cutedge_delta == cluster.cutedge_delta
-        && cutnet_delta == cluster.cutnet_delta
-        && hop.Initialize(pNtk)
-        && ClusterLimitsHold(pNtk, state, after);
-    if (legal)
-    {
-        state.AttachNetwork(pNtk);
-        if (state.Audit() && state.growth.TryConsume(growth))
-            return true;
-    }
-
-    RollbackCluster(pNtk, txn);
-    hop.Initialize(pNtk);
-    state.AttachNetwork(pNtk);
-    return false;
 }
 
 // Hop-slack snapshot, computed once before Phase 2 starts (the network is
@@ -1330,9 +744,8 @@ static void compute_hop_slack(Abc_Ntk_t *pNtk, HopSlack &hs)
     Vec_PtrFree(vNodes);
 }
 
-static bool try_replicate(Abc_Ntk_t *pNtk, Abc_Obj_t *pDriver, part_id target_part,
-                          const HopSlack &hs, detail::OptimizationState &state,
-                          int &cur_cutedges)
+static bool try_replicate(Abc_Ntk_t *pNtk, Abc_Obj_t *pDriver, Abc_Obj_t *pConsumer,
+                          const HopSlack &hs, int &cur_cutedges, int &extra_nodes)
 {
     // Only logic nodes can be duplicated. A PI/CONST1 driver is a single
     // physical pin/constant in the design; "duplicating" it would fabricate
@@ -1340,9 +753,8 @@ static bool try_replicate(Abc_Ntk_t *pNtk, Abc_Obj_t *pDriver, part_id target_pa
     // restriction in ordered_path_nodes/try_replicate_on_path).
     if (!Abc_ObjIsNode(pDriver))
         return false;
-    if (state.growth.remaining() < 1)
-        return false;
 
+    part_id target_part = Abc_ObjGetPartId(pConsumer);
     part_id driver_part  = Abc_ObjGetPartId(pDriver);
     if (target_part == ABC_PART_ID_NONE || driver_part == ABC_PART_ID_NONE
         || target_part == driver_part)
@@ -1388,73 +800,75 @@ static bool try_replicate(Abc_Ntk_t *pNtk, Abc_Obj_t *pDriver, part_id target_pa
         Abc_ObjPatchFanin(pF, pDriver, pDup);
 
     int new_cutedges = ComputeCutEdgeCount(pNtk);
-    if (new_cutedges < cur_cutedges && state.Audit() && state.growth.TryConsume(1))
+    if (new_cutedges < cur_cutedges)
     {
         cur_cutedges = new_cutedges;
+        extra_nodes += 1;
         return true;
     }
 
     for (Abc_Obj_t *pF : fanouts)
         Abc_ObjPatchFanin(pF, pDup, pDriver);
     Abc_NtkDeleteObj(pDup);
-    state.Audit();
     return false;
 }
 
 static void run_phase2_replicate(Abc_Ntk_t *pNtk, const Config &cfg,
-                                 detail::OptimizationState &state,
                                  int &total_replications)
 {
+    const int initial_nodes = Abc_NtkNodeNum(pNtk);
+    const int max_extra_nodes =
+        static_cast<int>(static_cast<long long>(initial_nodes) * cfg.replicate_growth_pct / 100);
+    int extra_nodes = 0;
     int cur_cutedges = ComputeCutEdgeCount(pNtk);
     int stall_count = 0;
 
-    detail::HopState hop;
-    if (!hop.Initialize(pNtk))
-        return;
+    // Snapshot taken once, before Phase 2 starts (Phase 1 has already
+    // converged, so the network is stable at this point). Later rounds
+    // reuse the same snapshot -- see docs/superpowers/specs for the
+    // rationale (a conservative, not dynamically-updated, hop budget).
+    HopSlack hs;
+    compute_hop_slack(pNtk, hs);
 
     for (int round = 0; round < cfg.max_rounds; ++round)
     {
-        if (state.growth.remaining() < 1)
+        if (extra_nodes >= max_extra_nodes)
         {
             if (cfg.verbose)
                 printf("csr: phase2 node budget exhausted (%d/%d), stopping\n",
-                       state.growth.used(), state.limits.growth_budget);
+                       extra_nodes, max_extra_nodes);
             break;
         }
 
-        std::vector<detail::ReplicationCandidate> candidates =
-            detail::CollectReplicationCandidates(pNtk);
+        std::vector<CutCandidate> candidates;
+        collect_cut_candidates(pNtk, candidates);
         if (candidates.empty())
             break;
 
         int round_fixed = 0;
         for (const auto &cand : candidates)
         {
-            if (state.growth.remaining() < 1)
+            if (extra_nodes >= max_extra_nodes)
                 break;
 
-            const auto cluster = detail::FindBestReplicationCluster(
-                pNtk, state, cand, hop);
-            if (!cluster.node_ids.empty()
-                && detail::TryReplicationCluster(pNtk, state, hop, cluster))
-            {
-                cur_cutedges = ComputeCutEdgeCount(pNtk);
-                round_fixed++;
-            }
-        }
+            Abc_Obj_t *pConsumer = Abc_NtkObj(pNtk, cand.node_id);
+            if (!pConsumer || !Abc_ObjIsNode(pConsumer))
+                continue;
+            if (cand.iFanin >= Abc_ObjFaninNum(pConsumer))
+                continue;
+            Abc_Obj_t *pDriver = Abc_ObjFanin(pConsumer, cand.iFanin);
+            if (Abc_ObjGetPartId(pDriver) == Abc_ObjGetPartId(pConsumer))
+                continue; // already fixed by an earlier replication this round
 
-        if (!hop.VerifyAgainstFull(pNtk))
-        {
-            if (cfg.verbose)
-                printf("csr: phase2 incremental hop verification failed\n");
-            break;
+            if (try_replicate(pNtk, pDriver, pConsumer, hs, cur_cutedges, extra_nodes))
+                round_fixed++;
         }
 
         if (cfg.verbose)
             printf("csr: phase2 round %2d  candidates=%3zu  replicated=%3d"
                    "  cut-edges=%d  nodes=%d/%d\n",
                    round, candidates.size(), round_fixed, cur_cutedges,
-                   state.growth.used(), state.limits.growth_budget);
+                   extra_nodes, max_extra_nodes);
 
         total_replications += round_fixed;
 
@@ -1468,6 +882,24 @@ static void run_phase2_replicate(Abc_Ntk_t *pNtk, const Config &cfg,
             stall_count = 0;
         }
     }
+}
+
+static int resolve_num_parts(Abc_Ntk_t *pNtk)
+{
+    int np = pNtk->pPdb->num_parts();
+    if (np > 0)
+        return np;
+
+    int max_part = 0;
+    int i;
+    Abc_Obj_t *pObj;
+    Abc_NtkForEachObj(pNtk, pObj, i)
+    {
+        part_id p = Abc_ObjGetPartId(pObj);
+        if (p != ABC_PART_ID_NONE && p > max_part)
+            max_part = p;
+    }
+    return max_part + 1;
 }
 
 // Count pNode's incident cross-partition cut-edges assuming it lives in
@@ -1534,267 +966,6 @@ static part_id best_relocate_target(Abc_Obj_t *pNode, int &best_delta)
     return best;
 }
 
-namespace {
-
-constexpr int kRelocationSeedLimit = 64;
-constexpr int kRelocationBeamWidth = 8;
-constexpr int kRelocationMaxDepth = 3;
-
-struct RelocationCandidate {
-    detail::RelocationStep step;
-    int local_delta = 0;
-    int target_size = 0;
-};
-
-void RollbackRelocation(Abc_Ntk_t *pNtk,
-                        const std::vector<detail::RelocationStep> &steps)
-{
-    for (auto it = steps.rbegin(); it != steps.rend(); ++it)
-    {
-        Abc_Obj_t *pNode = Abc_NtkObj(pNtk, it->node_id);
-        if (pNode)
-            Abc_ObjSetPartId(pNode, it->from);
-    }
-}
-
-bool ApplyRelocationLog(Abc_Ntk_t *pNtk,
-                        const std::vector<detail::RelocationStep> &steps,
-                        std::vector<detail::RelocationStep> &applied)
-{
-    applied.clear();
-    for (const auto &step : steps)
-    {
-        Abc_Obj_t *pNode = Abc_NtkObj(pNtk, step.node_id);
-        if (!pNode || !Abc_ObjIsNode(pNode)
-            || Abc_ObjGetPartId(pNode) != step.from
-            || step.to == ABC_PART_ID_NONE || step.to == step.from)
-        {
-            RollbackRelocation(pNtk, applied);
-            applied.clear();
-            return false;
-        }
-        Abc_ObjSetPartId(pNode, step.to);
-        applied.push_back(step);
-    }
-    return true;
-}
-
-bool RelocationLimitsHold(Abc_Ntk_t *pNtk,
-                          const detail::OptimizationState &state,
-                          const detail::Metrics &metrics)
-{
-    if (metrics.hop > state.limits.hop_limit
-        || metrics.nodes > state.limits.node_limit
-        || metrics.cut_nets > state.limits.cutnet_limit
-        || state.growth.used() > state.limits.growth_budget)
-        return false;
-
-    std::vector<int> part_sizes;
-    fox::cpr::partition_sizes(pNtk, state.limits.num_parts, part_sizes);
-    const int max_allowed = fox::cpr::compute_balance_max_allowed(
-        part_sizes, state.limits.balance_pct);
-    return fox::cpr::compute_balance_overflow(part_sizes, max_allowed)
-        <= state.limits.balance_overflow_limit;
-}
-
-bool RelocationSequenceLess(const detail::RelocationSequence &lhs,
-                            const detail::RelocationSequence &rhs)
-{
-    if (lhs.cutedge_delta != rhs.cutedge_delta)
-        return lhs.cutedge_delta < rhs.cutedge_delta;
-    if (lhs.steps.size() != rhs.steps.size())
-        return lhs.steps.size() < rhs.steps.size();
-    for (size_t i = 0; i < lhs.steps.size(); ++i)
-        if (lhs.steps[i].node_id != rhs.steps[i].node_id)
-            return lhs.steps[i].node_id < rhs.steps[i].node_id;
-    for (size_t i = 0; i < lhs.steps.size(); ++i)
-        if (lhs.steps[i].to != rhs.steps[i].to)
-            return lhs.steps[i].to < rhs.steps[i].to;
-    return false;
-}
-
-bool SameRelocationSequence(const detail::RelocationSequence &lhs,
-                            const detail::RelocationSequence &rhs)
-{
-    if (lhs.steps.size() != rhs.steps.size())
-        return false;
-    for (size_t i = 0; i < lhs.steps.size(); ++i)
-        if (lhs.steps[i].node_id != rhs.steps[i].node_id
-            || lhs.steps[i].from != rhs.steps[i].from
-            || lhs.steps[i].to != rhs.steps[i].to)
-            return false;
-    return true;
-}
-
-void CollectRelocationCandidates(Abc_Ntk_t *pNtk,
-                                 const detail::OptimizationState &state,
-                                 detail::TrajectoryPolicy policy,
-                                 std::vector<RelocationCandidate> &candidates)
-{
-    std::vector<int> part_sizes;
-    fox::cpr::partition_sizes(pNtk, state.limits.num_parts, part_sizes);
-    candidates.clear();
-
-    Abc_Obj_t *pNode, *pNeighbor;
-    int i, k;
-    Abc_NtkForEachNode(pNtk, pNode, i)
-    {
-        const part_id from = Abc_ObjGetPartId(pNode);
-        if (from == ABC_PART_ID_NONE)
-            continue;
-
-        std::vector<part_id> targets;
-        Abc_ObjForEachFanin(pNode, pNeighbor, k)
-        {
-            const part_id target = Abc_ObjGetPartId(pNeighbor);
-            if (target != ABC_PART_ID_NONE && target != from)
-                targets.push_back(target);
-        }
-        Abc_ObjForEachFanout(pNode, pNeighbor, k)
-        {
-            if (!Abc_ObjIsNode(pNeighbor))
-                continue;
-            const part_id target = Abc_ObjGetPartId(pNeighbor);
-            if (target != ABC_PART_ID_NONE && target != from)
-                targets.push_back(target);
-        }
-        std::sort(targets.begin(), targets.end());
-        targets.erase(std::unique(targets.begin(), targets.end()), targets.end());
-
-        const int current_cross = node_incident_cross(pNode, from);
-        for (part_id target : targets)
-        {
-            const size_t target_index = static_cast<size_t>(target);
-            const int target_size = target_index < part_sizes.size()
-                ? part_sizes[target_index] : 0;
-            candidates.push_back({
-                {pNode->Id, from, target},
-                node_incident_cross(pNode, target) - current_cross,
-                target_size,
-            });
-        }
-    }
-
-    std::sort(candidates.begin(), candidates.end(), [policy](const auto &lhs,
-                                                              const auto &rhs) {
-        if (policy == detail::TrajectoryPolicy::BoundaryConcentration)
-            return std::tuple{lhs.local_delta, -lhs.target_size,
-                              lhs.step.node_id, lhs.step.to}
-                 < std::tuple{rhs.local_delta, -rhs.target_size,
-                              rhs.step.node_id, rhs.step.to};
-        if (policy == detail::TrajectoryPolicy::ScarcityFirst)
-            return std::tuple{lhs.target_size, lhs.local_delta,
-                              lhs.step.node_id, lhs.step.to}
-                 < std::tuple{rhs.target_size, rhs.local_delta,
-                              rhs.step.node_id, rhs.step.to};
-        return std::tuple{lhs.local_delta, lhs.step.node_id, lhs.step.to}
-             < std::tuple{rhs.local_delta, rhs.step.node_id, rhs.step.to};
-    });
-    if (candidates.size() > kRelocationSeedLimit)
-        candidates.resize(kRelocationSeedLimit);
-}
-
-} // namespace
-
-detail::RelocationSequence detail::FindBestRelocationSequence(
-    Abc_Ntk_t *pNtk, detail::OptimizationState &state,
-    detail::TrajectoryPolicy policy)
-{
-    detail::RelocationSequence best;
-    if (!pNtk || state.pNtk != pNtk)
-        return best;
-
-    const detail::Metrics baseline = detail::ComputeMetrics(pNtk);
-    if (!RelocationLimitsHold(pNtk, state, baseline))
-        return best;
-
-    std::vector<detail::RelocationSequence> beam(1);
-    for (int depth = 0; depth < kRelocationMaxDepth; ++depth)
-    {
-        std::vector<detail::RelocationSequence> next;
-        for (const auto &parent : beam)
-        {
-            std::vector<detail::RelocationStep> parent_log;
-            if (!ApplyRelocationLog(pNtk, parent.steps, parent_log))
-                continue;
-
-            std::vector<RelocationCandidate> candidates;
-            CollectRelocationCandidates(pNtk, state, policy, candidates);
-            for (const auto &candidate : candidates)
-            {
-                const bool repeated = std::any_of(
-                    parent.steps.begin(), parent.steps.end(),
-                    [&](const auto &step) {
-                        return step.node_id == candidate.step.node_id;
-                    });
-                if (repeated)
-                    continue;
-
-                Abc_Obj_t *pNode = Abc_NtkObj(pNtk, candidate.step.node_id);
-                if (!pNode || Abc_ObjGetPartId(pNode) != candidate.step.from)
-                    continue;
-                Abc_ObjSetPartId(pNode, candidate.step.to);
-                const detail::Metrics metrics = detail::ComputeMetrics(pNtk);
-                if (RelocationLimitsHold(pNtk, state, metrics))
-                {
-                    detail::RelocationSequence child = parent;
-                    child.steps.push_back(candidate.step);
-                    child.cutedge_delta = metrics.cut_edges - baseline.cut_edges;
-                    next.push_back(std::move(child));
-                }
-                Abc_ObjSetPartId(pNode, candidate.step.from);
-            }
-            RollbackRelocation(pNtk, parent_log);
-        }
-
-        std::sort(next.begin(), next.end(), RelocationSequenceLess);
-        next.erase(std::unique(next.begin(), next.end(), SameRelocationSequence),
-                   next.end());
-        if (next.size() > kRelocationBeamWidth)
-            next.resize(kRelocationBeamWidth);
-        if (next.empty())
-            break;
-
-        for (const auto &candidate : next)
-            if (candidate.cutedge_delta < 0
-                && (best.steps.empty() || RelocationSequenceLess(candidate, best)))
-                best = candidate;
-        beam = std::move(next);
-    }
-    return best;
-}
-
-bool detail::ApplyRelocationSequence(Abc_Ntk_t *pNtk,
-                                     detail::OptimizationState &state,
-                                     const detail::RelocationSequence &sequence)
-{
-    if (!pNtk || state.pNtk != pNtk || sequence.steps.empty())
-        return false;
-
-    const detail::Metrics before = detail::ComputeMetrics(pNtk);
-    std::vector<detail::RelocationStep> applied;
-    if (!ApplyRelocationLog(pNtk, sequence.steps, applied))
-        return false;
-
-    const detail::Metrics after = detail::ComputeMetrics(pNtk);
-    const int actual_delta = after.cut_edges - before.cut_edges;
-    if (actual_delta >= 0 || actual_delta != sequence.cutedge_delta
-        || !RelocationLimitsHold(pNtk, state, after))
-    {
-        RollbackRelocation(pNtk, applied);
-        state.AttachNetwork(pNtk);
-        return false;
-    }
-
-    state.AttachNetwork(pNtk);
-    if (state.Audit())
-        return true;
-
-    RollbackRelocation(pNtk, applied);
-    state.AttachNetwork(pNtk);
-    return false;
-}
-
 // Enumerate unordered adjacent cross-partition node pairs. Both endpoints are
 // internal NODEs (Phase 0 never relocates PI/CONST1) living in different
 // partitions, connected by at least one fanin/fanout edge. Each unordered pair
@@ -1841,10 +1012,9 @@ static void collect_swap_candidates(Abc_Ntk_t *pNtk,
 // this sidesteps double-counting the A-B edge that a hand-written local
 // delta would have to special-case.
 // ---------------------------------------------------------------------
-static void run_phase0_swap(Abc_Ntk_t *pNtk, const Config &cfg,
-                            detail::OptimizationState &state, int &total_swaps)
+static void run_phase0_swap(Abc_Ntk_t *pNtk, const Config &cfg, int &total_swaps)
 {
-    const int baseline_hop = state.limits.hop_limit;
+    const int baseline_hop = Abc_NtkComputeHopNum(pNtk);
     int best_cutedges = ComputeCutEdgeCount(pNtk);
     int stall_count = 0;
 
@@ -1879,13 +1049,10 @@ static void run_phase0_swap(Abc_Ntk_t *pNtk, const Config &cfg,
                 Abc_ObjSetPartId(pB, pb);
                 continue;
             }
-            if (Abc_NtkComputeHopNum(pNtk) > baseline_hop
-                || Abc_NtkComputeCutSize(pNtk) > state.limits.cutnet_limit
-                || !state.Audit())
+            if (Abc_NtkComputeHopNum(pNtk) > baseline_hop)
             {
                 Abc_ObjSetPartId(pA, pa); // roll back both
                 Abc_ObjSetPartId(pB, pb);
-                state.Audit();
                 continue;
             }
             round_swapped++;
@@ -1922,15 +1089,20 @@ static void run_phase0_swap(Abc_Ntk_t *pNtk, const Config &cfg,
 // relabel (zero area, zero logic). Gated by strict cut-edge decrease, an
 // exact global-hop-non-worsening check, and a per-partition balance cap.
 // ---------------------------------------------------------------------
-static void run_phase0_relocate(Abc_Ntk_t *pNtk, const Config &cfg,
-                                detail::OptimizationState &state,
-                                int &total_moves, int &total_swaps,
-                                int &total_compound)
+void run_phase0_relocate(Abc_Ntk_t *pNtk, const Config &cfg, int &total_moves, int &total_swaps)
 {
-    std::vector<int> sz = state.part_sizes;
-    const int max_allowed = fox::cpr::compute_balance_max_allowed(sz, state.limits.balance_pct);
+    int num_parts = resolve_num_parts(pNtk);
+    int balance_pct = cfg.balance_pct;
+    if (balance_pct < 0)
+        balance_pct = pNtk->pPdb->balance_pct();
+    if (balance_pct < 0)
+        balance_pct = 2;
 
-    const int baseline_hop = state.limits.hop_limit;
+    std::vector<int> sz;
+    fox::cpr::partition_sizes(pNtk, num_parts, sz);
+    int max_allowed = fox::cpr::compute_balance_max_allowed(sz, balance_pct);
+
+    const int baseline_hop = Abc_NtkComputeHopNum(pNtk);
     int best_cutedges = ComputeCutEdgeCount(pNtk);
     int stall_count = 0;
 
@@ -1985,8 +1157,7 @@ static void run_phase0_relocate(Abc_Ntk_t *pNtk, const Config &cfg,
             // Apply tentatively, then exact global hop check.
             Abc_ObjSetPartId(pNode, tgt);
             int new_hop = Abc_NtkComputeHopNum(pNtk);
-            if (new_hop > baseline_hop
-                || Abc_NtkComputeCutSize(pNtk) > state.limits.cutnet_limit)
+            if (new_hop > baseline_hop)
             {
                 Abc_ObjSetPartId(pNode, cur); // roll back
                 continue;
@@ -1994,14 +1165,6 @@ static void run_phase0_relocate(Abc_Ntk_t *pNtk, const Config &cfg,
 
             sz[cur] -= 1;
             sz[tgt] += 1;
-            if (!state.Audit())
-            {
-                Abc_ObjSetPartId(pNode, cur);
-                sz[cur] += 1;
-                sz[tgt] -= 1;
-                state.Audit();
-                continue;
-            }
             round_moved++;
         }
 
@@ -2029,179 +1192,73 @@ static void run_phase0_relocate(Abc_Ntk_t *pNtk, const Config &cfg,
             break;
     }
 
-    run_phase0_swap(pNtk, cfg, state, total_swaps);
-
-    const auto policy = static_cast<detail::TrajectoryPolicy>(
-        std::min(state.trajectory_id, 2));
-    for (int round = 0; round < cfg.max_rounds; ++round)
-    {
-        const auto sequence = detail::FindBestRelocationSequence(pNtk, state, policy);
-        if (sequence.steps.empty()
-            || !detail::ApplyRelocationSequence(pNtk, state, sequence))
-            break;
-        total_compound++;
-    }
-    if (cfg.verbose)
-        printf("csr: phase0 compound=%d\n", total_compound);
+    run_phase0_swap(pNtk, cfg, total_swaps);
 }
 
-static bool run_balance_repair(Abc_Ntk_t *&pNtk, const Config &cfg,
-                               detail::OptimizationState &state)
+bool ApplyCsr(Abc_Ntk_t *pNtk, const Config &cfg)
 {
-    Abc_Ntk_t *pRepair = Abc_NtkDup(pNtk);
-    if (!pRepair)
-        return false;
-
-    detail::RestorePdbMetadata(pRepair, state.limits);
-    const int cut_edges_before = ComputeCutEdgeCount(pNtk);
-    std::vector<float> zero_arrival(Abc_NtkObjNumMax(pRepair), 0.0f);
-    const bool repaired = fox::cpr::enforce_balance(
-        pRepair, state.limits.num_parts, state.limits.balance_pct,
-        zero_arrival, cfg.verbose);
-
-    state.AttachNetwork(pRepair);
-    const bool accept = repaired && ComputeCutEdgeCount(pRepair) <= cut_edges_before
-        && state.Audit();
-    if (accept)
+    if (!pNtk)
     {
-        Abc_NtkDelete(pNtk);
-        pNtk = pRepair;
-        return true;
-    }
-
-    Abc_NtkDelete(pRepair);
-    state.AttachNetwork(pNtk);
-    return false;
-}
-
-static bool optimize_trajectory(Abc_Ntk_t *&pNtk, const Config &cfg,
-                                detail::OptimizationState &state,
-                                int trajectory_id)
-{
-    if (!state.Audit())
-    {
+        printf("csr: network is null\n");
         return false;
     }
-
-    const int initial_cutedges = state.entry.cut_edges;
-    if (cfg.verbose)
-        printf("csr: trajectory %d initial cut-edges = %d\n", trajectory_id, initial_cutedges);
-
-    int total_moves = 0, total_swaps = 0, total_compound = 0;
-    if (cfg.do_relocate)
-        run_phase0_relocate(pNtk, cfg, state, total_moves, total_swaps,
-                            total_compound);
-    int after_phase0 = ComputeCutEdgeCount(pNtk);
-
-    int total_attempts = 0, total_successes = 0;
-    detail::Phase1Stats plan_stats;
-    detail::RunPhase1Resub(pNtk, state, cfg, plan_stats);
-    total_attempts += plan_stats.attempts;
-    total_successes += plan_stats.successes;
-    run_phase1_resub(pNtk, cfg, state, total_attempts, total_successes);
-    int after_phase1 = ComputeCutEdgeCount(pNtk);
-
-    int total_replications = 0;
-    run_phase2_replicate(pNtk, cfg, state, total_replications);
-    int after_phase2 = ComputeCutEdgeCount(pNtk);
-
-    if (cfg.do_balance_repair)
-        run_balance_repair(pNtk, cfg, state);
-
-    int final_cutedges = ComputeCutEdgeCount(pNtk);
-
-    printf("csr: cut-edges %d -> %d (after phase0=%d, after phase1=%d, after phase2=%d)\n",
-           initial_cutedges, final_cutedges, after_phase0, after_phase1, after_phase2);
-    printf("csr: phase0 %d moves / %d swaps / %d compound; phase1 %d attempts / %d successes; phase2 %d replications\n",
-           total_moves, total_swaps, total_compound, total_attempts,
-           total_successes, total_replications);
-    if (cfg.verbose)
-        printf("csr: phase1 plans single-remove=%d joint-remove=%d joint-replace=%d multi-divisor=%d\n",
-               plan_stats.single_removals, plan_stats.joint_removals,
-               plan_stats.joint_replacements, plan_stats.multi_divisor);
-
-    return state.Audit();
-}
-
-detail::TrajectoryResult detail::TakeBestTrajectory(
-    std::vector<detail::TrajectoryResult> &results,
-    const detail::EntryLimits &limits, detail::NetworkDeleteFn delete_fn)
-{
-    size_t winner = results.size();
-    for (size_t i = 0; i < results.size(); ++i)
-    {
-        if (!results[i].valid || !results[i].pNtk)
-            continue;
-        if (winner == results.size() || detail::BetterResult(results[i], results[winner]))
-            winner = i;
-    }
-
-    detail::TrajectoryResult selected;
-    for (size_t i = 0; i < results.size(); ++i)
-    {
-        if (i == winner)
-        {
-            selected = results[i];
-            detail::RestorePdbMetadata(selected.pNtk, limits);
-        }
-        else if (results[i].pNtk)
-        {
-            delete_fn(results[i].pNtk);
-        }
-        results[i].pNtk = nullptr;
-    }
-    results.clear();
-    return selected;
-}
-
-bool ApplyCsr(Abc_Frame_t *pAbc, const Config &cfg)
-{
-    Abc_Ntk_t *pEntry = pAbc ? Abc_FrameReadNtk(pAbc) : nullptr;
-    if (!pEntry)
-    {
-        printf("csr: current network is empty\n");
-        return false;
-    }
-    if (!Abc_NtkIsLogic(pEntry))
+    if (!Abc_NtkIsLogic(pNtk))
     {
         printf("csr: network must be logic (not AIG)\n");
         return false;
     }
-    if (!pEntry->pPdb)
+    if (!pNtk->pPdb)
     {
         printf("csr: no partition database (run hpart first)\n");
         return false;
     }
 
-    const detail::EntryLimits limits = detail::CaptureEntryLimits(pEntry, cfg);
-    std::vector<detail::TrajectoryResult> results;
-    for (int trajectory_id = 0; trajectory_id < cfg.num_trajectories; ++trajectory_id)
+    int initial_cutedges = ComputeCutEdgeCount(pNtk);
+    if (cfg.verbose)
+        printf("csr: initial cut-edges = %d\n", initial_cutedges);
+
+    int total_moves = 0, total_swaps = 0;
+    if (cfg.do_relocate)
+        run_phase0_relocate(pNtk, cfg, total_moves, total_swaps);
+    int after_phase0 = ComputeCutEdgeCount(pNtk);
+
+    int total_attempts = 0, total_successes = 0;
+    run_phase1_resub(pNtk, cfg, total_attempts, total_successes);
+    int after_phase1 = ComputeCutEdgeCount(pNtk);
+
+    int total_replications = 0;
+    run_phase2_replicate(pNtk, cfg, total_replications);
+    int after_phase2 = ComputeCutEdgeCount(pNtk);
+
+    // Known limitation: enforce_balance optimizes only partition size, not
+    // cutsize, so this final repair can raise cut-edges above the phase1/2
+    // result (observed on adder.v: 12 -> 21). Functional correctness is
+    // unaffected (cec-clean); only the cutsize objective can regress here.
+    // Off by default (-b to enable) for exactly this reason.
+    if (cfg.do_balance_repair)
     {
-        const auto start = std::chrono::steady_clock::now();
-        Abc_Ntk_t *pTrajectory = Abc_NtkDup(pEntry);
-        if (!pTrajectory)
-            continue;
-        detail::OptimizationState state(pTrajectory, limits, trajectory_id);
-        const bool valid = optimize_trajectory(pTrajectory, cfg, state, trajectory_id);
-        const double seconds = std::chrono::duration<double>(
-            std::chrono::steady_clock::now() - start).count();
-        printf("csr: trajectory %d cut-edge=%d cut-net=%d hop=%d nodes=%d sec=%.2f valid=%d\n",
-               trajectory_id, state.current.cut_edges, state.current.cut_nets,
-               state.current.hop, state.current.nodes, seconds, valid);
-        if (valid)
-            results.push_back({pTrajectory, state.current, trajectory_id, true});
-        else
-            Abc_NtkDelete(pTrajectory);
+        int num_parts = resolve_num_parts(pNtk);
+        int balance_pct = cfg.balance_pct;
+        if (balance_pct < 0)
+            balance_pct = pNtk->pPdb->balance_pct();
+        if (balance_pct < 0)
+            balance_pct = 2;
+
+        // csr has no arrival/timing model; a zero vector means
+        // enforce_balance's "move lowest-arrival node first" tie-break
+        // degenerates to an unspecified (but still correct) choice among
+        // balance-violating nodes.
+        std::vector<float> zero_arrival(Abc_NtkObjNumMax(pNtk), 0.0f);
+        fox::cpr::enforce_balance(pNtk, num_parts, balance_pct, zero_arrival, cfg.verbose);
     }
 
-    if (results.empty())
-        return false;
+    int final_cutedges = ComputeCutEdgeCount(pNtk);
 
-    auto selected = detail::TakeBestTrajectory(results, limits, Abc_NtkDelete);
-    if (!selected.pNtk)
-        return false;
-    printf("csr: selected trajectory %d\n", selected.trajectory_id);
-    Abc_FrameReplaceCurrentNetwork(pAbc, selected.pNtk);
+    printf("csr: cut-edges %d -> %d (after phase0=%d, after phase1=%d, after phase2=%d)\n",
+           initial_cutedges, final_cutedges, after_phase0, after_phase1, after_phase2);
+    printf("csr: phase0 %d moves / %d swaps; phase1 %d attempts / %d successes; phase2 %d replications\n",
+           total_moves, total_swaps, total_attempts, total_successes, total_replications);
+
     return true;
 }
 

@@ -1,8 +1,4 @@
-add_library(csr
-    csr.cpp
-    csr_hop.cpp
-    csr_state.cpp
-)
+add_library(csr csr.cpp)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

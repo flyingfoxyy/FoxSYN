@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test csr on benchmarks: map -> hpart -> csr, report cut-edge/area/hop deltas."""
+"""Test csr2 on benchmarks: map -> hpart -> csr2, report cut-edge/area/hop deltas."""
 
 from __future__ import annotations
 
@@ -20,30 +20,31 @@ ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 # csr: cut-edges 667 -> 487 (after phase0=610, after phase1=500, after phase2=487)
 CSR_CUTEDGE_RE = re.compile(
-    r"csr:\s+cut-edges\s+(\d+)\s+->\s+(\d+)\s+\((?:after phase0=\d+,\s+)?"
+    r"csr2?:\s+cut-edges\s+(\d+)\s+->\s+(\d+)\s+\((?:after phase0=\d+,\s+)?"
     r"after phase1=(\d+),\s+after phase2=(\d+)\)"
 )
 # csr: phase0 33 moves / 0 swaps / 2 compound; phase1 2372 attempts / 82 successes; phase2 5 replications
 CSR_COUNTS_RE = re.compile(
-    r"csr:\s+phase0\s+(\d+)\s+moves\s+/\s+(\d+)\s+swaps\s+/\s+(\d+)\s+compound;\s+"
+    r"csr2?:\s+phase0\s+(\d+)\s+moves\s+/\s+(\d+)\s+swaps\s+/\s+(\d+)\s+compound;\s+"
     r"phase1\s+(\d+)\s+attempts\s+/\s+(\d+)\s+successes;\s+phase2\s+(\d+)\s+replications"
 )
 # csr: trajectory 1 cut-edge=455 cut-net=78 hop=7 nodes=293 sec=0.89 valid=1
 CSR_TRAJECTORY_RE = re.compile(
-    r"csr:\s+trajectory\s+(\d+)\s+cut-edge=(\d+)\s+cut-net=(\d+)\s+hop=(\d+)\s+"
+    r"csr2?:\s+trajectory\s+(\d+)\s+cut-edge=(\d+)\s+cut-net=(\d+)\s+hop=(\d+)\s+"
     r"nodes=(\d+)\s+sec=([\d.]+)\s+valid=(\d)"
 )
 # csr: selected trajectory 2
-CSR_SELECTED_RE = re.compile(r"csr:\s+selected trajectory\s+(\d+)")
+CSR_SELECTED_RE = re.compile(r"csr2?:\s+selected trajectory\s+(\d+)")
 ND_RE = re.compile(r"\bnd =\s*(\d+)")
 HOP_RE = re.compile(r"\bhop =\s*(\d+)")
 CUTNET_RE = re.compile(r"\bcut-net =\s*(\d+)")
 # "Networks are equivalent" / "Networks are NOT EQUIVALENT"
 CEC_RE = re.compile(r"Networks are (NOT )?EQUIVALENT", re.IGNORECASE)
 
-# csr's own -T flag postdates the frozen baseline binary (commit 799702c);
-# strip it so the same csr_args string can be replayed against that baseline.
-BASELINE_STRIP_RE = re.compile(r"-T\s+\d+")
+# csr2's -T and -N flags don't exist on the simple `csr` command (nor on
+# pre-enhancement binaries built from commit 799702c); strip them so the
+# same csr_args string can be replayed as a csr baseline.
+BASELINE_STRIP_RE = re.compile(r"-T\s+\d+|-N\s+\d+")
 
 SUMMARY_FIELDS = (
     "cut_before", "cut_after", "cut_after_p1",
@@ -109,10 +110,25 @@ def ceil_percentage_limit(count: int, percentage: int) -> int:
     return -(-(count * percentage) // 100)
 
 
-def compute_constraints(result: Result) -> str:
+CUTNET_PCT_RE = re.compile(r"-N\s+(\d+)")
+
+
+def cutnet_pct_from_args(csr_args: str) -> int:
+    """Extract -N's value from a csr_args string, defaulting to csr2's own
+    default (300) when absent. The simple `csr` command has no -N flag and
+    always behaves like the pre-csr2 fixed 150% budget, so callers running
+    a `csr` baseline should pass "150" directly rather than csr_args.
+    """
+    m = CUTNET_PCT_RE.search(csr_args)
+    return int(m.group(1)) if m else 300
+
+
+def compute_constraints(result: Result, cutnet_pct: int = 300) -> str:
     """OK only if all four comparisons parsed and every hard constraint holds:
     hop_after <= hop_before; nodes_after <= ceil(nodes_before*1.02);
-    cutnet_after <= ceil(cutnet_before*1.50); cut_after <= cut_before.
+    cutnet_after <= ceil(cutnet_before*cutnet_pct/100); cut_after <= cut_before.
+    `cutnet_pct` must match whatever -N value (or lack thereof) produced this
+    result -- see cutnet_pct_from_args.
     """
     hop_before, hop_after = _to_int(result.hop_before), _to_int(result.hop_after)
     nodes_before, nodes_after = _to_int(result.nodes_before), _to_int(result.nodes_after)
@@ -127,14 +143,17 @@ def compute_constraints(result: Result) -> str:
     ok = (
         hop_after <= hop_before
         and nodes_after <= ceil_percentage_limit(nodes_before, 102)
-        and cutnet_after <= ceil_percentage_limit(cutnet_before, 150)
+        and cutnet_after <= ceil_percentage_limit(cutnet_before, cutnet_pct)
         and cut_after <= cut_before
     )
     return "OK" if ok else "FAIL"
 
 
-def parse_output(text: str, case: str = "-") -> Result:
-    """Pure function: parse FoxSYN stdout/stderr into a Result. Never launches FoxSYN."""
+def parse_output(text: str, case: str = "-", cutnet_pct: int = 300) -> Result:
+    """Pure function: parse FoxSYN stdout/stderr into a Result. Never launches FoxSYN.
+    `cutnet_pct` must match whatever -N value (or lack thereof, for the simple
+    `csr` command) produced this output -- see cutnet_pct_from_args.
+    """
     text = strip_ansi(text)
     result = Result(case=case)
 
@@ -179,7 +198,7 @@ def parse_output(text: str, case: str = "-") -> Result:
     if cec_m:
         result.cec = "NOT_EQ" if cec_m.group(1) else "EQ"
 
-    result.constraints = compute_constraints(result)
+    result.constraints = compute_constraints(result, cutnet_pct)
     return result
 
 
@@ -262,10 +281,10 @@ def run_self_test() -> int:
 # ---------------------------------------------------------------------
 
 def build_command(rel: str, parts: int, hpart_cmd: str, csr_args: str,
-                  cec_segment: str, cec_tail: str) -> str:
+                  cec_segment: str, cec_tail: str, csr_command: str = "csr2") -> str:
     return (
         f"read {rel}; st; if -K 6; {hpart_cmd}{cec_segment}; ps; "
-        f"csr {csr_args}; ps{cec_tail}"
+        f"{csr_command} {csr_args}; ps{cec_tail}"
     )
 
 
@@ -301,7 +320,8 @@ def case_key(case: Path) -> str:
 
 def run_case_once(foxsyn: Path, workdir: Path, case: Path, parts: int,
                   csr_args: str, timeout: int, do_cec: bool,
-                  parts_dir: Path | None = None, save_parts: bool = False) -> Result:
+                  parts_dir: Path | None = None, save_parts: bool = False,
+                  csr_command: str = "csr2") -> Result:
     name = case_key(case)
     rel = case.relative_to(workdir).as_posix()
 
@@ -324,7 +344,8 @@ def run_case_once(foxsyn: Path, workdir: Path, case: Path, parts: int,
         cec_segment = f"; write {before_blif}"
         cec_tail = f"; write {after_blif}; cec {before_blif} {after_blif}"
 
-    command = build_command(rel, parts, hpart_cmd, csr_args, cec_segment, cec_tail)
+    command = build_command(rel, parts, hpart_cmd, csr_args, cec_segment, cec_tail, csr_command)
+    cutnet_pct = cutnet_pct_from_args(csr_args) if csr_command == "csr2" else 150
 
     try:
         outcome = run_foxsyn(foxsyn, workdir, command, timeout)
@@ -338,7 +359,7 @@ def run_case_once(foxsyn: Path, workdir: Path, case: Path, parts: int,
         return Result(case=name, status="TIMEOUT")
 
     elapsed, output, returncode = outcome
-    result = parse_output(output, case=name)
+    result = parse_output(output, case=name, cutnet_pct=cutnet_pct)
     result.sec = f"{elapsed:.2f}"
     if returncode == 0:
         result.status = "OK"
@@ -347,10 +368,11 @@ def run_case_once(foxsyn: Path, workdir: Path, case: Path, parts: int,
 
 def run_baseline_once(baseline_foxsyn: Path, workdir: Path, case: Path, parts: int,
                       csr_args: str, timeout: int, parts_dir: Path | None) -> Result | None:
-    """Run the pre-enhancement CSR binary; strips -T (unknown to that build)."""
+    """Run the simple `csr` command as baseline; strips -T/-N (csr2-only flags)."""
     baseline_args = BASELINE_STRIP_RE.sub("", csr_args).strip()
     result = run_case_once(baseline_foxsyn, workdir, case, parts, baseline_args,
-                           timeout, do_cec=False, parts_dir=parts_dir, save_parts=False)
+                           timeout, do_cec=False, parts_dir=parts_dir, save_parts=False,
+                           csr_command="csr")
     return result if result.status == "OK" else None
 
 
@@ -408,7 +430,7 @@ def run_case(foxsyn: Path, workdir: Path, case: Path, parts: int,
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Test csr on benchmarks")
+    parser = argparse.ArgumentParser(description="Test csr2 on benchmarks")
     parser.add_argument("--self-test", action="store_true",
                         help="Run parse_output against representative output and exit")
     parser.add_argument("--foxsyn", type=Path, default=Path("./FoxSYN"))
@@ -434,8 +456,9 @@ def main() -> int:
     parser.add_argument("--load-parts-dir", type=Path, default=None,
                         help="Load partition results from this directory instead of running hmetis")
     parser.add_argument("--baseline-foxsyn", type=Path, default=None,
-                        help="Path to the pre-enhancement CSR binary; runs it on the same "
-                             "frozen partition for cut-edge/runtime comparison")
+                        help="FoxSYN binary to run the simple `csr` command on (same binary "
+                             "as --foxsyn works, since both csr and csr2 are bundled together) "
+                             "for cut-edge/runtime comparison on the same frozen partition")
     parser.add_argument("--baseline-results", type=Path, default=None,
                         help="JSON file of {case: {cut_after, sec}} from a prior "
                              "--write-results run; used instead of re-running a baseline binary")
@@ -487,7 +510,7 @@ def main() -> int:
         print("error: no cases found", file=sys.stderr)
         return 1
 
-    print(f"# csr regression: parts={args.parts}, csr_args='{args.csr_args}', "
+    print(f"# csr2 regression: parts={args.parts}, csr_args='{args.csr_args}', "
           f"cec={'on' if args.cec else 'off'}, exact_repeats={args.exact_repeats}, cases={len(cases)}")
     if parts_dir:
         mode = "saving" if save_parts else "loading"

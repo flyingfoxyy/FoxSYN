@@ -1,14 +1,14 @@
-#ifndef CSR_INTERNAL_HPP
-#define CSR_INTERNAL_HPP
+#ifndef CSR2_INTERNAL_HPP
+#define CSR2_INTERNAL_HPP
 
 #include <optional>
 #include <tuple>
 #include <vector>
 
-#include "csr.hpp"
+#include "csr2.hpp"
 #include "base/abc/abc.h"
 
-namespace fox::csr::detail {
+namespace fox::csr2::detail {
 
 struct Metrics {
     int cut_edges = 0;
@@ -243,6 +243,6 @@ int ComputePercentageLimit(int count, int percentage, bool round_up);
 EntryLimits CaptureEntryLimits(Abc_Ntk_t *pNtk, const Config &cfg);
 void RestorePdbMetadata(Abc_Ntk_t *pNtk, const EntryLimits &limits);
 
-} // namespace fox::csr::detail
+} // namespace fox::csr2::detail
 
 #endif

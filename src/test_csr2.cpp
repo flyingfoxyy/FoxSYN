@@ -5,8 +5,8 @@
 
 #include "base/abc/abc.h"
 #include "base/abc/abcPdb.hpp"
-#include "csr/csr.hpp"
-#include "csr/csr_internal.hpp"
+#include "csr2/csr2.hpp"
+#include "csr2/csr2_internal.hpp"
 
 namespace {
 
@@ -213,9 +213,10 @@ StateTestNtk CreateStateTestNtk()
 bool TestCaptureEntryLimitsBeforeDup()
 {
     StateTestNtk t = CreateStateTestNtk();
-    fox::csr::Config cfg;
+    fox::csr2::Config cfg;
     cfg.replicate_growth_pct = 2;
-    auto limits = fox::csr::detail::CaptureEntryLimits(t.pNtk, cfg);
+    cfg.cutnet_growth_pct = 150;
+    auto limits = fox::csr2::detail::CaptureEntryLimits(t.pNtk, cfg);
     Abc_Ntk_t *pDup = Abc_NtkDup(t.pNtk);
 
     bool ok = true;
@@ -230,7 +231,7 @@ bool TestCaptureEntryLimitsBeforeDup()
     ok &= ExpectEqual("captured cutnet limit", limits.cutnet_limit, 2);
     ok &= ExpectEqual("dup invalidates balance", pDup->pPdb->balance_pct(), -1);
 
-    fox::csr::detail::RestorePdbMetadata(pDup, limits);
+    fox::csr2::detail::RestorePdbMetadata(pDup, limits);
     ok &= ExpectEqual("restored balance", pDup->pPdb->balance_pct(), 17);
     ok &= ExpectEqual("restored num parts", pDup->pPdb->num_parts(), 2);
     ok &= ExpectEqual("restored cut size", pDup->pPdb->cut_size(), 1);
@@ -244,13 +245,13 @@ bool TestCaptureEntryLimitsBeforeDup()
 bool TestPercentageLimitSaturates()
 {
     return ExpectEqual("saturated percentage limit",
-                       fox::csr::detail::ComputePercentageLimit(INT_MAX, 150, true),
+                       fox::csr2::detail::ComputePercentageLimit(INT_MAX, 150, true),
                        INT_MAX);
 }
 
 bool TestGrowthBudgetDoesNotRefund()
 {
-    fox::csr::detail::GrowthTracker growth(5);
+    fox::csr2::detail::GrowthTracker growth(5);
     bool ok = true;
     ok &= ExpectEqual("initial growth", growth.used(), 0);
     ok &= ExpectEqual("consume three", growth.TryConsume(3), 1);
@@ -263,7 +264,7 @@ bool TestGrowthBudgetDoesNotRefund()
 
 bool TestSearchBudgetStopsAtExactLimit()
 {
-    fox::csr::detail::SearchBudget budget;
+    fox::csr2::detail::SearchBudget budget;
     bool ok = true;
     for (int i = 0; i < 128; ++i)
         ok &= ExpectEqual("sat call allowed", budget.TrySatCall(), 1);
@@ -273,22 +274,22 @@ bool TestSearchBudgetStopsAtExactLimit()
 
 bool TestTrajectoryOrdering()
 {
-    using fox::csr::detail::TrajectoryResult;
+    using fox::csr2::detail::TrajectoryResult;
     TrajectoryResult a{nullptr, {90, 12, 4, 100}, 1, true};
     TrajectoryResult b{nullptr, {90, 11, 4, 101}, 2, true};
     TrajectoryResult c{nullptr, {91, 1, 1, 1}, 0, true};
     bool ok = true;
-    ok &= ExpectEqual("lower cutnet wins tie", fox::csr::detail::BetterResult(b, a), 1);
-    ok &= ExpectEqual("cutedge remains primary", fox::csr::detail::BetterResult(c, a), 0);
+    ok &= ExpectEqual("lower cutnet wins tie", fox::csr2::detail::BetterResult(b, a), 1);
+    ok &= ExpectEqual("cutedge remains primary", fox::csr2::detail::BetterResult(c, a), 0);
     return ok;
 }
 
 bool TestCutCandidateTotalOrder()
 {
-    using fox::csr::detail::CutCandidate;
+    using fox::csr2::detail::CutCandidate;
     std::vector<CutCandidate> candidates{{9, 1, 5, 2}, {3, 2, 5, 1},
                                          {3, 0, 5, 1}};
-    std::sort(candidates.begin(), candidates.end(), fox::csr::detail::CutCandidateLess{});
+    std::sort(candidates.begin(), candidates.end(), fox::csr2::detail::CutCandidateLess{});
 
     bool ok = true;
     ok &= ExpectEqual("first candidate node", candidates.front().node_id, 3);
@@ -300,10 +301,10 @@ bool TestCutCandidateTotalOrder()
 bool TestDuplicatedTrajectoryUsesCapturedBalance()
 {
     StateTestNtk base = CreateStateTestNtk();
-    fox::csr::Config cfg;
-    auto limits = fox::csr::detail::CaptureEntryLimits(base.pNtk, cfg);
+    fox::csr2::Config cfg;
+    auto limits = fox::csr2::detail::CaptureEntryLimits(base.pNtk, cfg);
     Abc_Ntk_t *pDup = Abc_NtkDup(base.pNtk);
-    fox::csr::detail::OptimizationState state(pDup, limits, 0);
+    fox::csr2::detail::OptimizationState state(pDup, limits, 0);
     bool ok = true;
     ok &= ExpectEqual("duplicate Pdb balance invalid", pDup->pPdb->balance_pct(), -1);
     ok &= ExpectEqual("state keeps entry balance", state.limits.balance_pct, 17);
@@ -315,18 +316,18 @@ bool TestDuplicatedTrajectoryUsesCapturedBalance()
 bool TestCompoundRelocation()
 {
     CompoundMoveNtk t = CreateCompoundMoveNtk();
-    fox::csr::Config cfg;
+    fox::csr2::Config cfg;
     cfg.balance_pct = 99;
-    const auto limits = fox::csr::detail::CaptureEntryLimits(t.pNtk, cfg);
-    fox::csr::detail::OptimizationState state(t.pNtk, limits, 0);
+    const auto limits = fox::csr2::detail::CaptureEntryLimits(t.pNtk, cfg);
+    fox::csr2::detail::OptimizationState state(t.pNtk, limits, 0);
     const int entry_hop = Abc_NtkComputeHopNum(t.pNtk);
-    const auto sequence = fox::csr::detail::FindBestRelocationSequence(
-        t.pNtk, state, fox::csr::detail::TrajectoryPolicy::GainFirst);
+    const auto sequence = fox::csr2::detail::FindBestRelocationSequence(
+        t.pNtk, state, fox::csr2::detail::TrajectoryPolicy::GainFirst);
 
     bool ok = true;
     ok &= ExpectEqual("compound move length", static_cast<int>(sequence.steps.size()), 2);
     ok &= ExpectEqual("compound delta", sequence.cutedge_delta, -2);
-    ok &= ExpectEqual("apply sequence", fox::csr::detail::ApplyRelocationSequence(
+    ok &= ExpectEqual("apply sequence", fox::csr2::detail::ApplyRelocationSequence(
         t.pNtk, state, sequence), 1);
     ok &= ExpectLessEqual("hop preserved", Abc_NtkComputeHopNum(t.pNtk), entry_hop);
     Abc_NtkDelete(t.pNtk);
@@ -337,7 +338,7 @@ bool TestHopStateIncreaseAndRollback()
 {
     HopPropagationNtk t = CreateHopPropagationNtk();
     const int entry_hop = Abc_NtkComputeHopNum(t.pNtk);
-    fox::csr::detail::HopState hop;
+    fox::csr2::detail::HopState hop;
     bool ok = true;
     ok &= ExpectEqual("hop init", hop.Initialize(t.pNtk), 1);
     auto txn = hop.BeginTransaction();
@@ -364,7 +365,7 @@ bool TestHopStateDecreasePropagation()
     Abc_ObjSetPartId(pTail2, 0);
     Abc_ObjPatchFanin(t.pSink, t.pLow, t.pHigh);
 
-    fox::csr::detail::HopState hop;
+    fox::csr2::detail::HopState hop;
     bool ok = true;
     ok &= ExpectEqual("decrease init", hop.Initialize(t.pNtk), 1);
     ok &= ExpectEqual("decrease entry hop", Abc_NtkComputeHopNum(t.pNtk), 3);
@@ -402,7 +403,7 @@ bool TestReplicationCandidateAggregation()
         Abc_ObjAddFanin(pPo, pConsumer);
     }
 
-    const auto candidates = fox::csr::detail::CollectReplicationCandidates(pNtk);
+    const auto candidates = fox::csr2::detail::CollectReplicationCandidates(pNtk);
     bool ok = true;
     ok &= ExpectEqual("one driver-target candidate",
                       static_cast<int>(candidates.size()), 1);
@@ -416,43 +417,43 @@ bool TestReplicationCandidateAggregation()
 bool TestReplicationClusterTransaction()
 {
     auto test = CreateReplicationClusterNtk();
-    fox::csr::Config cfg;
+    fox::csr2::Config cfg;
     cfg.balance_pct = 99;
-    auto limits = fox::csr::detail::CaptureEntryLimits(test.pNtk, cfg);
+    auto limits = fox::csr2::detail::CaptureEntryLimits(test.pNtk, cfg);
     limits.balance_pct = 150;
     limits.growth_budget = 2;
     limits.node_limit = Abc_NtkNodeNum(test.pNtk) + 2;
-    fox::csr::detail::OptimizationState state(test.pNtk, limits, 0);
-    fox::csr::detail::HopState hop;
+    fox::csr2::detail::OptimizationState state(test.pNtk, limits, 0);
+    fox::csr2::detail::HopState hop;
     hop.Initialize(test.pNtk);
-    auto candidate = fox::csr::detail::CollectReplicationCandidates(test.pNtk).front();
-    auto cluster = fox::csr::detail::FindBestReplicationCluster(
+    auto candidate = fox::csr2::detail::CollectReplicationCandidates(test.pNtk).front();
+    auto cluster = fox::csr2::detail::FindBestReplicationCluster(
         test.pNtk, state, candidate, hop);
     bool ok = true;
     ok &= ExpectEqual("cluster size", static_cast<int>(cluster.node_ids.size()), 2);
     ok &= ExpectEqual("cluster positive gain", cluster.cutedge_delta < 0, 1);
-    ok &= ExpectEqual("apply cluster", fox::csr::detail::TryReplicationCluster(
+    ok &= ExpectEqual("apply cluster", fox::csr2::detail::TryReplicationCluster(
         test.pNtk, state, hop, cluster), 1);
     ok &= ExpectEqual("hop exact", hop.VerifyAgainstFull(test.pNtk), 1);
 
     auto blocked = CreateReplicationClusterNtk();
-    auto blocked_limits = fox::csr::detail::CaptureEntryLimits(blocked.pNtk, cfg);
+    auto blocked_limits = fox::csr2::detail::CaptureEntryLimits(blocked.pNtk, cfg);
     blocked_limits.balance_pct = 150;
     blocked_limits.growth_budget = 2;
     blocked_limits.node_limit = Abc_NtkNodeNum(blocked.pNtk) + 2;
-    fox::csr::detail::OptimizationState blocked_state(blocked.pNtk,
+    fox::csr2::detail::OptimizationState blocked_state(blocked.pNtk,
                                                       blocked_limits, 0);
-    fox::csr::detail::HopState blocked_hop;
+    fox::csr2::detail::HopState blocked_hop;
     blocked_hop.Initialize(blocked.pNtk);
     auto blocked_candidate =
-        fox::csr::detail::CollectReplicationCandidates(blocked.pNtk).front();
-    auto blocked_cluster = fox::csr::detail::FindBestReplicationCluster(
+        fox::csr2::detail::CollectReplicationCandidates(blocked.pNtk).front();
+    auto blocked_cluster = fox::csr2::detail::FindBestReplicationCluster(
         blocked.pNtk, blocked_state, blocked_candidate, blocked_hop);
     ok &= ExpectEqual("consume all shared growth",
                       blocked_state.growth.TryConsume(blocked_limits.growth_budget), 1);
     const int nodes_before = Abc_NtkNodeNum(blocked.pNtk);
     ok &= ExpectEqual("phase2 rejected after phase1 budget exhaustion",
-                      fox::csr::detail::TryReplicationCluster(
+                      fox::csr2::detail::TryReplicationCluster(
                           blocked.pNtk, blocked_state, blocked_hop,
                           blocked_cluster), 0);
     ok &= ExpectEqual("rejected cluster leaves node count",
@@ -464,17 +465,17 @@ bool TestReplicationClusterTransaction()
 
 bool TestDivisorMetadataAndCutNetDelta()
 {
-    fox::csr::detail::DivisorInfo a{3, 1, 4, -1, 0, 3};
-    fox::csr::detail::DivisorInfo b{4, 1, 3, 0, 1, 4};
+    fox::csr2::detail::DivisorInfo a{3, 1, 4, -1, 0, 3};
+    fox::csr2::detail::DivisorInfo b{4, 1, 3, 0, 1, 4};
     std::vector infos{b, a};
-    std::sort(infos.begin(), infos.end(), fox::csr::detail::DivisorInfoLess{});
+    std::sort(infos.begin(), infos.end(), fox::csr2::detail::DivisorInfoLess{});
     bool ok = true;
     ok &= ExpectEqual("coverage first", infos[0].obj_id, 3);
 
     StateTestNtk t = CreateStateTestNtk();
     std::vector<Abc_Obj_t *> old_fanins{t.pPi0, t.pPi1};
     std::vector<Abc_Obj_t *> new_fanins{t.pPi1};
-    const int delta = fox::csr::detail::ComputeHypotheticalCutNetDelta(
+    const int delta = fox::csr2::detail::ComputeHypotheticalCutNetDelta(
         t.pNode, old_fanins, new_fanins);
     ok &= ExpectEqual("last crossing fanout clears net", delta, -1);
     Abc_NtkDelete(t.pNtk);
@@ -483,44 +484,44 @@ bool TestDivisorMetadataAndCutNetDelta()
 
 bool TestResubPlanSelectionAndJointReplacement()
 {
-    fox::csr::detail::ResubPlan first;
+    fox::csr2::detail::ResubPlan first;
     first.cutedge_delta = -1;
     first.cutnet_delta = 0;
     first.predicted_hop = 3;
     first.new_fanin_count = 2;
     first.divisor_ids = {8};
-    fox::csr::detail::ResubPlan second;
+    fox::csr2::detail::ResubPlan second;
     second.cutedge_delta = -2;
     second.cutnet_delta = 1;
     second.predicted_hop = 3;
     second.new_fanin_count = 1;
     second.divisor_ids = {9};
     std::vector plans{first, second};
-    auto best = fox::csr::detail::SelectBestResubPlan(plans);
+    auto best = fox::csr2::detail::SelectBestResubPlan(plans);
     bool ok = true;
     ok &= ExpectEqual("largest cutedge gain wins", best->divisor_ids[0], 9);
     ok &= ExpectEqual("external divisor reduces two crossings",
-                      fox::csr::detail::ExternalDivisorPlanAllowed(2, 1), 1);
+                      fox::csr2::detail::ExternalDivisorPlanAllowed(2, 1), 1);
     ok &= ExpectEqual("one for one external replacement rejected",
-                      fox::csr::detail::ExternalDivisorPlanAllowed(1, 1), 0);
+                      fox::csr2::detail::ExternalDivisorPlanAllowed(1, 1), 0);
 
     auto t = CreateJointResubNtk();
-    fox::csr::Config cfg;
+    fox::csr2::Config cfg;
     cfg.do_relocate = false;
     cfg.replicate_growth_pct = 0;
-    auto limits = fox::csr::detail::CaptureEntryLimits(t.pNtk, cfg);
+    auto limits = fox::csr2::detail::CaptureEntryLimits(t.pNtk, cfg);
     limits.balance_pct = 250;
-    fox::csr::detail::OptimizationState state(t.pNtk, limits, 0);
-    fox::csr::detail::Phase1Stats stats;
+    fox::csr2::detail::OptimizationState state(t.pNtk, limits, 0);
+    fox::csr2::detail::Phase1Stats stats;
     ok &= ExpectEqual("joint phase1 succeeds",
-                      fox::csr::detail::RunPhase1Resub(t.pNtk, state, cfg, stats), 1);
+                      fox::csr2::detail::RunPhase1Resub(t.pNtk, state, cfg, stats), 1);
     ok &= ExpectEqual("joint replacement counted", stats.joint_replacements, 1);
     ok &= ExpectEqual("consumer now has one fanin",
                       Abc_ObjFaninNum(t.pConsumer), 1);
     ok &= ExpectEqual("external divisor installed",
                       Abc_ObjFanin(t.pConsumer, 0)->Id, t.pDivisor->Id);
     ok &= ExpectEqual("joint resub cutedge",
-                      fox::csr::ComputeCutEdgeCount(t.pNtk), 1);
+                      fox::csr2::ComputeCutEdgeCount(t.pNtk), 1);
     ok &= ExpectEqual("joint resub hop", Abc_NtkComputeHopNum(t.pNtk), 1);
     Abc_NtkDelete(t.pNtk);
     return ok;
@@ -529,19 +530,19 @@ bool TestResubPlanSelectionAndJointReplacement()
 bool TestTrajectoryWinnerCleanup()
 {
     StateTestNtk base = CreateStateTestNtk();
-    fox::csr::Config cfg;
-    const auto limits = fox::csr::detail::CaptureEntryLimits(base.pNtk, cfg);
+    fox::csr2::Config cfg;
+    const auto limits = fox::csr2::detail::CaptureEntryLimits(base.pNtk, cfg);
     auto counting_delete = +[](Abc_Ntk_t *pNtk) {
         ++g_deleted_count;
         Abc_NtkDelete(pNtk);
     };
-    std::vector<fox::csr::detail::TrajectoryResult> results = {
+    std::vector<fox::csr2::detail::TrajectoryResult> results = {
         {Abc_NtkDup(base.pNtk), {90, 12, 4, 100}, 0, true},
         {Abc_NtkDup(base.pNtk), {90, 11, 4, 101}, 1, true},
         {Abc_NtkDup(base.pNtk), {91, 1, 1, 1}, 2, true},
     };
     g_deleted_count = 0;
-    auto result = fox::csr::detail::TakeBestTrajectory(results, limits,
+    auto result = fox::csr2::detail::TakeBestTrajectory(results, limits,
                                                        counting_delete);
     bool ok = true;
     ok &= ExpectEqual("winner trajectory", result.trajectory_id, 1);
