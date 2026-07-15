@@ -589,9 +589,13 @@ int HPart_Command(Abc_Frame_t *pAbc, int argc, char **argv)
             {
                 cfg.tool = Tool::KMetis;
             }
+            else if (!strcmp(argv[i], "patoh"))
+            {
+                cfg.tool = Tool::PaToH;
+            }
             else
             {
-                printf("hpart: invalid partitioner %s (expected hmetis/shmetis/kmetis)\n", argv[i]);
+                printf("hpart: invalid partitioner %s (expected hmetis/shmetis/kmetis/patoh)\n", argv[i]);
                 return 1;
             }
             break;
@@ -655,7 +659,7 @@ int HPart_Command(Abc_Frame_t *pAbc, int argc, char **argv)
     return ApplyPartitioning(pNtk, cfg) ? 0 : 1;
 
 usage:
-    Abc_Print(-2, "usage: hpart [-T hmetis|shmetis|kmetis] [-N num] [-B pct] [--save-part file] [--load-part file] [-v]\n");
+    Abc_Print(-2, "usage: hpart [-T hmetis|shmetis|kmetis|patoh] [-N num] [-B pct] [--save-part file] [--load-part file] [-v]\n");
     Abc_Print(-2, "\t           partitions the current network structurally and creates a pdb\n");
     Abc_Print(-2, "\t-T name         : partitioner name [default = %s]\n", ToolName(cfg.tool));
     Abc_Print(-2, "\t-N num          : number of partitions (2 <= num <= 255) [default = %d]\n", cfg.num_parts);
