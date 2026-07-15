@@ -37,7 +37,7 @@ Options:
 - `-T name`
   - partitioner name
   - valid values: `hmetis`, `shmetis`, `kmetis`, `patoh`
-  - default: `hmetis`
+  - default: `patoh`
 - `-N num`
   - number of partitions
   - valid range: `2 <= num <= 255`
