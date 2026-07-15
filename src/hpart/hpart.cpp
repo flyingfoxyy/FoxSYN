@@ -256,6 +256,46 @@ std::string BuildCommand( const std::filesystem::path &exe_path, const std::file
     return oss.str();
 }
 
+struct RunResult {
+    bool launched = false;
+    bool exited_zero = false;
+};
+
+RunResult RunCommand( const std::string &command, bool verbose )
+{
+    RunResult result;
+    if ( verbose )
+    {
+        Abc_Print( 1, "hpart: running %s\n", command.c_str() );
+        fflush( stdout );
+    }
+
+    const int status = std::system( command.c_str() );
+    if ( status == -1 )
+        return result;
+
+    result.launched = true;
+    result.exited_zero = WIFEXITED( status ) && WEXITSTATUS( status ) == 0;
+    return result;
+}
+
+bool FinishPartitionRun( const RunResult &run, Tool tool, const std::filesystem::path &part_file, bool verbose )
+{
+    if ( !run.launched )
+    {
+        Abc_Print( -1, "hpart: failed to launch partitioner \"%s\"\n", ToolName( tool ) );
+        return false;
+    }
+    if ( !run.exited_zero && !std::filesystem::exists( part_file ) )
+    {
+        Abc_Print( -1, "hpart: partitioner \"%s\" exited with a non-zero status\n", ToolName( tool ) );
+        return false;
+    }
+    if ( !run.exited_zero && verbose )
+        Abc_Print( 1, "hpart: partitioner returned a non-zero status, using generated result file anyway\n" );
+    return true;
+}
+
 bool ReadPartitionFile( const std::filesystem::path &file_name, int num_parts, std::size_t expected_vertices, std::vector<part_id> &partitions )
 {
     std::ifstream in( file_name );
@@ -323,6 +363,8 @@ const char *ToolName( Tool tool )
         return "shmetis";
     case Tool::KMetis:
         return "kmetis";
+    case Tool::PaToH:
+        return "patoh";
     }
     return "unknown";
 }
@@ -398,25 +440,9 @@ bool ApplyPartitioning( Abc_Ntk_t *pNtk, const Config &cfg )
         }
 
         const std::string command = BuildCommand( exe_path, graph_file, cfg );
-        if ( cfg.verbose )
-        {
-            Abc_Print( 1, "hpart: running %s\n", command.c_str() );
-            fflush( stdout );
-        }
-
-        const int status = std::system( command.c_str() );
-        if ( status == -1 )
-        {
-            Abc_Print( -1, "hpart: failed to launch partitioner \"%s\"\n", ToolName( cfg.tool ) );
+        const RunResult run = RunCommand( command, cfg.verbose );
+        if ( !FinishPartitionRun( run, cfg.tool, part_file, cfg.verbose ) )
             return false;
-        }
-        if ( ( !WIFEXITED( status ) || WEXITSTATUS( status ) != 0 ) && !std::filesystem::exists( part_file ) )
-        {
-            Abc_Print( -1, "hpart: partitioner \"%s\" exited with status %d\n", ToolName( cfg.tool ), status );
-            return false;
-        }
-        if ( ( !WIFEXITED( status ) || WEXITSTATUS( status ) != 0 ) && cfg.verbose )
-            Abc_Print( 1, "hpart: partitioner returned status %d, using generated result file anyway\n", status );
 
         if ( !ReadPartitionFile( part_file, cfg.num_parts, hypergraph.vertices.size(), partitions ) )
         {
