@@ -3,8 +3,15 @@
 ## Purpose
 
 `hpart` partitions the current ABC network with an external hypergraph partitioner
-(`hmetis`, `shmetis`, or `kmetis`) and writes the partition result back into ABC
-physical partition data (`Pdb`).
+(`hmetis`, `shmetis`, `kmetis`, or `patoh`) and writes the partition result back
+into ABC physical partition data (`Pdb`).
+
+`hmetis`, `shmetis`, and `kmetis` all optimize a net-cut objective: each
+hyperedge spanning more than one partition counts as one cut, regardless of
+how many partitions it touches. `patoh` instead optimizes a connectivity-1
+objective: a hyperedge touching `k` distinct partitions costs `k - 1`. Use
+`patoh` when connectivity is a better proxy for interconnect cost than a flat
+net-cut count.
 
 After `hpart` succeeds, the network stores:
 
@@ -22,14 +29,14 @@ These stats are then visible through `ps` / `print_stats`.
 `hpart` is registered as a FoxSYN command:
 
 ```text
-hpart [-T hmetis|shmetis|kmetis] [-N num] [-v]
+hpart [-T hmetis|shmetis|kmetis|patoh] [-N num] [-v]
 ```
 
 Options:
 
 - `-T name`
   - partitioner name
-  - valid values: `hmetis`, `shmetis`, `kmetis`
+  - valid values: `hmetis`, `shmetis`, `kmetis`, `patoh`
   - default: `hmetis`
 - `-N num`
   - number of partitions
@@ -54,7 +61,8 @@ ps
 - A temporary directory is created under `/tmp` with the pattern
   `foxsyn_hpart_XXXXXX`.
 - The generated hypergraph file is named `network.hgr`.
-- The partition file is read from `network.hgr.part.<N>`.
+- The partition file is read from `network.hgr.part.<N>` (or, for `patoh`,
+  from `network.patoh.part.<N>` — see below).
 - Temporary files are deleted automatically when the command returns.
 
 For `hmetis` and `shmetis`, the command currently uses:
@@ -69,8 +77,25 @@ For `kmetis`, the command currently uses:
 <tool> <graph_file> <N>
 ```
 
+For `patoh`, `hpart` also requires `HgrToPaToH` on `PATH`, since `patoh` uses
+a different native hypergraph format than the `.hgr` file `hpart` generates.
+The command runs in two steps:
+
+```text
+HgrToPaToH <graph_file>.hgr <graph_file>.patoh
+<patoh> <graph_file>.patoh <N> UM=O IB=<balance_pct / 100.0>
+```
+
+`UM=O` selects patoh's connectivity-1 objective and is not configurable.
+`IB` is patoh's initial/final imbalance ratio, derived from `-B`'s integer
+percent. `patoh` writes its result to `<graph_file>.patoh.part.<N>`, using
+the same naming convention and 0-indexed line-per-vertex format as hmetis.
+
 If the partitioner exits with a non-zero status but still produces a valid
-partition file, `hpart` keeps going and uses that file.
+partition file, `hpart` keeps going and uses that file. This tolerance does
+not apply to the `HgrToPaToH` conversion step: if it fails to produce the
+intermediate `.patoh` file, `hpart` fails immediately, since there is no
+partition file to fall back on at that point.
 
 ## Effective Scope
 
