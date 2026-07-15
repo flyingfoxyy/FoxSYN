@@ -417,13 +417,6 @@ bool ApplyPartitioning( Abc_Ntk_t *pNtk, const Config &cfg )
     }
     else
     {
-        const std::filesystem::path exe_path = FindExecutable( ToolName( cfg.tool ) );
-        if ( exe_path.empty() )
-        {
-            Abc_Print( -1, "hpart: partitioner \"%s\" is not available in PATH\n", ToolName( cfg.tool ) );
-            return false;
-        }
-
         TempDir temp_dir = CreateTempDir();
         if ( !temp_dir.valid )
         {
@@ -432,15 +425,75 @@ bool ApplyPartitioning( Abc_Ntk_t *pNtk, const Config &cfg )
         }
 
         const std::filesystem::path graph_file = temp_dir.path / "network.hgr";
-        const std::filesystem::path part_file = PartitionFileName( graph_file, cfg.num_parts );
         if ( !WriteHypergraph( hypergraph, graph_file ) )
         {
             Abc_Print( -1, "hpart: failed to write hypergraph file \"%s\"\n", graph_file.c_str() );
             return false;
         }
 
-        const std::string command = BuildCommand( exe_path, graph_file, cfg );
-        const RunResult run = RunCommand( command, cfg.verbose );
+        std::filesystem::path part_file;
+        RunResult run;
+
+        if ( cfg.tool == Tool::PaToH )
+        {
+            const std::filesystem::path converter_path = FindExecutable( "HgrToPaToH" );
+            if ( converter_path.empty() )
+            {
+                Abc_Print( -1, "hpart: converter \"HgrToPaToH\" is not available in PATH\n" );
+                return false;
+            }
+            const std::filesystem::path exe_path = FindExecutable( ToolName( cfg.tool ) );
+            if ( exe_path.empty() )
+            {
+                Abc_Print( -1, "hpart: partitioner \"%s\" is not available in PATH\n", ToolName( cfg.tool ) );
+                return false;
+            }
+
+            const std::filesystem::path patoh_graph_file = temp_dir.path / "network.patoh";
+            part_file = PartitionFileName( patoh_graph_file, cfg.num_parts );
+
+            std::ostringstream convert_cmd;
+            convert_cmd << ShellQuote( converter_path.string() ) << ' '
+                        << ShellQuote( graph_file.string() ) << ' '
+                        << ShellQuote( patoh_graph_file.string() );
+            if ( !cfg.verbose )
+                convert_cmd << " > /dev/null 2>&1";
+
+            const RunResult convert_run = RunCommand( convert_cmd.str(), cfg.verbose );
+            if ( !convert_run.launched )
+            {
+                Abc_Print( -1, "hpart: failed to launch converter \"HgrToPaToH\"\n" );
+                return false;
+            }
+            if ( !std::filesystem::exists( patoh_graph_file ) )
+            {
+                Abc_Print( -1, "hpart: converter \"HgrToPaToH\" did not produce \"%s\"\n", patoh_graph_file.c_str() );
+                return false;
+            }
+
+            std::ostringstream partition_cmd;
+            partition_cmd << ShellQuote( exe_path.string() ) << ' '
+                          << ShellQuote( patoh_graph_file.string() ) << ' '
+                          << cfg.num_parts << " UM=O IB=" << ( cfg.balance_pct / 100.0 );
+            if ( !cfg.verbose )
+                partition_cmd << " > /dev/null 2>&1";
+
+            run = RunCommand( partition_cmd.str(), cfg.verbose );
+        }
+        else
+        {
+            const std::filesystem::path exe_path = FindExecutable( ToolName( cfg.tool ) );
+            if ( exe_path.empty() )
+            {
+                Abc_Print( -1, "hpart: partitioner \"%s\" is not available in PATH\n", ToolName( cfg.tool ) );
+                return false;
+            }
+
+            part_file = PartitionFileName( graph_file, cfg.num_parts );
+            const std::string command = BuildCommand( exe_path, graph_file, cfg );
+            run = RunCommand( command, cfg.verbose );
+        }
+
         if ( !FinishPartitionRun( run, cfg.tool, part_file, cfg.verbose ) )
             return false;
 
