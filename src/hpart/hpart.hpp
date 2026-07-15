@@ -11,6 +11,7 @@ enum class Tool {
     HMetis,
     SHMetis,
     KMetis,
+    PaToH,
 };
 
 struct Config {
