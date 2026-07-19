@@ -181,6 +181,42 @@ void TestConstantCone()
     Abc_NtkDelete(pNtk);
 }
 
+void TestCountMSat()
+{
+    // identical lines => m=2
+    {
+        Abc_Ntk_t *pNtk = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+        Abc_Obj_t *a=Abc_NtkCreatePi(pNtk), *b=Abc_NtkCreatePi(pNtk);
+        Abc_Obj_t *n0=Abc_NtkCreateNode(pNtk); Abc_ObjAddFanin(n0,a);Abc_ObjAddFanin(n0,b);SetAnd(n0);
+        Abc_Obj_t *n1=Abc_NtkCreateNode(pNtk); Abc_ObjAddFanin(n1,a);Abc_ObjAddFanin(n1,b);SetAnd(n1);
+        Abc_Obj_t *p0=Abc_NtkCreatePo(pNtk);Abc_ObjAddFanin(p0,n0);
+        Abc_Obj_t *p1=Abc_NtkCreatePo(pNtk);Abc_ObjAddFanin(p1,n1);
+        for (Abc_Obj_t*o:{a,b,n0,n1}) Abc_ObjSetPartId(o,0);
+        Abc_NtkSetPartStats(pNtk,2,0,0);
+        std::vector<Abc_Obj_t*> grp={n0,n1};
+        Abc_Ntk_t *pCone=fox::csr3::build_group_cone_ntk(grp,0);
+        ExpectEqLong("sat m identical", fox::csr3::count_m_sat(pCone,2,100000), 2);
+        ExpectEqLong("sat==exhaustive identical",
+            fox::csr3::count_m_sat(pCone,2,100000)==fox::csr3::count_m_exhaustive(pCone,2)?1:0, 1);
+        Abc_NtkDelete(pCone); Abc_NtkDelete(pNtk);
+    }
+    // disjoint lines => m=4
+    {
+        Abc_Ntk_t *pNtk = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+        Abc_Obj_t *a=Abc_NtkCreatePi(pNtk),*b=Abc_NtkCreatePi(pNtk),*c=Abc_NtkCreatePi(pNtk),*d=Abc_NtkCreatePi(pNtk);
+        Abc_Obj_t *n0=Abc_NtkCreateNode(pNtk); Abc_ObjAddFanin(n0,a);Abc_ObjAddFanin(n0,b);SetAnd(n0);
+        Abc_Obj_t *n1=Abc_NtkCreateNode(pNtk); Abc_ObjAddFanin(n1,c);Abc_ObjAddFanin(n1,d);SetAnd(n1);
+        Abc_Obj_t *p0=Abc_NtkCreatePo(pNtk);Abc_ObjAddFanin(p0,n0);
+        Abc_Obj_t *p1=Abc_NtkCreatePo(pNtk);Abc_ObjAddFanin(p1,n1);
+        for (Abc_Obj_t*o:{a,b,c,d,n0,n1}) Abc_ObjSetPartId(o,0);
+        Abc_NtkSetPartStats(pNtk,2,0,0);
+        std::vector<Abc_Obj_t*> grp={n0,n1};
+        Abc_Ntk_t *pCone=fox::csr3::build_group_cone_ntk(grp,0);
+        ExpectEqLong("sat m disjoint", fox::csr3::count_m_sat(pCone,2,100000), 4);
+        Abc_NtkDelete(pCone); Abc_NtkDelete(pNtk);
+    }
+}
+
 } // namespace
 
 int main()
@@ -193,6 +229,7 @@ int main()
     TestBuildConeNtk();
     TestSimAndExhaustive();
     TestConstantCone();
+    TestCountMSat();
     if (g_fail == 0) std::printf("all csr3 tests passed\n");
     int result = g_fail == 0 ? 0 : 1;
     Abc_Stop();

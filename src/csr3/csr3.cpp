@@ -240,6 +240,54 @@ long count_m_exhaustive(Abc_Ntk_t *pCone, int k)
     return m;
 }
 
+long count_m_sat(Abc_Ntk_t *pCone, int k, int btlimit)
+{
+    Abc_Ntk_t *pStrash = Abc_NtkStrash(pCone, 0, 1, 0);
+    Aig_Man_t *pAig = Abc_NtkToDar(pStrash, 0, 0);
+    Cnf_Dat_t *pCnf = Cnf_Derive(pAig, Aig_ManCoNum(pAig));
+    sat_solver *pSat = (sat_solver *)Cnf_DataWriteIntoSolver(pCnf, 1, 0);
+
+    // projection vars: the CNF var of each line's driver (skip constant drivers)
+    std::vector<int> outVars;
+    for (int j = 0; j < k; ++j) {
+        Aig_Obj_t *pCo = Aig_ManCo(pAig, j);
+        Aig_Obj_t *pDrv = Aig_ObjFanin0(pCo);
+        if (pDrv == NULL || Aig_ObjIsConst1(pDrv)) continue;   // constant line: no variability
+        int var = pCnf->pVarNums[Aig_ObjId(pDrv)];
+        if (var >= 0) outVars.push_back(var);
+    }
+
+    long cap = (k >= 1) ? (1L << (k - 1)) : 1;   // early-exit threshold: > 2^(k-1) => no water
+    long m = 0;
+    std::vector<int> lits;
+    if (pSat == NULL) {                          // trivially UNSAT constant network
+        m = 1;
+    } else {
+        while (true) {
+            int status = sat_solver_solve(pSat, NULL, NULL, (ABC_INT64_T)btlimit, 0, 0, 0);
+            if (status == l_False) break;                 // enumerated all
+            if (status == l_Undef) { m = -1; break; }      // timeout
+            ++m;
+            if (m > cap) { m = (1L << k); break; }          // early exit: gain would be 0
+            // block this assignment over the projection vars
+            lits.clear();
+            for (int var : outVars) {
+                int val = sat_solver_var_value(pSat, var);
+                lits.push_back(Abc_Var2Lit(var, val)); // literal true when var != val
+            }
+            if (lits.empty()) break;                 // all lines constant => single combination
+            if (!sat_solver_addclause(pSat, lits.data(), lits.data() + lits.size()))
+                break;                               // adding blocking clause made it UNSAT
+        }
+    }
+    if (pSat) sat_solver_delete(pSat);
+    Cnf_DataFree(pCnf);
+    Aig_ManStop(pAig);
+    Abc_NtkDelete(pStrash);
+    if (m < 1 && m != -1) m = 1;
+    return m;
+}
+
 bool RunCsr3(Abc_Ntk_t *pNtk, const Config &cfg)
 {
     if (!pNtk) { printf("csr3: current network is empty\n"); return false; }
