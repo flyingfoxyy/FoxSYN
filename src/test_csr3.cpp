@@ -150,6 +150,37 @@ void TestSimAndExhaustive()
     Abc_NtkDelete(pCone); Abc_NtkDelete(pNtk);
 }
 
+void TestConstantCone()
+{
+    // A 0-fanin constant node in partition 0 with a cross-partition (part 1)
+    // fanout is a legitimate crossing line whose cone has zero PIs
+    // (is_cone_leaf keeps 0-fanin constant nodes internal, not a PI leaf).
+    Abc_Ntk_t *pNtk = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    auto *pMan = static_cast<Mem_Flex_t *>(pNtk->pManFunc);
+    Abc_Obj_t *c0 = Abc_NtkCreateNode(pNtk);        // 0-fanin constant-0 node
+    c0->pData = Abc_SopCreateConst0(pMan);
+    Abc_Obj_t *n1 = Abc_NtkCreateNode(pNtk);        // part-1 consumer of c0
+    Abc_ObjAddFanin(n1, c0); SetAnd(n1);
+    Abc_Obj_t *po = Abc_NtkCreatePo(pNtk); Abc_ObjAddFanin(po, n1);
+    Abc_ObjSetPartId(c0, 0); Abc_ObjSetPartId(n1, 1);
+    Abc_NtkSetPartStats(pNtk, 2, 0, 0);
+
+    auto cross = fox::csr3::collect_crossing_signals(pNtk, 0);
+    ExpectEqLong("constant node is a crossing signal", (long)cross.size(), 1);
+
+    std::vector<Abc_Obj_t*> grp = { c0 };
+    Abc_Ntk_t *pCone = fox::csr3::build_group_cone_ntk(grp, 0);
+    ExpectEqLong("constant cone PIs", (long)Abc_NtkPiNum(pCone), 0);
+    ExpectEqLong("constant cone POs", (long)Abc_NtkPoNum(pCone), 1);
+
+    // Would SIGFPE (divide by zero on nCi) without the nCi==0 guard.
+    ExpectEqLong("count_m_exhaustive on 0-PI cone", fox::csr3::count_m_exhaustive(pCone, 1), 1);
+    ExpectEqLong("simulate_prefilter on 0-PI cone", fox::csr3::simulate_prefilter(pCone, 1, 4), 1);
+
+    Abc_NtkDelete(pCone);
+    Abc_NtkDelete(pNtk);
+}
+
 } // namespace
 
 int main()
@@ -161,6 +192,7 @@ int main()
     TestGroupByJaccard();
     TestBuildConeNtk();
     TestSimAndExhaustive();
+    TestConstantCone();
     if (g_fail == 0) std::printf("all csr3 tests passed\n");
     int result = g_fail == 0 ? 0 : 1;
     Abc_Stop();

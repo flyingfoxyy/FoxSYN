@@ -196,6 +196,12 @@ long simulate_prefilter(Abc_Ntk_t *pCone, int k, int nWords)
     Aig_Man_t *pAig = Abc_NtkToDar(pStrash, 0, 0);
     Gia_Man_t *pGia = Gia_ManFromAig(pAig);
     int nCi = Gia_ManCiNum(pGia);
+    if (nCi == 0) {
+        Gia_ManStop(pGia);
+        Aig_ManStop(pAig);
+        Abc_NtkDelete(pStrash);
+        return 1;
+    }
     Gia_ManRandomW(1);                                  // reset RNG for determinism
     pGia->vSimsPi = Vec_WrdAlloc((long)nWords * nCi);
     for (long i = 0; i < (long)nWords * nCi; ++i)
@@ -215,6 +221,12 @@ long count_m_exhaustive(Abc_Ntk_t *pCone, int k)
     Aig_Man_t *pAig = Abc_NtkToDar(pStrash, 0, 0);
     Gia_Man_t *pGia = Gia_ManFromAig(pAig);
     int nCi = Gia_ManCiNum(pGia);
+    if (nCi == 0) {
+        Gia_ManStop(pGia);
+        Aig_ManStop(pAig);
+        Abc_NtkDelete(pStrash);
+        return 1;
+    }
     // exhaustive: 2^nCi input patterns via canonical truth-table columns
     // Vec_WrdStartTruthTables(nCi) lays out nCi vars over 2^nCi patterns (nWords = max(1, 2^(nCi-6)))
     int nWords = nCi <= 6 ? 1 : (1 << (nCi - 6));
