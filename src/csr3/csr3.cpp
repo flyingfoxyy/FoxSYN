@@ -5,10 +5,20 @@
 #include <cassert>
 #include <cstdio>
 #include <functional>
+#include <unordered_set>
 #include <vector>
 
 #include "base/abc/abc.h"
 #include "base/abc/abcPdb.hpp"
+
+extern "C" {
+#include "aig/aig/aig.h"
+#include "aig/gia/gia.h"
+#include "aig/gia/giaAig.h"    // Gia_ManFromAig (not re-exported by gia.h)
+#include "sat/cnf/cnf.h"
+#include "sat/bsat/satSolver.h"
+Aig_Man_t * Abc_NtkToDar(Abc_Ntk_t *pNtk, int fExors, int fRegisters);
+}
 
 namespace fox::csr3 {
 
@@ -158,6 +168,64 @@ Abc_Ntk_t *build_group_cone_ntk(const std::vector<Abc_Obj_t*> &lines, int srcPar
     if (!Abc_NtkCheck(pCone))
         printf("csr3: warning: cone network check failed\n");
     return pCone;
+}
+
+// Assemble the k-bit output tuple for pattern p (0..totalPats-1) from GIA CO sim words.
+// Returns tuples counted into a hash set; k <= 63 guaranteed by the -M cap.
+static long count_distinct_from_sim(Gia_Man_t *pGia, Vec_Wrd_t *vSims, int k, int nWords)
+{
+    std::unordered_set<uint64_t> seen;
+    int totalPats = nWords * 64;
+    for (int p = 0; p < totalPats; ++p) {
+        int w = p >> 6, bit = p & 63;
+        uint64_t key = 0;
+        for (int j = 0; j < k; ++j) {
+            Gia_Obj_t *pCo = Gia_ManCo(pGia, j);
+            word *co = Vec_WrdArray(vSims) + (long)nWords * Gia_ObjId(pGia, pCo);
+            uint64_t v = (co[w] >> bit) & 1;
+            key |= (v << j);
+        }
+        seen.insert(key);
+    }
+    return (long)seen.size();
+}
+
+long simulate_prefilter(Abc_Ntk_t *pCone, int k, int nWords)
+{
+    Abc_Ntk_t *pStrash = Abc_NtkStrash(pCone, 0, 1, 0);
+    Aig_Man_t *pAig = Abc_NtkToDar(pStrash, 0, 0);
+    Gia_Man_t *pGia = Gia_ManFromAig(pAig);
+    int nCi = Gia_ManCiNum(pGia);
+    Gia_ManRandomW(1);                                  // reset RNG for determinism
+    pGia->vSimsPi = Vec_WrdAlloc((long)nWords * nCi);
+    for (long i = 0; i < (long)nWords * nCi; ++i)
+        Vec_WrdPush(pGia->vSimsPi, Gia_ManRandomW(0));
+    Vec_Wrd_t *vSims = Gia_ManSimPatSim(pGia);
+    long distinct = count_distinct_from_sim(pGia, vSims, k, nWords);
+    Vec_WrdFree(vSims);
+    Gia_ManStop(pGia);
+    Aig_ManStop(pAig);
+    Abc_NtkDelete(pStrash);
+    return distinct;
+}
+
+long count_m_exhaustive(Abc_Ntk_t *pCone, int k)
+{
+    Abc_Ntk_t *pStrash = Abc_NtkStrash(pCone, 0, 1, 0);
+    Aig_Man_t *pAig = Abc_NtkToDar(pStrash, 0, 0);
+    Gia_Man_t *pGia = Gia_ManFromAig(pAig);
+    int nCi = Gia_ManCiNum(pGia);
+    // exhaustive: 2^nCi input patterns via canonical truth-table columns
+    // Vec_WrdStartTruthTables(nCi) lays out nCi vars over 2^nCi patterns (nWords = max(1, 2^(nCi-6)))
+    int nWords = nCi <= 6 ? 1 : (1 << (nCi - 6));
+    pGia->vSimsPi = Vec_WrdStartTruthTables(nCi);       // exactly enumerates all 2^nCi inputs
+    Vec_Wrd_t *vSims = Gia_ManSimPatSim(pGia);
+    long m = count_distinct_from_sim(pGia, vSims, k, nWords);
+    Vec_WrdFree(vSims);
+    Gia_ManStop(pGia);
+    Aig_ManStop(pAig);
+    Abc_NtkDelete(pStrash);
+    return m;
 }
 
 bool RunCsr3(Abc_Ntk_t *pNtk, const Config &cfg)
