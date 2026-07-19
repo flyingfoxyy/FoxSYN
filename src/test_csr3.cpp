@@ -1,6 +1,9 @@
 #include <cstdio>
+#include <vector>
 #include "csr3/csr3.hpp"
 #include "csr3/csr3_internal.hpp"
+#include "base/abc/abc.h"
+#include "base/abc/abcPdb.hpp"
 
 namespace {
 
@@ -24,11 +27,46 @@ void TestCeilLog2()
     ExpectEqLong("ceil_log2(256)", fox::csr3::ceil_log2(256), 8);
 }
 
+// helper: give a node an AND SOP over its current fanins
+static void SetAnd(Abc_Obj_t *n)
+{
+    auto *pMan = static_cast<Mem_Flex_t *>(n->pNtk->pManFunc);
+    if (Abc_ObjFaninNum(n) == 1) n->pData = Abc_SopCreateBuf(pMan);
+    else n->pData = Abc_SopCreateAnd(pMan, Abc_ObjFaninNum(n), nullptr);
+}
+
+void TestCollectCrossing()
+{
+    Abc_Ntk_t *pNtk = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    Abc_Obj_t *a = Abc_NtkCreatePi(pNtk);
+    Abc_Obj_t *b = Abc_NtkCreatePi(pNtk);
+    Abc_Obj_t *n0 = Abc_NtkCreateNode(pNtk);
+    Abc_ObjAddFanin(n0, a); Abc_ObjAddFanin(n0, b); SetAnd(n0);
+    Abc_Obj_t *n1 = Abc_NtkCreateNode(pNtk);
+    Abc_ObjAddFanin(n1, n0); SetAnd(n1);
+    Abc_Obj_t *po = Abc_NtkCreatePo(pNtk);
+    Abc_ObjAddFanin(po, n1);
+
+    // partition: everything part 0 except n1 part 1
+    Abc_ObjSetPartId(a, 0); Abc_ObjSetPartId(b, 0);
+    Abc_ObjSetPartId(n0, 0); Abc_ObjSetPartId(n1, 1);
+    Abc_NtkSetPartStats(pNtk, 2, 0, 0);
+
+    auto cross01 = fox::csr3::collect_crossing_signals(pNtk, 0);
+    ExpectEqLong("cross01 size", (long)cross01.size(), 1);
+    ExpectEqLong("cross01 is n0", (long)(cross01.empty()?-1:cross01[0]->Id), (long)n0->Id);
+    auto cross10 = fox::csr3::collect_crossing_signals(pNtk, 1);
+    ExpectEqLong("cross10 size", (long)cross10.size(), 0);
+
+    Abc_NtkDelete(pNtk);
+}
+
 } // namespace
 
 int main()
 {
     TestCeilLog2();
+    TestCollectCrossing();
     if (g_fail == 0) std::printf("all csr3 tests passed\n");
     return g_fail == 0 ? 0 : 1;
 }

@@ -2,11 +2,35 @@
 #include "csr3/csr3_internal.hpp"
 
 #include <cstdio>
+#include <vector>
 
 #include "base/abc/abc.h"
 #include "base/abc/abcPdb.hpp"
 
 namespace fox::csr3 {
+
+std::vector<Abc_Obj_t*> collect_crossing_signals(Abc_Ntk_t *pNtk, int srcPart)
+{
+    std::vector<Abc_Obj_t*> out;
+    Abc_Obj_t *pObj, *pFanout;
+    int i, j;
+    Abc_NtkForEachNode(pNtk, pObj, i)
+    {
+        if ((int)Abc_ObjGetPartId(pObj) != srcPart)
+            continue;
+        bool crosses = false;
+        Abc_ObjForEachFanout(pObj, pFanout, j)
+        {
+            if (Abc_ObjIsNode(pFanout) &&
+                Abc_PartIdIsValid(Abc_ObjGetPartId(pFanout)) &&
+                (int)Abc_ObjGetPartId(pFanout) != srcPart)
+            { crosses = true; break; }
+        }
+        if (crosses)
+            out.push_back(pObj);
+    }
+    return out;
+}
 
 int ceil_log2(long m)
 {
