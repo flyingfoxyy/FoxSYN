@@ -76,6 +76,58 @@ int ceil_log2(long m)
     return bits;
 }
 
+static long intersize(const std::vector<int> &x, const std::vector<int> &y)
+{
+    long c = 0; size_t i = 0, j = 0;
+    while (i < x.size() && j < y.size()) {
+        if (x[i] == y[j]) { ++c; ++i; ++j; }
+        else if (x[i] < y[j]) ++i; else ++j;
+    }
+    return c;
+}
+
+std::vector<Group> group_by_jaccard(const std::vector<Line> &lines, int jaccardPct, int kmax)
+{
+    int n = (int)lines.size();
+    std::vector<int> comp(n, -1);
+    // union-find
+    std::vector<int> parent(n);
+    for (int i = 0; i < n; ++i) parent[i] = i;
+    std::function<int(int)> find = [&](int x){ while (parent[x]!=x){ parent[x]=parent[parent[x]]; x=parent[x]; } return x; };
+    auto uni = [&](int a, int b){ parent[find(a)] = find(b); };
+
+    for (int i = 0; i < n; ++i) {
+        if (lines[i].support.empty()) continue;
+        for (int j = i + 1; j < n; ++j) {
+            if (lines[j].support.empty()) continue;
+            long inter = intersize(lines[i].support, lines[j].support);
+            if (inter == 0) continue;
+            long uni_sz = (long)lines[i].support.size() + (long)lines[j].support.size() - inter;
+            if (uni_sz > 0 && 100 * inter > (long)jaccardPct * uni_sz)
+                uni(i, j);
+        }
+    }
+    // bucket by root
+    std::vector<std::vector<int>> buckets;
+    std::vector<int> rootToBucket(n, -1);
+    for (int i = 0; i < n; ++i) {
+        int r = find(i);
+        if (rootToBucket[r] == -1) { rootToBucket[r] = (int)buckets.size(); buckets.push_back({}); }
+        buckets[rootToBucket[r]].push_back(i);
+    }
+    // emit, splitting oversized buckets into chunks of kmax
+    std::vector<Group> groups;
+    for (auto &b : buckets) {
+        for (size_t s = 0; s < b.size(); s += (size_t)kmax) {
+            Group g;
+            for (size_t t = s; t < b.size() && t < s + (size_t)kmax; ++t)
+                g.lines.push_back(lines[b[t]].driver);
+            groups.push_back(std::move(g));
+        }
+    }
+    return groups;
+}
+
 bool RunCsr3(Abc_Ntk_t *pNtk, const Config &cfg)
 {
     if (!pNtk) { printf("csr3: current network is empty\n"); return false; }

@@ -89,6 +89,25 @@ void TestExtractSupport()
     Abc_NtkDelete(pNtk);
 }
 
+void TestGroupByJaccard()
+{
+    using fox::csr3::Line; using fox::csr3::Group;
+    std::vector<Line> lines(3);
+    lines[0].support = {1,2,3};
+    lines[1].support = {2,3,4};
+    lines[2].support = {10,11};
+    auto groups = fox::csr3::group_by_jaccard(lines, 30, 16);
+    ExpectEqLong("group count", (long)groups.size(), 2);
+    // find the group with 2 lines
+    int big = -1, small = -1;
+    for (size_t i=0;i<groups.size();i++) {
+        if (groups[i].lines.size()==2) big=(int)i;
+        if (groups[i].lines.size()==1) small=(int)i;
+    }
+    ExpectEqLong("has 2-line group", big>=0?1:0, 1);
+    ExpectEqLong("has 1-line group", small>=0?1:0, 1);
+}
+
 } // namespace
 
 int main()
@@ -96,6 +115,7 @@ int main()
     TestCeilLog2();
     TestCollectCrossing();
     TestExtractSupport();
+    TestGroupByJaccard();
     if (g_fail == 0) std::printf("all csr3 tests passed\n");
     return g_fail == 0 ? 0 : 1;
 }
