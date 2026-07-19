@@ -208,6 +208,44 @@ int Abc_NtkComputeCutEdgeNum( Abc_Ntk_t * pNtk )
     return CutEdge;
 }
 
+int Abc_NtkComputeCutEdgeDedupNum( Abc_Ntk_t * pNtk )
+{
+    Abc_Obj_t * pObj;
+    Abc_Obj_t * pFanout;
+    int i, k;
+    int CutEdge = 0;
+    std::vector<part_id> Parts;
+
+    if ( pNtk == NULL )
+        return -1;
+
+    // Deduplicated (lambda-1 connectivity) cut-edge count. A net is a driver
+    // plus all its fanouts; a signal that reaches P distinct partitions needs
+    // P-1 physical inter-partition wires -- the fanout inside each destination
+    // partition is local routing, not a separate crossing. This is the true
+    // count of crossing wires. Unlike Abc_NtkComputeCutEdgeNum, which counts
+    // one per crossing (driver, consumer) pair and thus over-counts a driver
+    // with several fanouts in the same destination partition. For N=2 this
+    // equals the cut-net count.
+    Abc_NtkForEachObj( pNtk, pObj, i )
+    {
+        if ( !Abc_ObjIsPartStatVertex( pObj ) || !Abc_ObjHasPartId( pObj ) )
+            continue;
+        Parts.clear();
+        Parts.push_back( Abc_ObjGetPartId( pObj ) );
+        Abc_ObjForEachFanout( pObj, pFanout, k )
+        {
+            if ( !Abc_ObjIsPartStatVertex( pFanout ) || !Abc_ObjHasPartId( pFanout ) )
+                continue;
+            Parts.push_back( Abc_ObjGetPartId( pFanout ) );
+        }
+        std::sort( Parts.begin(), Parts.end() );
+        Parts.erase( std::unique( Parts.begin(), Parts.end() ), Parts.end() );
+        CutEdge += (int)Parts.size() - 1;
+    }
+    return CutEdge;
+}
+
 int Abc_NtkComputeHopNum( Abc_Ntk_t * pNtk )
 {
     std::vector<int> HopLevels;
