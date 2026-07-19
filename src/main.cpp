@@ -22,6 +22,7 @@
 #include "cmfs/cmfs.hpp"
 #include "csr/csr.hpp"
 #include "csr2/csr2.hpp"
+#include "csr3/csr3.hpp"
 #include "pdecomp/pdecomp.hpp"
 #include "agdmap/AgdmapCommand.h"
 #include "curvemap/curvemap.h"
@@ -954,6 +955,57 @@ usage:
     return 1;
 }
 
+int Csr3_Command(Abc_Frame_t *pAbc, int argc, char **argv)
+{
+    fox::csr3::Config cfg;
+    Abc_Ntk_t *pNtk = Abc_FrameReadNtk(pAbc);
+    if (argc > 1 && !strcmp(argv[1], "-h"))
+        goto usage;
+    for (int i = 1; i != argc; ++i)
+    {
+        if (argv[i][0] != '-') { std::cout << "csr3: unexpected argument " << argv[i] << "\n"; goto usage; }
+        const char arg = *(argv[i] + 1);
+        switch (arg)
+        {
+        case 'J':
+            if (i + 1 >= argc) { printf("csr3: -J requires a number\n"); return 1; }
+            cfg.jaccard_pct = std::atoi(argv[++i]);
+            if (cfg.jaccard_pct < 1 || cfg.jaccard_pct > 99) { printf("csr3: invalid -J %d\n", cfg.jaccard_pct); return 1; }
+            break;
+        case 'M':
+            if (i + 1 >= argc) { printf("csr3: -M requires a number\n"); return 1; }
+            cfg.max_lines = std::atoi(argv[++i]);
+            if (cfg.max_lines < 1 || cfg.max_lines > 63) { printf("csr3: invalid -M %d (1-63)\n", cfg.max_lines); return 1; }
+            break;
+        case 'P':
+            if (i + 1 >= argc) { printf("csr3: -P requires a number\n"); return 1; }
+            cfg.sim_words = std::atoi(argv[++i]);
+            if (cfg.sim_words < 1) { printf("csr3: invalid -P %d\n", cfg.sim_words); return 1; }
+            break;
+        case 'B':
+            if (i + 1 >= argc) { printf("csr3: -B requires a number\n"); return 1; }
+            cfg.btlimit = std::atoi(argv[++i]);
+            if (cfg.btlimit < 1) { printf("csr3: invalid -B %d\n", cfg.btlimit); return 1; }
+            break;
+        case 'c': cfg.self_check ^= 1; break;
+        case 'v': cfg.verbose ^= 1; break;
+        case 'h': goto usage;
+        default:  std::cout << "csr3: unknown argument -" << arg << "\n"; goto usage;
+        }
+    }
+    return fox::csr3::RunCsr3(pNtk, cfg) ? 0 : 1;
+usage:
+    Abc_Print(-2, "usage: csr3 [-J num] [-M num] [-P num] [-B num] [-cv]\n");
+    Abc_Print(-2, "\t        Phase 0: measure combinational SDC water in cross-partition interconnect (read-only)\n");
+    Abc_Print(-2, "\t-J num : Jaccard grouping threshold, percent (1-99) [default = 30]\n");
+    Abc_Print(-2, "\t-M num : max lines per group (bundle cap, 1-63) [default = 16]\n");
+    Abc_Print(-2, "\t-P num : random simulation words (x64 patterns each) [default = 16]\n");
+    Abc_Print(-2, "\t-B num : SAT backtrack limit per solve [default = 100000]\n");
+    Abc_Print(-2, "\t-c     : self-check exhaustively for |support|<=16 groups\n");
+    Abc_Print(-2, "\t-v     : toggle verbose (per-group detail)\n");
+    return 1;
+}
+
 int Pdecomp_Command(Abc_Frame_t *pAbc, int argc, char **argv)
 {
     fox::pdecomp::Config cfg;
@@ -1070,6 +1122,7 @@ struct CmdRegister
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "cmfs", Cmfs_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "csr", Csr_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "csr2", Csr2_Command, 1);
+        Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "csr3", Csr3_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "pdecomp", Pdecomp_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "curvemap", Curvemap_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FPGA mapping", "agdmap", Agdmap, 1);
