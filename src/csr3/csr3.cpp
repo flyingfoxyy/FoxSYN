@@ -89,7 +89,6 @@ static long intersize(const std::vector<int> &x, const std::vector<int> &y)
 std::vector<Group> group_by_jaccard(const std::vector<Line> &lines, int jaccardPct, int kmax)
 {
     int n = (int)lines.size();
-    std::vector<int> comp(n, -1);
     // union-find
     std::vector<int> parent(n);
     for (int i = 0; i < n; ++i) parent[i] = i;
