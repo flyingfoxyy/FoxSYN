@@ -2,6 +2,7 @@
 #include "csr3/csr3_internal.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cstdio>
 #include <functional>
 #include <vector>
@@ -143,6 +144,7 @@ static void cone_build_dfs(Abc_Obj_t *pObj, Abc_Ntk_t *pCone, int srcPart)
 
 Abc_Ntk_t *build_group_cone_ntk(const std::vector<Abc_Obj_t*> &lines, int srcPart)
 {
+    assert(!lines.empty());
     Abc_Ntk_t *pNtk = lines[0]->pNtk;
     Abc_NtkCleanCopy(pNtk);
     Abc_Ntk_t *pCone = Abc_NtkAlloc(pNtk->ntkType, pNtk->ntkFunc, 1);
