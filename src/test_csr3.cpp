@@ -217,6 +217,27 @@ void TestCountMSat()
     }
 }
 
+void TestEndToEnd()
+{
+    Abc_Ntk_t *pNtk = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    Abc_Obj_t *a=Abc_NtkCreatePi(pNtk), *b=Abc_NtkCreatePi(pNtk);
+    // two identical part-0 nodes, both consumed in part 1 => a redundant crossing pair
+    Abc_Obj_t *n0=Abc_NtkCreateNode(pNtk); Abc_ObjAddFanin(n0,a);Abc_ObjAddFanin(n0,b);SetAnd(n0);
+    Abc_Obj_t *n1=Abc_NtkCreateNode(pNtk); Abc_ObjAddFanin(n1,a);Abc_ObjAddFanin(n1,b);SetAnd(n1);
+    Abc_Obj_t *s=Abc_NtkCreateNode(pNtk); Abc_ObjAddFanin(s,n0);Abc_ObjAddFanin(s,n1);SetAnd(s); // part 1 sink
+    Abc_Obj_t *po=Abc_NtkCreatePo(pNtk); Abc_ObjAddFanin(po,s);
+    Abc_ObjSetPartId(a,0);Abc_ObjSetPartId(b,0);Abc_ObjSetPartId(n0,0);Abc_ObjSetPartId(n1,0);
+    Abc_ObjSetPartId(s,1);
+    Abc_NtkSetPartStats(pNtk,2,0,0);
+
+    fox::csr3::Config cfg; cfg.self_check = true;
+    bool ok = fox::csr3::RunCsr3(pNtk, cfg);
+    ExpectEqLong("RunCsr3 ok", ok?1:0, 1);
+    // network unchanged (read-only): still 2 PIs, 1 PO, 3 nodes
+    ExpectEqLong("nodes unchanged", (long)Abc_NtkNodeNum(pNtk), 3);
+    Abc_NtkDelete(pNtk);
+}
+
 } // namespace
 
 int main()
@@ -230,6 +251,7 @@ int main()
     TestSimAndExhaustive();
     TestConstantCone();
     TestCountMSat();
+    TestEndToEnd();
     if (g_fail == 0) std::printf("all csr3 tests passed\n");
     int result = g_fail == 0 ? 0 : 1;
     Abc_Stop();

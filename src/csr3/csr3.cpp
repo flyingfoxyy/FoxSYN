@@ -298,8 +298,64 @@ bool RunCsr3(Abc_Ntk_t *pNtk, const Config &cfg)
         printf("csr3: v1 only supports N=2 partitions (got %d)\n", Abc_NtkPdb(pNtk)->num_parts());
         return false;
     }
-    (void)cfg;
-    printf("csr3: scaffold OK (measurement not yet implemented)\n");
+
+    long globalGain = 0, globalK = 0;
+    for (int srcPart = 0; srcPart <= 1; ++srcPart) {
+        int dstPart = 1 - srcPart;
+        std::vector<Abc_Obj_t*> crossing = collect_crossing_signals(pNtk, srcPart);
+        std::vector<Line> lines;
+        lines.reserve(crossing.size());
+        for (Abc_Obj_t *drv : crossing) {
+            Line ln; ln.driver = drv;
+            ln.support = extract_support_partition_aware(drv, srcPart);
+            lines.push_back(std::move(ln));
+        }
+        std::vector<Group> groups = group_by_jaccard(lines, cfg.jaccard_pct, cfg.max_lines);
+
+        long dirGain = 0, dirK = 0;
+        int nPrefiltered = 0;
+        // support-size lookup for self-check gating
+        // (rebuild union support size per group via the cone's PI count)
+        for (Group &g : groups) {
+            int k = (int)g.lines.size();
+            if (k == 0) continue;
+            Abc_Ntk_t *pCone = build_group_cone_ntk(g.lines, srcPart);
+            int suppSize = Abc_NtkPiNum(pCone);
+            long simLb = simulate_prefilter(pCone, k, cfg.sim_words);
+            long m;
+            bool prefiltered = false;
+            if (simLb > (1L << (k - 1))) {   // simulation already proves no water
+                m = (1L << k);
+                prefiltered = true;
+                ++nPrefiltered;
+            } else {
+                m = count_m_sat(pCone, k, cfg.btlimit);
+                if (m == -1) { m = (1L << k); }   // timeout: treat as no water (conservative)
+                if (cfg.self_check && suppSize <= 16) {
+                    long mEx = count_m_exhaustive(pCone, k);
+                    if (m != mEx)
+                        printf("csr3: SELF-CHECK MISMATCH dir %d->%d: sat m=%ld exhaustive m=%ld (k=%d supp=%d)\n",
+                               srcPart, dstPart, m, mEx, k, suppSize);
+                }
+            }
+            int gain = k - ceil_log2(m);
+            if (gain < 0) gain = 0;
+            dirGain += gain; dirK += k;
+            if (cfg.verbose)
+                printf("  [%d->%d] group k=%d supp=%d m=%ld gain=%d%s\n",
+                       srcPart, dstPart, k, suppSize, m, gain, prefiltered ? " (sim-pruned)" : "");
+            Abc_NtkDelete(pCone);
+        }
+        globalGain += dirGain; globalK += dirK;
+        printf("csr3: dir %d->%d: %d crossing signals, %zu groups (%d sim-pruned), "
+               "sum-k=%ld recoverable=%ld\n",
+               srcPart, dstPart, (int)crossing.size(), groups.size(), nPrefiltered, dirK, dirGain);
+    }
+
+    double pct = globalK > 0 ? 100.0 * (double)globalGain / (double)globalK : 0.0;
+    printf("csr3: TOTAL recoverable wires (detected-floor, combinational SDC only) = %ld / %ld crossing (%.1f%%)\n",
+           globalGain, globalK, pct);
+    printf("csr3: NOTE this is a lower bound; reachability/ODC water (e.g. one-hot buses) is NOT measured.\n");
     return true;
 }
 
