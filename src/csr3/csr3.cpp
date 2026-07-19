@@ -127,6 +127,37 @@ std::vector<Group> group_by_jaccard(const std::vector<Line> &lines, int jaccardP
     return groups;
 }
 
+static void cone_build_dfs(Abc_Obj_t *pObj, Abc_Ntk_t *pCone, int srcPart)
+{
+    if (Abc_NodeIsTravIdCurrent(pObj)) return;
+    Abc_NodeSetTravIdCurrent(pObj);
+    if (is_cone_leaf(pObj, srcPart)) {
+        pObj->pCopy = Abc_NtkCreatePi(pCone);
+        return;
+    }
+    Abc_Obj_t *pFanin; int i;
+    Abc_ObjForEachFanin(pObj, pFanin, i) cone_build_dfs(pFanin, pCone, srcPart);
+    Abc_NtkDupObj(pCone, pObj, 0);              // copies SOP pData for logic nodes
+    Abc_ObjForEachFanin(pObj, pFanin, i) Abc_ObjAddFanin(pObj->pCopy, pFanin->pCopy);
+}
+
+Abc_Ntk_t *build_group_cone_ntk(const std::vector<Abc_Obj_t*> &lines, int srcPart)
+{
+    Abc_Ntk_t *pNtk = lines[0]->pNtk;
+    Abc_NtkCleanCopy(pNtk);
+    Abc_Ntk_t *pCone = Abc_NtkAlloc(pNtk->ntkType, pNtk->ntkFunc, 1);
+    pCone->pName = Extra_UtilStrsav("csr3_cone");
+    Abc_NtkIncrementTravId(pNtk);
+    for (Abc_Obj_t *line : lines) cone_build_dfs(line, pCone, srcPart);
+    for (Abc_Obj_t *line : lines) {
+        Abc_Obj_t *pPo = Abc_NtkCreatePo(pCone);
+        Abc_ObjAddFanin(pPo, line->pCopy);
+    }
+    if (!Abc_NtkCheck(pCone))
+        printf("csr3: warning: cone network check failed\n");
+    return pCone;
+}
+
 bool RunCsr3(Abc_Ntk_t *pNtk, const Config &cfg)
 {
     if (!pNtk) { printf("csr3: current network is empty\n"); return false; }

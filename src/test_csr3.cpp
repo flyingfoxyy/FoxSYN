@@ -108,14 +108,38 @@ void TestGroupByJaccard()
     ExpectEqLong("has 1-line group", small>=0?1:0, 1);
 }
 
+void TestBuildConeNtk()
+{
+    Abc_Ntk_t *pNtk = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    Abc_Obj_t *a = Abc_NtkCreatePi(pNtk);
+    Abc_Obj_t *b = Abc_NtkCreatePi(pNtk);
+    Abc_Obj_t *n0 = Abc_NtkCreateNode(pNtk);
+    Abc_ObjAddFanin(n0, a); Abc_ObjAddFanin(n0, b); SetAnd(n0);
+    Abc_Obj_t *po = Abc_NtkCreatePo(pNtk); Abc_ObjAddFanin(po, n0);
+    Abc_ObjSetPartId(a,0); Abc_ObjSetPartId(b,0); Abc_ObjSetPartId(n0,0);
+    Abc_NtkSetPartStats(pNtk, 2, 0, 0);
+
+    std::vector<Abc_Obj_t*> grp = { n0 };
+    Abc_Ntk_t *pCone = fox::csr3::build_group_cone_ntk(grp, 0);
+    ExpectEqLong("cone PIs", (long)Abc_NtkPiNum(pCone), 2);
+    ExpectEqLong("cone POs", (long)Abc_NtkPoNum(pCone), 1);
+    ExpectEqLong("cone valid", Abc_NtkCheck(pCone)?1:0, 1);
+    Abc_NtkDelete(pCone);
+    Abc_NtkDelete(pNtk);
+}
+
 } // namespace
 
 int main()
 {
+    Abc_Start();
     TestCeilLog2();
     TestCollectCrossing();
     TestExtractSupport();
     TestGroupByJaccard();
+    TestBuildConeNtk();
     if (g_fail == 0) std::printf("all csr3 tests passed\n");
-    return g_fail == 0 ? 0 : 1;
+    int result = g_fail == 0 ? 0 : 1;
+    Abc_Stop();
+    return result;
 }
