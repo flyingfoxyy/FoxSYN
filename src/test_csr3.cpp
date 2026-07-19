@@ -61,12 +61,41 @@ void TestCollectCrossing()
     Abc_NtkDelete(pNtk);
 }
 
+void TestExtractSupport()
+{
+    Abc_Ntk_t *pNtk = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    Abc_Obj_t *a = Abc_NtkCreatePi(pNtk);
+    Abc_Obj_t *b = Abc_NtkCreatePi(pNtk);
+    Abc_Obj_t *opp = Abc_NtkCreateNode(pNtk);       // opposite-partition feeder
+    Abc_ObjAddFanin(opp, a); SetAnd(opp);
+    Abc_Obj_t *n0 = Abc_NtkCreateNode(pNtk);
+    Abc_ObjAddFanin(n0, b); Abc_ObjAddFanin(n0, opp); SetAnd(n0);
+    Abc_Obj_t *po = Abc_NtkCreatePo(pNtk); Abc_ObjAddFanin(po, n0);
+
+    Abc_ObjSetPartId(a, 0); Abc_ObjSetPartId(b, 0);
+    Abc_ObjSetPartId(opp, 1);   // opposite partition => leaf boundary
+    Abc_ObjSetPartId(n0, 0);
+    Abc_NtkSetPartStats(pNtk, 2, 0, 0);
+
+    auto supp = fox::csr3::extract_support_partition_aware(n0, 0);
+    // support = { b (PI), opp (opposite-partition leaf) }; NOT a (behind opp)
+    ExpectEqLong("supp size", (long)supp.size(), 2);
+    bool hasB = false, hasOpp = false, hasA = false;
+    for (int id : supp) { if (id==b->Id) hasB=true; if (id==opp->Id) hasOpp=true; if (id==a->Id) hasA=true; }
+    ExpectEqLong("supp has b", hasB?1:0, 1);
+    ExpectEqLong("supp has opp", hasOpp?1:0, 1);
+    ExpectEqLong("supp excludes a (behind opp)", hasA?1:0, 0);
+
+    Abc_NtkDelete(pNtk);
+}
+
 } // namespace
 
 int main()
 {
     TestCeilLog2();
     TestCollectCrossing();
+    TestExtractSupport();
     if (g_fail == 0) std::printf("all csr3 tests passed\n");
     return g_fail == 0 ? 0 : 1;
 }

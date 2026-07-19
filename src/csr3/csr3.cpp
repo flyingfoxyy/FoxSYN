@@ -1,7 +1,9 @@
 #include "csr3/csr3.hpp"
 #include "csr3/csr3_internal.hpp"
 
+#include <algorithm>
 #include <cstdio>
+#include <functional>
 #include <vector>
 
 #include "base/abc/abc.h"
@@ -30,6 +32,38 @@ std::vector<Abc_Obj_t*> collect_crossing_signals(Abc_Ntk_t *pNtk, int srcPart)
             out.push_back(pObj);
     }
     return out;
+}
+
+bool is_cone_leaf(Abc_Obj_t *pObj, int srcPart)
+{
+    if (Abc_ObjIsCi(pObj))                                  // PI or FF-Q
+        return true;
+    if (Abc_ObjIsNode(pObj) && Abc_ObjFaninNum(pObj) == 0)  // constant node: keep as internal
+        return false;
+    if (Abc_ObjIsNode(pObj) && (int)Abc_ObjGetPartId(pObj) != srcPart)  // opposite-partition feeder
+        return true;
+    return false;                                           // same-partition node => internal
+}
+
+std::vector<int> extract_support_partition_aware(Abc_Obj_t *line, int srcPart)
+{
+    Abc_Ntk_t *pNtk = line->pNtk;
+    std::vector<int> support;
+    Abc_NtkIncrementTravId(pNtk);
+    std::function<void(Abc_Obj_t*)> dfs = [&](Abc_Obj_t *pObj) {
+        if (Abc_NodeIsTravIdCurrent(pObj)) return;
+        Abc_NodeSetTravIdCurrent(pObj);
+        if (is_cone_leaf(pObj, srcPart)) { support.push_back(pObj->Id); return; }
+        Abc_Obj_t *pFanin; int i;
+        Abc_ObjForEachFanin(pObj, pFanin, i) dfs(pFanin);
+    };
+    // the line driver itself is internal (same partition); walk its fanins
+    Abc_Obj_t *pFanin; int i;
+    Abc_NodeSetTravIdCurrent(line);
+    Abc_ObjForEachFanin(line, pFanin, i) dfs(pFanin);
+    std::sort(support.begin(), support.end());
+    support.erase(std::unique(support.begin(), support.end()), support.end());
+    return support;
 }
 
 int ceil_log2(long m)
