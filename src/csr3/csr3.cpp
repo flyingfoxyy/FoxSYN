@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <climits>
 #include <cstdio>
 #include <functional>
 #include <unordered_set>
@@ -268,7 +269,7 @@ long count_m_sat(Abc_Ntk_t *pCone, int k, int btlimit)
             if (status == l_False) break;                 // enumerated all
             if (status == l_Undef) { m = -1; break; }      // timeout
             ++m;
-            if (m > cap) { m = (1L << k); break; }          // early exit: gain would be 0
+            if (m > cap) { m = (k < 63) ? (1L << k) : LONG_MAX; break; }          // early exit: gain would be 0
             // block this assignment over the projection vars
             lits.clear();
             for (int var : outVars) {
