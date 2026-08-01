@@ -181,36 +181,6 @@ int Abc_NtkComputeCutSize( Abc_Ntk_t * pNtk )
 int Abc_NtkComputeCutEdgeNum( Abc_Ntk_t * pNtk )
 {
     Abc_Obj_t * pObj;
-    Abc_Obj_t * pFanin;
-    int i, k;
-    int CutEdge = 0;
-
-    if ( pNtk == NULL )
-        return -1;
-
-    // Count every cross-partition (driver, consumer) pair separately. A net
-    // with several cross-partition fanouts contributes 1 to cut-net but one
-    // cut-edge per crossing fanout.
-    Abc_NtkForEachObj( pNtk, pObj, i )
-    {
-        part_id ObjPart;
-        if ( !Abc_ObjIsPartStatVertex( pObj ) || !Abc_ObjHasPartId( pObj ) )
-            continue;
-        ObjPart = Abc_ObjGetPartId( pObj );
-        Abc_ObjForEachFanin( pObj, pFanin, k )
-        {
-            if ( !Abc_ObjIsPartStatVertex( pFanin ) || !Abc_ObjHasPartId( pFanin ) )
-                continue;
-            if ( Abc_ObjGetPartId( pFanin ) != ObjPart )
-                CutEdge += 1;
-        }
-    }
-    return CutEdge;
-}
-
-int Abc_NtkComputeCutEdgeDedupNum( Abc_Ntk_t * pNtk )
-{
-    Abc_Obj_t * pObj;
     Abc_Obj_t * pFanout;
     int i, k;
     int CutEdge = 0;
@@ -222,11 +192,10 @@ int Abc_NtkComputeCutEdgeDedupNum( Abc_Ntk_t * pNtk )
     // Deduplicated (lambda-1 connectivity) cut-edge count. A net is a driver
     // plus all its fanouts; a signal that reaches P distinct partitions needs
     // P-1 physical inter-partition wires -- the fanout inside each destination
-    // partition is local routing, not a separate crossing. This is the true
-    // count of crossing wires. Unlike Abc_NtkComputeCutEdgeNum, which counts
-    // one per crossing (driver, consumer) pair and thus over-counts a driver
-    // with several fanouts in the same destination partition. For N=2 this
-    // equals the cut-net count.
+    // partition is local routing, not a separate crossing. The raw per-(driver,
+    // consumer) pair count would over-count a driver with several fanouts in
+    // the same destination partition, so only distinct destination partitions
+    // are counted. For N=2 this equals the cut-net count.
     Abc_NtkForEachObj( pNtk, pObj, i )
     {
         if ( !Abc_ObjIsPartStatVertex( pObj ) || !Abc_ObjHasPartId( pObj ) )

@@ -277,7 +277,7 @@ float Abc_NtkGetAreaSpecial2( Abc_Ntk_t * pNtk )
 void Abc_NtkPrintStats( Abc_Ntk_t * pNtk, int fFactored, int fSaveBest, int fDumpResult, int fUseLutLib, int fPrintMuxes, int fPower, int fGlitch, int fSkipBuf, int fSkipSmall, int fPrintMem )
 {
     int nSingles = fSkipBuf ? Abc_NtkGetBufNum(pNtk) : 0;
-    int nParts = 0, CutSize = 0, CutEdge = 0, CutEdge2 = 0, HopNum = 0, MinSize = 0, MaxSize = 0;
+    int nParts = 0, CutSize = 0, CutEdge = 0, HopNum = 0, MinSize = 0, MaxSize = 0;
     float AvgSize = 0.0f;
     float MaxArrival = 0.0f;
     int fHasMaxArrival = 0;
@@ -411,8 +411,7 @@ void Abc_NtkPrintStats( Abc_Ntk_t * pNtk, int fFactored, int fSaveBest, int fDum
             CutSize = CutSizeNow;
         if ( HopNumNow >= 0 )
             HopNum = HopNumNow;
-        CutEdge = Abc_NtkComputeCutEdgeDedupNum( pNtk );
-        CutEdge2 = Abc_NtkComputeCutEdgeNum( pNtk );
+        CutEdge = Abc_NtkComputeCutEdgeNum( pNtk );
         if ( pNtk->pPdb && CutSize >= 0 && HopNum >= 0 )
             Abc_NtkSetPartStats( pNtk, nParts, CutSize, HopNum );
         if ( pNtk->pPdb )
@@ -437,10 +436,6 @@ void Abc_NtkPrintStats( Abc_Ntk_t * pNtk, int fFactored, int fSaveBest, int fDum
         Abc_Print( 1,"  cut-edge =");
         SetConsoleTextAttribute( GetStdHandle(STD_OUTPUT_HANDLE), 14 ); // bright yellow
         Abc_Print( 1,"%5d", CutEdge );
-        SetConsoleTextAttribute( GetStdHandle(STD_OUTPUT_HANDLE), 7 );  // normal
-        Abc_Print( 1,"  cut-edge2 =");
-        SetConsoleTextAttribute( GetStdHandle(STD_OUTPUT_HANDLE), 14 ); // bright yellow
-        Abc_Print( 1,"%5d", CutEdge2 );
         SetConsoleTextAttribute( GetStdHandle(STD_OUTPUT_HANDLE), 7 );  // normal
         if ( fHasMaxArrival )
         {
@@ -476,7 +471,6 @@ void Abc_NtkPrintStats( Abc_Ntk_t * pNtk, int fFactored, int fSaveBest, int fDum
         Abc_Print( 1,"  hop =%s%5d%s", "\033[1;33m", HopNum, "\033[0m" );
         Abc_Print( 1,"  cut-net =%s%5d%s", "\033[1;33m", CutSize, "\033[0m" );
         Abc_Print( 1,"  cut-edge =%s%5d%s", "\033[1;33m", CutEdge, "\033[0m" );
-        Abc_Print( 1,"  cut-edge2 =%s%5d%s", "\033[1;33m", CutEdge2, "\033[0m" );
         if ( fHasMaxArrival )
             Abc_Print( 1,"  arr =%s%7.2f%s", "\033[1;33m", MaxArrival, "\033[0m" );
         Abc_Print( 1,"\n" );

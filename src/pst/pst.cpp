@@ -255,7 +255,7 @@ bool ApplyPst(Abc_Frame_t *pAbc)
     }
 
     int initial_hop     = Abc_NtkComputeHopNum(pNtk);
-    int initial_cutedge = Abc_NtkComputeCutEdgeDedupNum(pNtk);
+    int initial_cutedge = Abc_NtkComputeCutEdgeNum(pNtk);
     int initial_nodes   = Abc_NtkNodeNum(pNtk);
 
     // Degenerate LUTs (a single fanin, or a Hop root that is just a leaf
@@ -297,7 +297,7 @@ bool ApplyPst(Abc_Frame_t *pAbc)
         man.pNtkNew->pPdb->set_balance_pct(pNtk->pPdb->balance_pct());
 
     int final_hop      = Abc_NtkComputeHopNum(man.pNtkNew);
-    int final_cutedge  = Abc_NtkComputeCutEdgeDedupNum(man.pNtkNew);
+    int final_cutedge  = Abc_NtkComputeCutEdgeNum(man.pNtkNew);
     int final_nodes    = Abc_NtkNodeNum(man.pNtkNew);
 
     // hop is the assertion. It depends solely on which partitions a signal
