@@ -15,7 +15,7 @@
 
 namespace fox::foxmap
 {
-Node::Node(Abc_Obj_t *abc_node) : _mark(0), _num_cuts(0)
+Node::Node(Abc_Obj_t *abc_node) : _mark(0), _num_cuts(0), _required(kMaxTime)
 {
     if (!abc_node)
     {

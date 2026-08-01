@@ -328,7 +328,7 @@ FoxMap::ComputeRequiredTime()
             fanin->SetRequired(required);
     }
 
-    for (int i = _num_nodes; i != 0; --i)
+    for (int i = _num_nodes - 1; i != 0; --i)
     {
         Node *node = Node::GetNode(i);
         if (!node->GetRefNum() || !node->IsAnd())
