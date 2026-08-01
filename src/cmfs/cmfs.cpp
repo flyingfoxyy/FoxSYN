@@ -90,10 +90,56 @@ static int front_width(Abc_Ntk_t *pNtk, const std::vector<float> &arr, float max
     return w;
 }
 
+// Pick the partition for a freshly-created decomposition node so that its own
+// arrival (max over fanins of arr + cross-partition penalty) is minimized.
+// Candidates are the fanins' partitions plus a fallback (the original node's
+// partition). Ties broken toward fewer cross-partition edges (helps cutsize).
+// Returns the chosen partition and writes the resulting node arrival to *pArr.
+static part_id choose_partition(Abc_Obj_t **fanins, const float *arrivals, int n,
+                                part_id fallback, float *pArr)
+{
+    auto eval = [&](part_id P, float &mx, int &cross) {
+        mx = 0.0f; cross = 0;
+        for (int i = 0; i < n; i++)
+        {
+            part_id fp = Abc_ObjGetPartId(fanins[i]);
+            bool xc = (fp != ABC_PART_ID_NONE && fp != P);
+            float c = arrivals[i] + (xc ? HOP_DLY : 0.0f);
+            if (c > mx) mx = c;
+            if (xc) cross++;
+        }
+    };
+
+    part_id best = fallback;
+    float bestArr; int bestCross;
+    eval(fallback, bestArr, bestCross);
+
+    for (int i = 0; i < n; i++)
+    {
+        part_id P = Abc_ObjGetPartId(fanins[i]);
+        if (P == ABC_PART_ID_NONE || P == best)
+            continue;
+        float mx; int cross;
+        eval(P, mx, cross);
+        if (mx < bestArr - 0.001f
+            || (mx < bestArr + 0.001f && cross < bestCross))
+        {
+            bestArr = mx; bestCross = cross; best = P;
+        }
+    }
+
+    if (pArr) *pArr = bestArr;
+    return best;
+}
+
 // Shannon decomposition: recursively split an over-sized truth table into
 // a tree of 6-LUT nodes. Splits on highest-arrival variable (MUX select).
+// Each created node is placed partition-aware (see choose_partition). The
+// node's own arrival is returned via *pNodeArr so callers higher in the tree
+// can treat it as a fanin. arrivals[] hold raw fanin arrivals (no crossing).
 static Abc_Obj_t *shannon_decompose(Abc_Ntk_t *pNtk, unsigned *pTruth, int nVars,
-                                     Abc_Obj_t **fanins, float *arrivals, part_id partId)
+                                     Abc_Obj_t **fanins, float *arrivals, part_id partId,
+                                     float *pNodeArr)
 {
     Hop_Man_t *pHop = (Hop_Man_t *)pNtk->pManFunc;
 
@@ -105,7 +151,10 @@ static Abc_Obj_t *shannon_decompose(Abc_Ntk_t *pNtk, unsigned *pTruth, int nVars
         pLeaf->pData = (void *)Kit_TruthToHop(pHop, pTruth, nVars, NULL);
         if (!pLeaf->pData)
             pLeaf->pData = (void *)Hop_ManConst0(pHop);
-        Abc_ObjSetPartId(pLeaf, partId);
+        float arr;
+        part_id P = choose_partition(fanins, arrivals, nVars, partId, &arr);
+        Abc_ObjSetPartId(pLeaf, P);
+        if (pNodeArr) *pNodeArr = arr;
         return pLeaf;
     }
 
@@ -136,8 +185,10 @@ static Abc_Obj_t *shannon_decompose(Abc_Ntk_t *pNtk, unsigned *pTruth, int nVars
     for (int v = 0; v < nVars; v++)
         if (v != iVar) { subFanins[k] = fanins[v]; subArrivals[k] = arrivals[v]; k++; }
 
-    Abc_Obj_t *pN0 = shannon_decompose(pNtk, cof0.data(), nVars - 1, subFanins, subArrivals, partId);
-    Abc_Obj_t *pN1 = shannon_decompose(pNtk, cof1.data(), nVars - 1, subFanins, subArrivals, partId);
+    Abc_Obj_t *pN0, *pN1;
+    float arr0, arr1;
+    pN0 = shannon_decompose(pNtk, cof0.data(), nVars - 1, subFanins, subArrivals, partId, &arr0);
+    pN1 = shannon_decompose(pNtk, cof1.data(), nVars - 1, subFanins, subArrivals, partId, &arr1);
 
     // MUX node: fanins[iVar] ? pN1 : pN0
     Abc_Obj_t *pMux = Abc_NtkCreateNode(pNtk);
@@ -146,7 +197,12 @@ static Abc_Obj_t *shannon_decompose(Abc_Ntk_t *pNtk, unsigned *pTruth, int nVars
     Abc_ObjAddFanin(pMux, pN0);
     pMux->pData = (void *)Hop_Mux(pHop, Hop_IthVar(pHop, 0),
                                    Hop_IthVar(pHop, 1), Hop_IthVar(pHop, 2));
-    Abc_ObjSetPartId(pMux, partId);
+    Abc_Obj_t *muxFanins[3] = { fanins[iVar], pN1, pN0 };
+    float muxArr[3] = { arrivals[iVar], arr1, arr0 };
+    float arr;
+    part_id P = choose_partition(muxFanins, muxArr, 3, partId, &arr);
+    Abc_ObjSetPartId(pMux, P);
+    if (pNodeArr) *pNodeArr = arr;
     return pMux;
 }
 
@@ -239,7 +295,7 @@ static int try_arrival_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
             }
         }
         if (found < 0)
-            return 0;
+            goto phase4;
 
         pCands[nCands] = Abc_Var2Lit(Vec_IntEntry(p->vProjVarsSat, found), 1);
         ret = Abc_NtkMfsTryResubOnce(p, pCands, nCands + 1);
@@ -261,11 +317,8 @@ static int try_arrival_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
 
     // Single-divisor resub failed. Try 2-divisor resub if node has room.
     // After removing 1 fanin and adding 2, total = N+1. Need N+1 <= K (6).
-    if (Abc_ObjFaninNum(pNode) > 5)
-        return 0;
-    if (good_divs.size() < 2)
-        return 0;
-
+    if (Abc_ObjFaninNum(pNode) <= 5 && good_divs.size() >= 2)
+    {
     // Limit search space
     constexpr int MAX_PAIR_DIVS = 30;
     int pair_limit = std::min(static_cast<int>(good_divs.size()), MAX_PAIR_DIVS);
@@ -298,7 +351,7 @@ static int try_arrival_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
             }
         }
         if (found1 < 0)
-            return 0;
+            goto phase4;
 
         pCands[nCands]     = Abc_Var2Lit(Vec_IntEntry(p->vProjVarsSat, found1), 1);
         pCands[nCands + 1] = Abc_Var2Lit(Vec_IntEntry(p->vProjVarsSat, found2), 1);
@@ -319,8 +372,14 @@ static int try_arrival_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
         if (p->nCexes >= p->pPars->nWinMax)
             break;
     }
+    } // end phase 3 block
 
-    // Phase 4: Multi-divisor resub with Shannon decomposition (-X mode)
+    // Phase 4: Multi-divisor resub with Shannon decomposition (-X mode).
+    // Reached either by falling through phases 2/3 or by goto when they find
+    // no fitting (pair of) divisor(s). Self-contained: accumulates divisors
+    // greedily from scratch on top of the surviving-fanin base set, reusing
+    // whatever counter-examples phases 1-3 already produced.
+phase4:
     if (maxTempLut < 7 || nCands + 3 > maxTempLut)
         return 0;
     if (good_divs.size() < 3)
@@ -328,9 +387,13 @@ static int try_arrival_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
 
     int maxExtra = std::min(maxTempLut - nCands, static_cast<int>(good_divs.size()));
     maxExtra = std::min(maxExtra, MFS_FANIN_MAX - nCands);
+    // ABC's Craig interpolation (Int_ManInterpolate) supports at most 8 global
+    // variables (uTruths[8][8] in satInter.c). With nCands base candidates,
+    // we can add at most 8 - nCands more.
+    maxExtra = std::min(maxExtra, 8 - nCands);
 
     // Greedy: accumulate divisors one at a time, try SAT after each addition
-    for (int k = 2; k < maxExtra; ++k)
+    for (int k = 0; k < maxExtra; ++k)
     {
         nWords = Abc_BitWordNum(p->nCexes);
         if (nWords > p->nDivWords)
@@ -349,9 +412,11 @@ static int try_arrival_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
             if (already) continue;
 
             pData = (unsigned *)Vec_PtrEntry(p->vDivCexes, d);
-            // Check it covers at least one bit not yet covered
+            // A divisor "covers" a CEX when it is 0 on that CEX (bit=0),
+            // because asserting it =1 eliminates that CEX. This matches the
+            // phase-2 semantics: pData[w] != ~0u means at least one bit is 0.
             for (w = 0; w < nWords; w++)
-                if (pData[w] != 0) break;
+                if (pData[w] != ~(unsigned)0) break;
             if (w < nWords) { found = d; break; }
         }
         if (found < 0)
@@ -365,21 +430,18 @@ static int try_arrival_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
             Hop_Obj_t *pFunc = Abc_NtkMfsInterplate(p, pCands, nCands + k + 1);
             if (!pFunc) { *reason = RR_OTHER; return 0; }
 
-            // Collect all fanins for decomposition
-            for (int c = 0; c <= k; c++)
-                Vec_PtrPush(p->vMfsFanins, Vec_PtrEntry(p->vDivs, good_divs[c].second));
-            // Actually we need the correct divisor indices. Rebuild from pCands.
+            // Rebuild vMfsFanins in pCands order so variable j of pFunc
+            // corresponds to vMfsFanins[j].
+            // pCands[0..nCands-1] = kept fanins of pNode (non-critical).
+            // pCands[nCands..nCands+k] = chosen divisors.
             Vec_PtrClear(p->vMfsFanins);
             Abc_Obj_t *pFi; int fi;
             Abc_ObjForEachFanin(pNode, pFi, fi)
                 if (fi != iFanin)
                     Vec_PtrPush(p->vMfsFanins, pFi);
-            // Add all chosen divisors (from pCands[nCands..nCands+k])
             for (int c = nCands; c <= nCands + k; c++)
             {
-                int lit = pCands[c];
-                int var = Abc_Lit2Var(lit);
-                // Find which divisor index this corresponds to
+                int var = Abc_Lit2Var(pCands[c]);
                 for (int d = 0; d < Vec_IntSize(p->vProjVarsSat); d++)
                     if (Vec_IntEntry(p->vProjVarsSat, d) == var)
                     { Vec_PtrPush(p->vMfsFanins, Vec_PtrEntry(p->vDivs, d)); break; }
@@ -412,16 +474,23 @@ static int try_arrival_resub(Mfs_Man_t *p, Abc_Obj_t *pNode, int iFanin,
             {
                 decomp_fanins[j] = (Abc_Obj_t *)Vec_PtrEntry(p->vMfsFanins, j);
                 int fid = decomp_fanins[j]->Id;
+                // Raw arrival only; crossing penalty is applied per candidate
+                // partition inside shannon_decompose/choose_partition.
                 decomp_arrivals[j] = (fid < arr_sz) ? arrival[fid] : 0.0f;
-                decomp_arrivals[j] += edge_delay(decomp_fanins[j], pNode, pPdb);
             }
 
             part_id partId = Abc_ObjGetPartId(pNode);
+            float rootArr;
             Abc_Obj_t *pRoot = shannon_decompose(pNode->pNtk, ttCopy.data(), nTotal,
-                                                  decomp_fanins, decomp_arrivals, partId);
-            // Replace original node with decomposed tree
+                                                  decomp_fanins, decomp_arrivals, partId,
+                                                  &rootArr);
+            // Root replaces pNode and inherits its external fanout, so keep it
+            // in the original partition (output-side crossings unchanged; that
+            // is cpr's domain). Internal sub-nodes were placed partition-aware.
+            Abc_ObjSetPartId(pRoot, partId);
+            // Replace original node with decomposed tree, cleaning up now-dangling fanins
             Abc_ObjTransferFanout(pNode, pRoot);
-            Abc_NtkDeleteObj(pNode);
+            Abc_NtkDeleteObj_rec(pNode, 1);
             p->nResubs++;
             return 4;
         }

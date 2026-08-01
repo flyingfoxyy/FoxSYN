@@ -109,6 +109,12 @@ Shannon 分解策略：**在最高 arrival 变量上分解**（该变量作为 M
 
 Tradeoff：`HOP_DLY=200` vs `LUT_DLY=1`。即使加 4 层 LUT（cost=4）来省 1 个 hop（gain=200），净收益 196。
 
+**曾是死代码，已解锁（2026-06）。** Phase 4 原本永远进不去：phase 2 在找不到单 divisor 时直接 `return 0`，phase 3 在 fanin>5 时直接 `return 0`，都没有 fall-through 到 phase 4。实测在任何 EPFL/opencores benchmark 上，即使 `-X 12`，phase 4 也从未被进入。修复方式：把 phase 2/3 的失败出口改成 `goto phase4`，phase 4 自身改为从 `k=0` 开始的自包含贪心累积。
+
+解锁过程中还发现并修复了一个**正确性 bug**：phase 4 的 divisor 一致性判据用的是 `pData[w] != 0`（"至少覆盖一个反例"），而 phase 2 正确的判据是 `pData[w] != ~(unsigned)0`（"覆盖了所有当前反例"）。错误判据会构造出不 sound 的候选集，导致插值出的函数在 nTotal>6 时功能错误——用 `cec` 验证 mem_ctrl、sqrt 均为 NOT EQUIVALENT。改用正确判据后，同一批 case 全部 cec 等价。
+
+**分区感知的 Shannon 分解放置。** `shannon_decompose` 新建的每个内部子节点（leaf LUT / MUX）不再无脑塞进原节点分区，而是用 `choose_partition` 在 {各 fanin 的分区} ∪ {原分区} 中选一个使该节点自身 arrival 最小的分区（并列时选 crossing 数更少的）。**根节点强制保留在原分区**——它替换原节点、继承外部 fanout，移动它相当于把跨分区代价转嫁给下游消费者，那是 `cpr` 的职责范围，不应由 `shannon_decompose` 代劳。
+
 ### 迭代结构
 
 ```
@@ -200,6 +206,38 @@ python3 scripts/run_cmfs_regression.py -N 16 --cmfs-args "... -D 6" --load-parts
 | sin | 4438 | 4435 | 3 | 22→22 |
 
 **11/90 个 benchmark 有 timing gain**，最大改善 602（3 hops），多数为 ~200（1 hop）。
+
+### Phase 4 解锁后的实验结果（2026-06）
+
+修复 phase-4 死代码 + divisor 一致性 bug + 分区感知 Shannon 放置后，在固定分区种子（apple-to-apple，`-r -X 12 -W 4 -M 500`，4 分区，EPFL + MCNC + OpenCores + VTR 共 90 个 benchmark）上与修复前对比：
+
+| 版本 | 总 arrival 改进 | 有收益的 case 数 | crash |
+|------|------|------|------|
+| 修复前（phase 4 死代码，或有 bug） | 1206 | 8 | 7 |
+| 修复后（phase 4 解锁 + bug 修复，此为当前 HEAD） | **1411** | **12** | 9（pre-existing，与本次改动无关） |
+
+相同种子下逐 case 对比，**零退化**，新增大收益 case：
+
+| Case | 修复前 | 修复后 | Δ |
+|------|------|------|------|
+| alu4 | 202 | 405 | +203 |
+| spla | 0 | 199 | +199（全新） |
+| ex1010 | 0 | 200 | +200（全新） |
+| mem_ctrl | 0 | 2~201（视分区而异） | 走 Shannon 路径 |
+
+cec 形式验证：mem_ctrl、sqrt、div、multiplier 等命中 phase 4 的 case 全部等价（mem_ctrl、sqrt 在 bug 修复前曾是 NOT EQUIVALENT）。
+
+### 已尝试并放弃的方向：扩大插值变量上限
+
+ABC 的 Craig 插值（`Int_ManInterpolate`，`satInter.c`）硬编码最多支持 **8 个全局变量**（`uTruths[8][8]` 字面表 + `assert(nVarsAB<=8)`），phase 4 的 `maxExtra` 因此被 clamp 到 `8 - nCands`。插桩测量显示这个上限确实在挡：95%~100% 的 phase-4 进入会被这个 clamp 截断，且成功案例大量堆在 `nTotal=8`（天花板），呈现典型的"被截断"分布特征。
+
+基于这个信号，尝试了把插值引擎复制一份到 `src/cmfs/`（符号加 `CmfsInt_` 前缀避免和 libabc 冲突，用 `Vec_PtrAllocTruthTables` 程序化生成基本真值表替代硬编码字面量），扩容到 12 变量。**结果是净负**：相同种子下总收益从 1411 降到 1012，crash 从 9 升到 11。
+
+进一步加了一个 arrival 接受门槛（Shannon 分解后根节点的到达时间必须严格低于原节点才接受，否则回滚）试图挽回，**几乎没有效果**——因为在 8 变量下，走到 Shannon 分解（nTotal>6）的改写本来就很少，大多数成功案例走的是 nTotal≤6 的单 LUT 路径，gate 没有作用空间。
+
+**根因诊断**：退化不是因为 Shannon 分解树本身变差（gate 拦截了那条路径但结果几乎不变，证明问题不在那）。真正的机制是 phase 4 累积更多 divisor 会扰动 phase 2/3 的贪心 CEX 状态/选择顺序，**挤占了原本能成功的小 resub**（如 k2_2、seq 直接从有收益掉到 0，而不是"收益变小"）。也就是说，"能累积的变量数"从来不是瓶颈，"贪心框架下多累积几个 divisor 反而弊大于利"才是真相。
+
+结论：**不要再扩插值变量上限**。当前 8 变量（HEAD 88ac526）是已验证的最优点。已回退全部 12-var 相关改动（vendored 引擎、扩容、gate），代码库不含这部分。详见 memory `cmfs-phase4-12var-deadend`。若要继续提升 phase-4 覆盖率，应该去解决"挤占"问题本身（例如让 phase 4 只在 phase 2/3 全局跑完后才启动，或在阶段间恢复/隔离 CEX 状态），而非在 divisor 数量上做文章。
 
 ### Gain 的来源分析
 
