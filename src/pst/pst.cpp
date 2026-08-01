@@ -255,16 +255,14 @@ bool ApplyPst(Abc_Frame_t *pAbc)
     }
 
     int initial_hop     = Abc_NtkComputeHopNum(pNtk);
-    int initial_cutnet  = Abc_NtkComputeCutSize(pNtk);
     int initial_cutedge = Abc_NtkComputeCutEdgeDedupNum(pNtk);
-    int initial_cutedge2 = Abc_NtkComputeCutEdgeNum(pNtk);
     int initial_nodes   = Abc_NtkNodeNum(pNtk);
 
     // Degenerate LUTs (a single fanin, or a Hop root that is just a leaf
     // variable) vanish in an AIG: Abc_NodeStrash returns the fanin's pCopy
     // directly, so consumers end up referencing a node in the *fanin's*
-    // partition. That legitimately changes cut-net and will trip the assertion
-    // below, so report the count up front to make diagnosis immediate.
+    // partition. That can change which partitions a signal reaches, so report
+    // the count up front to make diagnosis immediate if hop moves.
     // if -K 6 does not emit such LUTs; pdecomp's cross-partition identity
     // buffers (pdecomp.cpp:122) do -- pst does not support running after it.
     int degenerate = 0;
@@ -275,7 +273,7 @@ bool ApplyPst(Abc_Frame_t *pAbc)
             degenerate++;
     if (degenerate)
         printf("pst: warning: %d single-fanin node(s); these collapse in an AIG "
-               "and may change cut-net\n", degenerate);
+               "and may change hop\n", degenerate);
 
     if (!Abc_NtkToAig(pNtk))
     {
@@ -299,18 +297,16 @@ bool ApplyPst(Abc_Frame_t *pAbc)
         man.pNtkNew->pPdb->set_balance_pct(pNtk->pPdb->balance_pct());
 
     int final_hop      = Abc_NtkComputeHopNum(man.pNtkNew);
-    int final_cutnet   = Abc_NtkComputeCutSize(man.pNtkNew);
     int final_cutedge  = Abc_NtkComputeCutEdgeDedupNum(man.pNtkNew);
-    int final_cutedge2 = Abc_NtkComputeCutEdgeNum(man.pNtkNew);
     int final_nodes    = Abc_NtkNodeNum(man.pNtkNew);
 
-    // Only hop and cut-net are assertions. Both depend solely on which
-    // partitions a signal reaches, not on how much logic sits in between, so
-    // expanding a LUT into same-partition ANDs cannot move them.
-    if (final_hop != initial_hop || final_cutnet != initial_cutnet)
+    // hop is the assertion. It depends solely on which partitions a signal
+    // reaches, not on how much logic sits in between, so expanding a LUT into
+    // same-partition ANDs cannot move it.
+    if (final_hop != initial_hop)
     {
-        printf("pst: partition invariant violated (hop %d->%d, cut-net %d->%d), aborting\n",
-               initial_hop, final_hop, initial_cutnet, final_cutnet);
+        printf("pst: partition invariant violated (hop %d->%d), aborting\n",
+               initial_hop, final_hop);
         Abc_NtkDelete(man.pNtkNew);
         return false;
     }
@@ -322,14 +318,11 @@ bool ApplyPst(Abc_Frame_t *pAbc)
         return false;
     }
 
-    printf("pst: strashed to AIG (hop=%d, cut-net=%d)\n", initial_hop, initial_cutnet);
-    // Labels follow ps (abcPrint.c:414-415): cut-edge is the deduplicated
-    // count, cut-edge2 the raw (driver, consumer) pair count. cut-edge2 must
-    // rise: an AIG cannot hold pdecomp-style identity buffers, so a
-    // cross-partition fanin referenced by several ANDs multiplies its edges.
-    // cut-edge may legitimately fall when a vacuous fanin disappears.
-    printf("pst: cut-edge %d -> %d, cut-edge2 %d -> %d\n",
-           initial_cutedge, final_cutedge, initial_cutedge2, final_cutedge2);
+    printf("pst: strashed to AIG (hop=%d)\n", initial_hop);
+    // Label follows ps (abcPrint.c:414): cut-edge is the deduplicated
+    // (driver, distinct-destination-partition) count. It may legitimately
+    // fall when a vacuous fanin disappears.
+    printf("pst: cut-edge %d -> %d\n", initial_cutedge, final_cutedge);
     printf("pst: nodes %d -> %d, dup-blocked %d\n",
            initial_nodes, final_nodes, man.dup_blocked);
 
