@@ -165,6 +165,76 @@ static Abc_Obj_t *pst_and(PstMan &man, Abc_Obj_t *p0, Abc_Obj_t *p1, part_id par
     return pAnd;
 }
 
+// Adapted from Abc_NodeStrash_rec (abcStrash.c:445). Only change: Abc_AigAnd
+// -> pst_and, threading the host LUT's part_id down the whole Hop cone.
+static void pst_node_strash_rec(PstMan &man, Hop_Obj_t *pObj, part_id part)
+{
+    assert(!Hop_IsComplement(pObj));
+    if (!Hop_ObjIsNode(pObj) || Hop_ObjIsMarkA(pObj))
+        return;
+    pst_node_strash_rec(man, Hop_ObjFanin0(pObj), part);
+    pst_node_strash_rec(man, Hop_ObjFanin1(pObj), part);
+    pObj->pData = pst_and(man, (Abc_Obj_t *)Hop_ObjChild0Copy(pObj),
+                                (Abc_Obj_t *)Hop_ObjChild1Copy(pObj), part);
+    assert(!Hop_ObjIsMarkA(pObj)); // loop detection
+    Hop_ObjSetMarkA(pObj);
+}
+
+// Adapted from Abc_NodeStrash (abcStrash.c:468). Two changes: the part_id is
+// read once from the old node and threaded through the recursion, and the
+// fRecord / Abc_NtkRec branch (already commented out upstream) is dropped.
+static Abc_Obj_t *pst_node_strash(PstMan &man, Abc_Obj_t *pNodeOld)
+{
+    Hop_Man_t *pMan;
+    Hop_Obj_t *pRoot;
+    Abc_Obj_t *pFanin;
+    int i;
+    assert(Abc_ObjIsNode(pNodeOld));
+    assert(Abc_NtkHasAig(pNodeOld->pNtk) && !Abc_NtkIsStrash(pNodeOld->pNtk));
+
+    // Every AND in this LUT's cone inherits this one part_id. Same-partition
+    // sharing (including across LUTs, since man.table is global) is unaffected;
+    // only cross-partition merging is blocked.
+    part_id part = Abc_ObjGetPartId(pNodeOld);
+
+    pMan  = (Hop_Man_t *)pNodeOld->pNtk->pManFunc;
+    pRoot = (Hop_Obj_t *)pNodeOld->pData;
+
+    // Constant LUTs map onto the network's single shared const1, which cannot
+    // be split per partition -- it keeps ABC_PART_ID_NONE.
+    if (Abc_NodeIsConst(pNodeOld) || Hop_Regular(pRoot) == Hop_ManConst1(pMan))
+        return Abc_ObjNotCond(Abc_AigConst1(man.pNtkNew), Hop_IsComplement(pRoot));
+
+    // set elementary variables
+    Abc_ObjForEachFanin(pNodeOld, pFanin, i)
+        Hop_IthVar(pMan, i)->pData = pFanin->pCopy;
+
+    pst_node_strash_rec(man, Hop_Regular(pRoot), part);
+    Hop_ConeUnmark_rec(Hop_Regular(pRoot));
+    return Abc_ObjNotCond((Abc_Obj_t *)Hop_Regular(pRoot)->pData, Hop_IsComplement(pRoot));
+}
+
+// Adapted from Abc_NtkStrashPerform (abcStrash.c:413). fAllNodes is fixed to 0
+// (matching what the st command passes by default, abc.c:3845) and fRecord is
+// dropped along with the record branch.
+static void pst_strash_perform(PstMan &man, Abc_Ntk_t *pNtkOld)
+{
+    Vec_Ptr_t *vNodes;
+    Abc_Obj_t *pNodeOld;
+    int i;
+    assert(Abc_NtkIsLogic(pNtkOld));
+    assert(Abc_NtkIsStrash(man.pNtkNew));
+    vNodes = Abc_NtkDfsIter(pNtkOld, 0);
+    Vec_PtrForEachEntry(Abc_Obj_t *, vNodes, pNodeOld, i)
+    {
+        if (Abc_ObjIsBarBuf(pNodeOld))
+            pNodeOld->pCopy = Abc_ObjChild0Copy(pNodeOld);
+        else
+            pNodeOld->pCopy = pst_node_strash(man, pNodeOld);
+    }
+    Vec_PtrFree(vNodes);
+}
+
 bool ApplyPst(Abc_Frame_t *pAbc)
 {
     Abc_Ntk_t *pNtk = Abc_FrameReadNtk(pAbc);
