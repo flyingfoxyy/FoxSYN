@@ -169,3 +169,19 @@ pst: partition invariant violated (hop 3->4, cut-net 13->15), aborting
 - **`pst` 只在标准 LUT netlist 上执行，不支持 `pdecomp` 之后调用。** `pdecomp` 插入的 1-fanin 恒等缓冲（`pdecomp.cpp:122`）在 AIG 里会塌陷：`Abc_NodeStrash` 遇到 Hop 根就是叶子变量的节点时直接返回该 fanin 的 `pCopy`，这个 LUT 在 AIG 里不复存在，消费者转而引用 fanin 的节点——而那个节点属于 fanin 的分区，不是这个 LUT 的分区，cut-net 因此会变、断言会失败。`if -K 6` 本身不产生 1-fanin LUT（ctrl 实测 fanin 直方图 `0:1, 2:1, 3:1, 4:3, 5:19, 6:4`），所以标准流程没问题。
 - **`Abc_Aig_t_` 布局镜像是维护负担。** ABC 从上游更新时如果这个结构体变了，镜像会静默失配。根治方向是给 ABC 加一个最小的公开 API（如 `Abc_AigAndCreateForced`），但那需要改 ABC 本体，跟本设计"不改 ABC"的约束冲突，留作后续。
 - **不做 `-v` 之类的 verbose 开关。** 初版只有固定的一行统计输出加失败报错，跟 `pdecomp` 一致。
+
+### 实测结果
+
+`if -K 6; hpart -N 4` 之后跑 `pst`，五个 EPFL case：
+
+| case | LUT nd | AIG and | dup-blocked | hop | cut-net | cut-edge | cut-edge2 | cec |
+|---|---|---|---|---|---|---|---|---|
+| ctrl | 29 | 230 | 14 | 1 (不变) | 6 (不变) | 16 -> 16 | 106 -> 164 | EQ |
+| cavlc | 122 | 830 | 107 | 3 (不变) | 13 (不变) | 34 -> 34 | 400 -> 543 | EQ |
+| voter | 2826 | 13763 | 3 | 4 (不变) | 99 (不变) | 99 -> 99 | 277 -> 279 | EQ |
+| max | 842 | 2871 | 3 | 9 (不变) | 37 (不变) | 47 -> 47 | 531 -> 425 | EQ |
+| arbiter | 2722 | 11885 | 34 | 4 (不变) | 483 (不变) | 574 -> 574 | 7266 -> 7175 | EQ |
+
+五个 case 的 `cut-edge`（dedup）都严格不变，跟"理论上不变、可能因 vacuous fanin 合法下降"的预期一致（本次五个 case 都没触发下降）。`cut-edge2`（raw）四升一降（max 上 531->425）——降的那个正是 vacuous fanin 或常量折叠消掉了某条边的例子，属预期范围内的合法波动。`Abc_NtkCheck` 全部通过，只有被遮蔽的重复节点触发 `abcAig.c:256` 的非致命提示（每个 case 数量与 `dup-blocked` 同量级）。
+
+对照普通 `st`：五个 case 上 `st` 之后 `hop`/`cut-net` 全部归零，`pavg × part` 恰等于 PI 数（例如 ctrl 是 `2.3 × 3 ≈ 7`），即所有 AND 的 `part_id` 全丢；`pst` 在同样输入上把 `hop`/`cut-net` 严格保持在 LUT netlist 的原值，且 `pavg × part ≈ and 数 + PI 数`（例如 ctrl 是 `59.2 × 4 ≈ 237`，实际 `230+7=237`），确认分区覆盖率完整。

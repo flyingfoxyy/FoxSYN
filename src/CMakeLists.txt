@@ -48,6 +48,7 @@ add_subdirectory(csr)
 add_subdirectory(csr2)
 add_subdirectory(csr3)
 add_subdirectory(pdecomp)
+add_subdirectory(pst)
 add_subdirectory(agdmap)
 add_subdirectory(curvemap)
 
@@ -69,6 +70,7 @@ target_link_libraries(FoxSYN PRIVATE
     csr2
     csr3
     pdecomp
+    pst
     agdmap
     curvemap
 )

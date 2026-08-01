@@ -24,6 +24,7 @@
 #include "csr2/csr2.hpp"
 #include "csr3/csr3.hpp"
 #include "pdecomp/pdecomp.hpp"
+#include "pst/pst.hpp"
 #include "agdmap/AgdmapCommand.h"
 #include "curvemap/curvemap.h"
 
@@ -1046,6 +1047,19 @@ usage:
     return 1;
 }
 
+int Pst_Command(Abc_Frame_t *pAbc, int argc, char **argv)
+{
+    if (argc > 1)
+    {
+        Abc_Print(-2, "usage: pst\n");
+        Abc_Print(-2, "\t           partition-aware structural hashing (LUT netlist -> AIG)\n");
+        Abc_Print(-2, "\n");
+        return 1;
+    }
+
+    return fox::pst::ApplyPst(pAbc) ? 0 : 1;
+}
+
 int Curvemap_Command(Abc_Frame_t* pAbc, int argc, char** argv) {
     using namespace fox::curvemap;
 
@@ -1123,6 +1137,7 @@ struct CmdRegister
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "csr", Csr_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "csr2", Csr2_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "csr3", Csr3_Command, 1);
+        Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "pst", Pst_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "pdecomp", Pdecomp_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "curvemap", Curvemap_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FPGA mapping", "agdmap", Agdmap, 1);
