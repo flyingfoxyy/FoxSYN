@@ -1,0 +1,12 @@
+# csr3 Phase 1 end-to-end: measure -> encode -> CEC -> re-measure
+# usage: ./release/FoxSYN -F scripts/csr3_e2e.abc   (run from repo root)
+read regression/SimpleCircuits/mcnc/alu4.v
+st
+if -K 6
+hpart -N 2
+write_blif /tmp/csr3_before.blif
+csr3 -x -v
+write_blif /tmp/csr3_after.blif
+cec /tmp/csr3_before.blif /tmp/csr3_after.blif
+csr3
+quit

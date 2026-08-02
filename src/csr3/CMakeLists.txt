@@ -1,4 +1,4 @@
-add_library(csr3 csr3.cpp)
+add_library(csr3 csr3.cpp csr3_encode.cpp)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

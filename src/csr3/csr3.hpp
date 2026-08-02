@@ -12,6 +12,7 @@ struct Config {
     int  sim_words   = 16;      // -P: random-sim words (x64 patterns each)
     int  btlimit     = 100000;  // -B: SAT backtrack limit per solve
     bool self_check  = false;   // -c: exhaustive cross-check for |support|<=16 groups
+    bool encode      = false;   // -x: apply Phase 1 re-encoding (insert encoder/decoder, repoint crossing fanouts)
     bool verbose     = false;   // -v
 };
 

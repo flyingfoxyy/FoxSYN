@@ -241,35 +241,64 @@ long count_m_exhaustive(Abc_Ntk_t *pCone, int k)
     return m;
 }
 
-long count_m_sat(Abc_Ntk_t *pCone, int k, int btlimit)
+long count_m_sat(Abc_Ntk_t *pCone, int k, int btlimit, std::vector<uint64_t> *pTuples)
 {
+    if (pTuples) pTuples->clear();
     Abc_Ntk_t *pStrash = Abc_NtkStrash(pCone, 0, 1, 0);
     Aig_Man_t *pAig = Abc_NtkToDar(pStrash, 0, 0);
     Cnf_Dat_t *pCnf = Cnf_Derive(pAig, Aig_ManCoNum(pAig));
     sat_solver *pSat = (sat_solver *)Cnf_DataWriteIntoSolver(pCnf, 1, 0);
 
-    // projection vars: the CNF var of each line's driver (skip constant drivers)
+    // projection vars: the CNF var of each line's driver (skip constant drivers).
+    // lineVar[j]/lineComplL[j] let us read line j's *pre-CO-polarity* value from a
+    // SAT model; constant lines (lineVar[j]==-1) always contribute lineConst[j].
     std::vector<int> outVars;
+    std::vector<int> lineVar(k, -1);
+    std::vector<int> lineComplL(k, 0);   // XOR applied when reading the driver's SAT value
+    std::vector<int> lineConst(k, 0);    // value when the driver is a constant
     for (int j = 0; j < k; ++j) {
         Aig_Obj_t *pCo = Aig_ManCo(pAig, j);
         Aig_Obj_t *pDrv = Aig_ObjFanin0(pCo);
-        if (pDrv == NULL || Aig_ObjIsConst1(pDrv)) continue;   // constant line: no variability
+        int fComplCo = Aig_ObjFaninC0(pCo);
+        if (pDrv == NULL || Aig_ObjIsConst1(pDrv)) {
+            lineConst[j] = fComplCo ? 0 : 1;   // Const1 driver, complemented by the CO edge
+            continue;
+        }
         int var = pCnf->pVarNums[Aig_ObjId(pDrv)];
-        if (var >= 0) outVars.push_back(var);
+        if (var < 0) { lineConst[j] = 0; continue; }
+        lineVar[j] = var;
+        lineComplL[j] = fComplCo;
+        outVars.push_back(var);
     }
 
     long cap = (k >= 1) ? (1L << (k - 1)) : 1;   // early-exit threshold: > 2^(k-1) => no water
     long m = 0;
     std::vector<int> lits;
+    auto recordTuple = [&]() {
+        if (!pTuples) return;
+        uint64_t tup = 0;
+        for (int j = 0; j < k; ++j) {
+            int val = (lineVar[j] < 0) ? lineConst[j]
+                                        : (sat_solver_var_value(pSat, lineVar[j]) ^ lineComplL[j]);
+            if (val) tup |= (uint64_t)1 << j;
+        }
+        pTuples->push_back(tup);
+    };
     if (pSat == NULL) {                          // trivially UNSAT constant network
         m = 1;
+        if (pTuples) {
+            uint64_t tup = 0;
+            for (int j = 0; j < k; ++j) if (lineConst[j]) tup |= (uint64_t)1 << j;
+            pTuples->push_back(tup);
+        }
     } else {
         while (true) {
             int status = sat_solver_solve(pSat, NULL, NULL, (ABC_INT64_T)btlimit, 0, 0, 0);
             if (status == l_False) break;                 // enumerated all
-            if (status == l_Undef) { m = -1; break; }      // timeout
+            if (status == l_Undef) { m = -1; if (pTuples) pTuples->clear(); break; }      // timeout
             ++m;
-            if (m > cap) { m = (k < 63) ? (1L << k) : LONG_MAX; break; }          // early exit: gain would be 0
+            recordTuple();
+            if (m > cap) { m = (k < 63) ? (1L << k) : LONG_MAX; if (pTuples) pTuples->clear(); break; }          // early exit: gain would be 0
             // block this assignment over the projection vars
             lits.clear();
             for (int var : outVars) {
@@ -298,8 +327,22 @@ bool RunCsr3(Abc_Ntk_t *pNtk, const Config &cfg)
         printf("csr3: v1 only supports N=2 partitions (got %d)\n", Abc_NtkPdb(pNtk)->num_parts());
         return false;
     }
+    // Any part_id touch below (Abc_ObjSetPartId on new nodes, or Abc_NtkDeleteObj
+    // rolling back a rejected group -- both internally call Abc_ObjClearPartId)
+    // invalidates ALL Pdb stats, including on attempts that end up changing
+    // nothing. Cache them now and always restore verbatim: cut/hop are only
+    // truly stale when this run actually saved wires.
+    int numParts = Abc_NtkPdb(pNtk)->num_parts();
+    int cutSizeBefore = Abc_NtkPdb(pNtk)->cut_size();
+    int hopNumBefore = Abc_NtkPdb(pNtk)->hop_num();
+    if (cfg.encode && !Abc_NtkHasSop(pNtk)) {
+        if (!Abc_NtkToSop(pNtk, -1, ABC_INFINITY)) {
+            printf("csr3: failed to convert network to SOP for encoding\n");
+            return false;
+        }
+    }
 
-    long globalGain = 0, globalK = 0;
+    long globalGain = 0, globalK = 0, globalSaved = 0;
     for (int srcPart = 0; srcPart <= 1; ++srcPart) {
         int dstPart = 1 - srcPart;
         std::vector<Abc_Obj_t*> crossing = collect_crossing_signals(pNtk, srcPart);
@@ -312,25 +355,30 @@ bool RunCsr3(Abc_Ntk_t *pNtk, const Config &cfg)
         }
         std::vector<Group> groups = group_by_jaccard(lines, cfg.jaccard_pct, cfg.max_lines);
 
-        long dirGain = 0, dirK = 0;
-        int nPrefiltered = 0;
+        long dirGain = 0, dirK = 0, dirSaved = 0;
+        int nPrefiltered = 0, nEncoded = 0, nCecSkipped = 0;
         // support-size lookup for self-check gating
         // (rebuild union support size per group via the cone's PI count)
         for (Group &g : groups) {
             int k = (int)g.lines.size();
             if (k == 0) continue;
             Abc_Ntk_t *pCone = build_group_cone_ntk(g.lines, srcPart);
+            // simulate_prefilter/count_m_sat strash pCone, which mutates it from SOP to
+            // AIG in place (Abc_NtkStrash -> Abc_NtkToAig replaces pData on every node).
+            // verify_group_codec needs the original SOP cone, so snapshot it first.
+            Abc_Ntk_t *pConeSop = cfg.encode ? Abc_NtkDup(pCone) : nullptr;
             int suppSize = Abc_NtkPiNum(pCone);
             long simLb = simulate_prefilter(pCone, k, cfg.sim_words);
             long m;
             bool prefiltered = false;
+            std::vector<uint64_t> tuples;
             if (simLb > (1L << (k - 1))) {   // simulation already proves no water
                 m = (1L << k);
                 prefiltered = true;
                 ++nPrefiltered;
             } else {
-                m = count_m_sat(pCone, k, cfg.btlimit);
-                if (m == -1) { m = (1L << k); }   // timeout: treat as no water (conservative)
+                m = count_m_sat(pCone, k, cfg.btlimit, cfg.encode ? &tuples : nullptr);
+                if (m == -1) { m = (1L << k); tuples.clear(); }   // timeout: treat as no water (conservative)
                 if (cfg.self_check && suppSize <= 16) {
                     long mEx = count_m_exhaustive(pCone, k);
                     if (m != mEx)
@@ -341,21 +389,60 @@ bool RunCsr3(Abc_Ntk_t *pNtk, const Config &cfg)
             int gain = k - ceil_log2(m);
             if (gain < 0) gain = 0;
             dirGain += gain; dirK += k;
+            // Phase 1: re-encode only groups with realizable gain and a complete tuple set
+            if (cfg.encode && gain >= 1 && !prefiltered && (long)tuples.size() == m) {
+                if (verify_group_codec(pConeSop, tuples, k, cfg.btlimit)) {
+                    int r = apply_group_codec(pNtk, g.lines, tuples, srcPart, dstPart);
+                    if (r >= 0) {
+                        dirSaved += k - r;
+                        ++nEncoded;
+                    } else {
+                        ++nCecSkipped;
+                        printf("csr3: dir %d->%d: group k=%d m=%ld REJECTED (would introduce a cycle), skipped\n",
+                               srcPart, dstPart, k, m);
+                    }
+                } else {
+                    ++nCecSkipped;
+                    printf("csr3: dir %d->%d: group k=%d m=%ld FAILED codec CEC, skipped\n",
+                           srcPart, dstPart, k, m);
+                }
+            }
             if (cfg.verbose)
                 printf("  [%d->%d] group k=%d supp=%d m=%ld gain=%d%s\n",
                        srcPart, dstPart, k, suppSize, m, gain, prefiltered ? " (sim-pruned)" : "");
+            if (pConeSop) Abc_NtkDelete(pConeSop);
             Abc_NtkDelete(pCone);
         }
-        globalGain += dirGain; globalK += dirK;
+        globalGain += dirGain; globalK += dirK; globalSaved += dirSaved;
         printf("csr3: dir %d->%d: %d crossing signals, %zu groups (%d sim-pruned), "
                "sum-k=%ld recoverable=%ld\n",
                srcPart, dstPart, (int)crossing.size(), groups.size(), nPrefiltered, dirK, dirGain);
+        if (cfg.encode) {
+            int crossAfter = (int)collect_crossing_signals(pNtk, srcPart).size();
+            printf("csr3: dir %d->%d: encoded %d groups (%d cec-skipped), saved %ld wires, crossing %d -> %d\n",
+                   srcPart, dstPart, nEncoded, nCecSkipped, dirSaved, (int)crossing.size(), crossAfter);
+        }
     }
 
     double pct = globalK > 0 ? 100.0 * (double)globalGain / (double)globalK : 0.0;
     printf("csr3: TOTAL recoverable wires (detected-floor, combinational SDC only) = %ld / %ld crossing (%.1f%%)\n",
            globalGain, globalK, pct);
     printf("csr3: NOTE this is a lower bound; reachability/ODC water (e.g. one-hot buses) is NOT measured.\n");
+    if (cfg.encode) {
+        // Restore num_parts/cut_size/hop_num unconditionally: any part_id touch
+        // during this run (tagging new nodes, or rolling back a rejected group)
+        // invalidates all three, even on attempts that changed nothing. cut/hop
+        // are only genuinely stale when wires were actually saved.
+        Abc_NtkSetPartStats(pNtk, numParts,
+                             globalSaved > 0 ? -1 : cutSizeBefore,
+                             globalSaved > 0 ? -1 : hopNumBefore);
+        if (!Abc_NtkCheck(pNtk)) {
+            printf("csr3: ERROR network check failed after encoding\n");
+            return false;
+        }
+        printf("csr3: ENCODE saved %ld wires total (encoder/decoder fanin may exceed LUT size; decompose later)\n",
+               globalSaved);
+    }
     return true;
 }
 

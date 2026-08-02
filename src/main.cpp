@@ -990,6 +990,7 @@ int Csr3_Command(Abc_Frame_t *pAbc, int argc, char **argv)
             if (cfg.btlimit < 1) { printf("csr3: invalid -B %d\n", cfg.btlimit); return 1; }
             break;
         case 'c': cfg.self_check ^= 1; break;
+        case 'x': cfg.encode ^= 1; break;
         case 'v': cfg.verbose ^= 1; break;
         case 'h': goto usage;
         default:  std::cout << "csr3: unknown argument -" << arg << "\n"; goto usage;
@@ -997,8 +998,9 @@ int Csr3_Command(Abc_Frame_t *pAbc, int argc, char **argv)
     }
     return fox::csr3::RunCsr3(pNtk, cfg) ? 0 : 1;
 usage:
-    Abc_Print(-2, "usage: csr3 [-J num] [-M num] [-P num] [-B num] [-cv]\n");
+    Abc_Print(-2, "usage: csr3 [-J num] [-M num] [-P num] [-B num] [-cxv]\n");
     Abc_Print(-2, "\t        Phase 0: measure combinational SDC water in cross-partition interconnect (read-only)\n");
+    Abc_Print(-2, "\t        Phase 1 (-x): re-encode recoverable groups (encoder in src part, decoder in dst part)\n");
     Abc_Print(-2, "\t-J num : Jaccard grouping threshold, percent (1-99) [default = 30]\n");
     Abc_Print(-2, "\t-M num : max lines per group (bundle cap, 1-63) [default = 16]\n");
     Abc_Print(-2, "\t-P num : random simulation words (x64 patterns each) [default = 16]\n");
