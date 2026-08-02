@@ -359,10 +359,10 @@ bool RunCsr4(Abc_Ntk_t *pNtk, const Config &cfg)
 
     // Dedup (one physical wire per net, not per crossing fanin slot) is the
     // correct denominator for "fraction of physical wires recovered" -- see
-    // docs/csr4.md section 9. Abc_NtkComputeCutEdgeNum counts a crossing net
-    // once per destination fanin slot, which overstates wire count whenever a
-    // net fans out to more than one destination-side LUT.
-    int cutEdge = Abc_NtkComputeCutEdgeDedupNum(pNtk);
+    // docs/csr4.md section 9. Abc_NtkComputeCutEdgeNum is the deduplicated
+    // count: a net that fans out to several destination-side LUTs still
+    // costs one physical wire, matching the "cut-edge" field ps prints.
+    int cutEdge = Abc_NtkComputeCutEdgeNum(pNtk);
     double pct = cutEdge > 0 ? 100.0 * (double)globalGain / (double)cutEdge : 0.0;
     printf("csr4: TOTAL recoverable wires (detected-floor, cut-function ODC only) = %ld / %d crossing (%.1f%%)\n",
            globalGain, cutEdge, pct);
