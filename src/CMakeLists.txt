@@ -47,6 +47,7 @@ add_subdirectory(cmfs)
 add_subdirectory(csr)
 add_subdirectory(csr2)
 add_subdirectory(csr3)
+add_subdirectory(csr4)
 add_subdirectory(pdecomp)
 add_subdirectory(pst)
 add_subdirectory(agdmap)
@@ -69,6 +70,7 @@ target_link_libraries(FoxSYN PRIVATE
     csr
     csr2
     csr3
+    csr4
     pdecomp
     pst
     agdmap
@@ -117,4 +119,11 @@ target_link_libraries(test_csr3 PRIVATE
     libabc
     timer
     csr3
+)
+
+add_executable(test_csr4 "test_csr4.cpp")
+target_link_libraries(test_csr4 PRIVATE
+    libabc
+    timer
+    csr4
 )

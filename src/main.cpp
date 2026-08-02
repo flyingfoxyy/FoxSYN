@@ -23,6 +23,7 @@
 #include "csr/csr.hpp"
 #include "csr2/csr2.hpp"
 #include "csr3/csr3.hpp"
+#include "csr4/csr4.hpp"
 #include "pdecomp/pdecomp.hpp"
 #include "pst/pst.hpp"
 #include "agdmap/AgdmapCommand.h"
@@ -1007,6 +1008,49 @@ usage:
     return 1;
 }
 
+int Csr4_Command(Abc_Frame_t *pAbc, int argc, char **argv)
+{
+    fox::csr4::Config cfg;
+    Abc_Ntk_t *pNtk = Abc_FrameReadNtk(pAbc);
+    if (argc > 1 && !strcmp(argv[1], "-h"))
+        goto usage;
+    for (int i = 1; i != argc; ++i)
+    {
+        if (argv[i][0] != '-') { std::cout << "csr4: unexpected argument " << argv[i] << "\n"; goto usage; }
+        const char arg = *(argv[i] + 1);
+        switch (arg)
+        {
+        case 'K':
+            if (i + 1 >= argc) { printf("csr4: -K requires a number\n"); return 1; }
+            cfg.lut_size = std::atoi(argv[++i]);
+            if (cfg.lut_size < 2 || cfg.lut_size > 6) { printf("csr4: invalid -K %d (2-6)\n", cfg.lut_size); return 1; }
+            break;
+        case 'B':
+            if (i + 1 >= argc) { printf("csr4: -B requires a number\n"); return 1; }
+            cfg.max_bound = std::atoi(argv[++i]);
+            if (cfg.max_bound < 2 || cfg.max_bound > 20) { printf("csr4: invalid -B %d (2-20)\n", cfg.max_bound); return 1; }
+            break;
+        case 'L':
+            if (i + 1 >= argc) { printf("csr4: -L requires a number\n"); return 1; }
+            cfg.max_luts = std::atoi(argv[++i]);
+            if (cfg.max_luts < 1) { printf("csr4: invalid -L %d\n", cfg.max_luts); return 1; }
+            break;
+        case 'v': cfg.verbose ^= 1; break;
+        case 'h': goto usage;
+        default:  std::cout << "csr4: unknown argument -" << arg << "\n"; goto usage;
+        }
+    }
+    return fox::csr4::RunCsr4(pNtk, cfg) ? 0 : 1;
+usage:
+    Abc_Print(-2, "usage: csr4 [-K num] [-B num] [-L num] [-v]\n");
+    Abc_Print(-2, "\t        Phase 0: measure ODC water recoverable by ACD on cut functions (read-only)\n");
+    Abc_Print(-2, "\t-K num : LUT input cap used for the feasibility check (2-6) [default = 6]\n");
+    Abc_Print(-2, "\t-B num : max bound-set size per group, enumeration is 2^B (2-20) [default = 12]\n");
+    Abc_Print(-2, "\t-L num : max consumer LUTs per group [default = 8]\n");
+    Abc_Print(-2, "\t-v     : toggle verbose (per-group detail)\n");
+    return 1;
+}
+
 int Pdecomp_Command(Abc_Frame_t *pAbc, int argc, char **argv)
 {
     fox::pdecomp::Config cfg;
@@ -1137,6 +1181,7 @@ struct CmdRegister
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "csr", Csr_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "csr2", Csr2_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "csr3", Csr3_Command, 1);
+        Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "csr4", Csr4_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "pst", Pst_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "pdecomp", Pdecomp_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "curvemap", Curvemap_Command, 1);
