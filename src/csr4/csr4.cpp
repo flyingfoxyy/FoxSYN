@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <functional>
+#include <map>
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
@@ -18,6 +19,9 @@ extern "C" {
 // C++ here; forward-declare it, matching src/pdecomp/pdecomp.cpp:15-16.
 unsigned *Hop_ManConvertAigToTruth(Hop_Man_t *p, Hop_Obj_t *pRoot,
                                     int nVars, Vec_Int_t *vTruth, int fMsbFirst);
+// Declaration is commented out in kit.h; forward-declare per pdecomp.cpp:13-14.
+Hop_Obj_t *Kit_TruthToHop(Hop_Man_t *pMan, unsigned *pTruth,
+                            int nVars, Vec_Int_t *vMemory);
 }
 
 namespace fox::csr4 {
@@ -209,21 +213,19 @@ void classify_bound_nets(Abc_Ntk_t *pNtk, const std::vector<BoundaryLut> &luts,
     }
 }
 
-long joint_multiplicity(const std::vector<BoundaryLut> &luts, const Group &g,
-                        const std::vector<int> &bkill)
+// Per member, where each bkill net sits in its fanin list and which fanin
+// slots stay free (locals AND B_keep nets alike -- see docs/csr4.md section 7).
+struct MemberMap {
+    const BoundaryLut *lut = nullptr;
+    std::vector<std::pair<int, int>> boundPos;  // (index into bkill, fanin slot)
+    std::vector<int> freePos;                   // fanin slots not driven by a bkill net
+};
+
+static std::vector<MemberMap> build_member_maps(const std::vector<BoundaryLut> &luts,
+                                                const Group &g,
+                                                const std::vector<int> &bkill)
 {
     int nB = (int)bkill.size();
-    if (nB == 0)
-        return 1;
-
-    // Per member, precompute where each bkill net sits in its fanin list and
-    // which fanin slots stay free (locals AND B_keep nets alike -- see
-    // docs/csr4.md section 7).
-    struct MemberMap {
-        const BoundaryLut *lut = nullptr;
-        std::vector<std::pair<int, int>> boundPos;  // (index into bkill, fanin slot)
-        std::vector<int> freePos;                   // fanin slots not driven by a bkill net
-    };
     std::vector<MemberMap> members;
     members.reserve(g.luts.size());
     for (int idx : g.luts)
@@ -242,37 +244,209 @@ long joint_multiplicity(const std::vector<BoundaryLut> &luts, const Group &g,
         }
         members.push_back(std::move(mm));
     }
+    return members;
+}
 
-    std::set<std::vector<uint64_t>> seen;
+// Restriction of one member under a given bkill assignment: the member's
+// residual function over its free slots, packed LSB-first.
+static uint64_t restriction_of(const MemberMap &mm, long bAssign)
+{
+    int fixedIdx = 0;
+    for (const auto &bp : mm.boundPos)
+        if ((bAssign >> bp.first) & 1L)
+            fixedIdx |= 1 << bp.second;
+
+    int nFree = (int)mm.freePos.size();
+    uint64_t restriction = 0;
+    for (int f = 0; f < (1 << nFree); ++f)
+    {
+        int idx = fixedIdx;
+        for (int q = 0; q < nFree; ++q)
+            if ((f >> q) & 1)
+                idx |= 1 << mm.freePos[q];
+        if ((mm.lut->truth >> idx) & 1ULL)
+            restriction |= 1ULL << f;
+    }
+    return restriction;
+}
+
+std::vector<int> compute_classes(const std::vector<BoundaryLut> &luts, const Group &g,
+                                 const std::vector<int> &bkill, long &mu)
+{
+    int nB = (int)bkill.size();
+    if (nB == 0) { mu = 1; return std::vector<int>(1, 0); }
+
+    std::vector<MemberMap> members = build_member_maps(luts, g, bkill);
+
+    // Two bkill assignments share a class iff every member's restriction
+    // agrees -- the common refinement (meet) of the members' own partitions,
+    // which is what a shared encoder must distinguish (docs/csr4.md section 6).
+    std::map<std::vector<uint64_t>, int> keyToClass;
     long total = 1L << nB;
+    std::vector<int> classes((size_t)total, 0);
     std::vector<uint64_t> key(members.size());
     for (long bAssign = 0; bAssign < total; ++bAssign)
     {
         for (size_t mi = 0; mi < members.size(); ++mi)
+            key[mi] = restriction_of(members[mi], bAssign);
+        auto it = keyToClass.find(key);
+        if (it == keyToClass.end())
         {
-            const MemberMap &mm = members[mi];
-            // Fixed part of the minterm index contributed by the bound nets.
+            int c = (int)keyToClass.size();
+            keyToClass.emplace(key, c);
+            classes[(size_t)bAssign] = c;
+        }
+        else
+        {
+            classes[(size_t)bAssign] = it->second;
+        }
+    }
+    mu = (long)keyToClass.size();
+    return classes;
+}
+
+long joint_multiplicity(const std::vector<BoundaryLut> &luts, const Group &g,
+                        const std::vector<int> &bkill)
+{
+    long mu = 0;
+    compute_classes(luts, g, bkill, mu);
+    return mu;
+}
+
+// Replicate a truth table whose low 2^nVars bits are meaningful across the
+// whole 64-bit word, matching what Abc_SopToTruth / Hop_ManConvertAigToTruth
+// hand back. Kit_TruthToHop reads Kit_TruthWordNum(nVars) words, so the tail
+// must be a copy of the head rather than zeros for nVars < 6.
+static uint64_t replicate_truth(uint64_t tt, int nVars)
+{
+    for (int sh = 1 << nVars; sh < 64; sh <<= 1)
+        tt |= tt << sh;
+    return tt;
+}
+
+static Abc_Obj_t *make_lut(Abc_Ntk_t *pNtk, const std::vector<Abc_Obj_t *> &fanins,
+                           uint64_t truth, int partId)
+{
+    Hop_Man_t *pHop = (Hop_Man_t *)pNtk->pManFunc;
+    int nVars = (int)fanins.size();
+    Abc_Obj_t *pNode = Abc_NtkCreateNode(pNtk);
+    for (Abc_Obj_t *pFanin : fanins)
+        Abc_ObjAddFanin(pNode, pFanin);
+
+    uint64_t tt = replicate_truth(truth, nVars);
+    unsigned w[2];
+    w[0] = (unsigned)(tt & 0xFFFFFFFFu);
+    w[1] = (unsigned)(tt >> 32);
+    pNode->pData = (void *)Kit_TruthToHop(pHop, w, nVars, NULL);
+    if (!pNode->pData)
+        pNode->pData = (void *)Hop_ManConst0(pHop);
+    Abc_ObjSetPartId(pNode, (part_id)partId);
+    return pNode;
+}
+
+// Phase 1: replace the group's B_kill nets with t encoder outputs.
+//
+// Encoder h_j(B_kill) = bit j of the class id, built as t LUTs in srcPart.
+// Each member is then rewritten as g_L(code, its free fanins) -- the ACD `g`,
+// absorbed directly into the member's own truth table, so no decoder is
+// needed on the destination side (docs/csr4.md section 3).
+bool apply_group(Abc_Ntk_t *pNtk, const std::vector<BoundaryLut> &luts, const Group &g,
+                 const std::vector<int> &bkill, int srcPart, const Config &cfg)
+{
+    int nB = (int)bkill.size();
+    if (nB < 2 || nB > cfg.lut_size)
+        return false;             // encoder itself must fit one LUT
+
+    long mu = 0;
+    std::vector<int> classes = compute_classes(luts, g, bkill, mu);
+    int t = ceil_log2(mu);
+    if (nB - t <= 0)
+        return false;
+    if (!check_k_feasible(luts, g, bkill, t, cfg.lut_size))
+        return false;
+
+    // Representative bkill assignment per class, for reading member values back.
+    std::vector<long> rep((size_t)mu, -1);
+    for (long b = 0; b < (long)classes.size(); ++b)
+        if (rep[(size_t)classes[(size_t)b]] < 0)
+            rep[(size_t)classes[(size_t)b]] = b;
+
+    std::vector<Abc_Obj_t *> boundObjs;
+    boundObjs.reserve(nB);
+    for (int netId : bkill)
+    {
+        Abc_Obj_t *pNet = Abc_NtkObj(pNtk, netId);
+        if (!pNet)
+            return false;
+        boundObjs.push_back(pNet);
+    }
+
+    // Encoders live in the source partition, so the bkill nets stay local to
+    // it and only the t code wires cross.
+    std::vector<Abc_Obj_t *> encoders;
+    encoders.reserve(t);
+    for (int j = 0; j < t; ++j)
+    {
+        uint64_t encTruth = 0;
+        for (long b = 0; b < (long)classes.size(); ++b)
+            if ((classes[(size_t)b] >> j) & 1)
+                encTruth |= 1ULL << b;
+        encoders.push_back(make_lut(pNtk, boundObjs, encTruth, srcPart));
+    }
+
+    std::vector<MemberMap> members = build_member_maps(luts, g, bkill);
+    for (const MemberMap &mm : members)
+    {
+        Abc_Obj_t *pNode = mm.lut->node;
+        int nFree = (int)mm.freePos.size();
+        int nVars = t + nFree;
+
+        std::vector<Abc_Obj_t *> freeObjs;
+        freeObjs.reserve(nFree);
+        for (int slot : mm.freePos)
+        {
+            Abc_Obj_t *pF = Abc_NtkObj(pNtk, mm.lut->fanins[(size_t)slot]);
+            if (!pF)
+                return false;
+            freeObjs.push_back(pF);
+        }
+
+        // New variable order: code bits 0..t-1, then the free fanins.
+        uint64_t newTruth = 0;
+        for (int code = 0; code < (1 << t); ++code)
+        {
+            long b = (code < mu) ? rep[(size_t)code] : rep[0];   // unused codes: don't care
             int fixedIdx = 0;
             for (const auto &bp : mm.boundPos)
-                if ((bAssign >> bp.first) & 1L)
+                if ((b >> bp.first) & 1L)
                     fixedIdx |= 1 << bp.second;
-
-            int nFree = (int)mm.freePos.size();
-            uint64_t restriction = 0;
             for (int f = 0; f < (1 << nFree); ++f)
             {
                 int idx = fixedIdx;
                 for (int q = 0; q < nFree; ++q)
                     if ((f >> q) & 1)
-                        idx |= 1 << mm.freePos[q];
+                        idx |= 1 << mm.freePos[(size_t)q];
                 if ((mm.lut->truth >> idx) & 1ULL)
-                    restriction |= 1ULL << f;
+                    newTruth |= 1ULL << (code | (f << t));
             }
-            key[mi] = restriction;
         }
-        seen.insert(key);
+
+        Hop_Man_t *pHop = (Hop_Man_t *)pNtk->pManFunc;
+        Abc_ObjRemoveFanins(pNode);
+        for (Abc_Obj_t *pEnc : encoders)
+            Abc_ObjAddFanin(pNode, pEnc);
+        for (Abc_Obj_t *pF : freeObjs)
+            Abc_ObjAddFanin(pNode, pF);
+
+        uint64_t tt = replicate_truth(newTruth, nVars);
+        unsigned w[2];
+        w[0] = (unsigned)(tt & 0xFFFFFFFFu);
+        w[1] = (unsigned)(tt >> 32);
+        pNode->pData = (void *)Kit_TruthToHop(pHop, w, nVars, NULL);
+        if (!pNode->pData)
+            pNode->pData = (void *)Hop_ManConst0(pHop);
     }
-    return (long)seen.size();
+    return true;
 }
 
 bool check_k_feasible(const std::vector<BoundaryLut> &luts, const Group &g,
@@ -327,7 +501,12 @@ bool RunCsr4(Abc_Ntk_t *pNtk, const Config &cfg)
         return false;
     }
 
-    long globalGain = 0, globalEnc = 0, globalBkill = 0;
+    // Denominator/invariant baseline must be read before any rewrite.
+    int cutEdgeBefore = Abc_NtkComputeCutEdgeNum(pNtk);
+    int hopBefore     = Abc_NtkComputeHopNum(pNtk);
+    int nodesBefore   = Abc_NtkNodeNum(pNtk);
+
+    long globalGain = 0, globalEnc = 0, globalBkill = 0, globalApplied = 0;
     for (int dstPart = 0; dstPart <= 1; ++dstPart)
     {
         int srcPart = 1 - dstPart;
@@ -335,7 +514,7 @@ bool RunCsr4(Abc_Ntk_t *pNtk, const Config &cfg)
         std::vector<BoundaryLut> luts = collect_boundary_luts(pNtk, dstPart, nSkippedWide);
         std::vector<Group> groups = group_boundary_luts(luts, cfg.max_bound, cfg.max_luts);
 
-        long dirGain = 0, dirEnc = 0, dirBkill = 0;
+        long dirGain = 0, dirEnc = 0, dirBkill = 0, dirApplied = 0;
         for (const Group &g : groups)
         {
             GroupResult r = evaluate_group(pNtk, luts, g, dstPart, cfg);
@@ -347,10 +526,21 @@ bool RunCsr4(Abc_Ntk_t *pNtk, const Config &cfg)
             if (cfg.verbose)
                 printf("  [%d->%d] group luts=%d bkill=%d bkeep=%d mu=%ld t=%d gain=%d\n",
                        srcPart, dstPart, r.n_luts, r.n_bkill, r.n_bkeep, r.mu, r.t, r.gain);
+            if (cfg.apply)
+            {
+                std::vector<int> bkill, bkeep;
+                classify_bound_nets(pNtk, luts, g, dstPart, bkill, bkeep);
+                if (apply_group(pNtk, luts, g, bkill, srcPart, cfg))
+                    ++dirApplied;
+                else if (cfg.verbose)
+                    printf("    (skipped: encoder needs %d inputs > K=%d)\n",
+                           r.n_bkill, cfg.lut_size);
+            }
         }
-        globalGain  += dirGain;
-        globalEnc   += dirEnc;
-        globalBkill += dirBkill;
+        globalGain    += dirGain;
+        globalEnc     += dirEnc;
+        globalBkill   += dirBkill;
+        globalApplied += dirApplied;
         printf("csr4: dir %d->%d: %zu boundary LUTs, %zu groups, %d wide-skipped, "
                "sum-bkill=%ld recoverable=%ld encoders=%ld\n",
                srcPart, dstPart, luts.size(), groups.size(), nSkippedWide,
@@ -362,13 +552,29 @@ bool RunCsr4(Abc_Ntk_t *pNtk, const Config &cfg)
     // docs/csr4.md section 9. Abc_NtkComputeCutEdgeNum is the deduplicated
     // count: a net that fans out to several destination-side LUTs still
     // costs one physical wire, matching the "cut-edge" field ps prints.
-    int cutEdge = Abc_NtkComputeCutEdgeNum(pNtk);
-    double pct = cutEdge > 0 ? 100.0 * (double)globalGain / (double)cutEdge : 0.0;
+    double pct = cutEdgeBefore > 0 ? 100.0 * (double)globalGain / (double)cutEdgeBefore : 0.0;
     printf("csr4: TOTAL recoverable wires (detected-floor, cut-function ODC only) = %ld / %d crossing (%.1f%%)\n",
-           globalGain, cutEdge, pct);
+           globalGain, cutEdgeBefore, pct);
     printf("csr4: cost %ld encoder LUT(s); NOTE lower bound -- fixed cut boundaries, "
            "capped grouping, K-infeasible groups all round down.\n", globalEnc);
     (void)globalBkill;
+
+    if (!cfg.apply)
+        return true;
+
+    int cutEdgeAfter = Abc_NtkComputeCutEdgeNum(pNtk);
+    int hopAfter     = Abc_NtkComputeHopNum(pNtk);
+    int nodesAfter   = Abc_NtkNodeNum(pNtk);
+    printf("csr4: APPLIED %ld group(s): cut-edge %d -> %d (%+d), hop %d -> %d, nodes %d -> %d (%+d)\n",
+           globalApplied, cutEdgeBefore, cutEdgeAfter, cutEdgeAfter - cutEdgeBefore,
+           hopBefore, hopAfter, nodesBefore, nodesAfter, nodesAfter - nodesBefore);
+
+    if (hopAfter > hopBefore)
+        printf("csr4: WARNING hop increased (%d -> %d)\n", hopBefore, hopAfter);
+    if (cutEdgeAfter > cutEdgeBefore)
+        printf("csr4: WARNING cut-edge increased (%d -> %d)\n", cutEdgeBefore, cutEdgeAfter);
+    if (!Abc_NtkCheck(pNtk))
+        printf("csr4: WARNING network check failed after rewrite\n");
     return true;
 }
 

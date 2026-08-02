@@ -1035,6 +1035,7 @@ int Csr4_Command(Abc_Frame_t *pAbc, int argc, char **argv)
             cfg.max_luts = std::atoi(argv[++i]);
             if (cfg.max_luts < 1) { printf("csr4: invalid -L %d\n", cfg.max_luts); return 1; }
             break;
+        case 'a': cfg.apply ^= 1; break;
         case 'v': cfg.verbose ^= 1; break;
         case 'h': goto usage;
         default:  std::cout << "csr4: unknown argument -" << arg << "\n"; goto usage;
@@ -1042,11 +1043,13 @@ int Csr4_Command(Abc_Frame_t *pAbc, int argc, char **argv)
     }
     return fox::csr4::RunCsr4(pNtk, cfg) ? 0 : 1;
 usage:
-    Abc_Print(-2, "usage: csr4 [-K num] [-B num] [-L num] [-v]\n");
+    Abc_Print(-2, "usage: csr4 [-K num] [-B num] [-L num] [-av]\n");
     Abc_Print(-2, "\t        Phase 0: measure ODC water recoverable by ACD on cut functions (read-only)\n");
+    Abc_Print(-2, "\t        Phase 1 (-a): rewrite the netlist, encoder in src part, g absorbed into dst LUTs\n");
     Abc_Print(-2, "\t-K num : LUT input cap used for the feasibility check (2-6) [default = 6]\n");
     Abc_Print(-2, "\t-B num : max bound-set size per group, enumeration is 2^B (2-20) [default = 12]\n");
     Abc_Print(-2, "\t-L num : max consumer LUTs per group [default = 8]\n");
+    Abc_Print(-2, "\t-a     : apply the transformation (modifies the network)\n");
     Abc_Print(-2, "\t-v     : toggle verbose (per-group detail)\n");
     return 1;
 }

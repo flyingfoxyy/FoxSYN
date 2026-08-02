@@ -58,6 +58,15 @@ void classify_bound_nets(Abc_Ntk_t *pNtk, const std::vector<BoundaryLut> &luts,
 long joint_multiplicity(const std::vector<BoundaryLut> &luts, const Group &g,
                         const std::vector<int> &bkill);
 
+// Phase 1: class id per bkill assignment (size 2^|bkill|), mu written out.
+std::vector<int> compute_classes(const std::vector<BoundaryLut> &luts, const Group &g,
+                                 const std::vector<int> &bkill, long &mu);
+
+// Phase 1: rewrite the netlist for one group. Returns false (network
+// untouched) when the group is not transformable.
+bool apply_group(Abc_Ntk_t *pNtk, const std::vector<BoundaryLut> &luts, const Group &g,
+                 const std::vector<int> &bkill, int srcPart, const Config &cfg);
+
 // Task 7
 bool check_k_feasible(const std::vector<BoundaryLut> &luts, const Group &g,
                       const std::vector<int> &bkill, int t, int lutSize);
