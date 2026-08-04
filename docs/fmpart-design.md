@@ -74,6 +74,7 @@ struct Config {
     int      min_gain    = 1;    // 一趟收益 < min_gain 即收敛退出
     unsigned seed        = 1;    // 随机初始解种子
     bool     verbose     = false;
+    bool     self_check  = false; // 仅测试用：每次移动后跑 O(pins) 不变量检查
 };
 
 struct Result {
@@ -82,6 +83,7 @@ struct Result {
     int  initial_cut = 0;             // 优化前的 cut
     int  passes      = 0;             // 实际执行的 pass 数
     bool balanced    = false;         // 最终解是否满足平衡约束
+    int  self_check_failures = 0;     // cfg.self_check 发现的不一致计数
 };
 ```
 
@@ -309,7 +311,7 @@ else if cnt[e][F] == 1:  对 e 中唯一那个 part[u] == F 的 u，
 
 ### 6.2 不变量检查
 
-实现一个 `verify_invariants()`，在每趟 pass 结束后调用：
+`verify_invariants()` 内建于 `FMPart`，`Config::self_check` 开启时自动调用：`gain[]` 与桶结构检查在**每次移动后、回滚前**执行（回滚后 gain 已失效，spec §5.3）；`cnt`/`cut`/`wsum` 检查在回滚后再执行一次。测试通过 `Result::self_check_failures == 0` 断言。
 
 | 检查 | 做法 |
 |---|---|

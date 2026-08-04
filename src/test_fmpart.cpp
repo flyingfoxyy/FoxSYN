@@ -1,7 +1,10 @@
+#include <cstdint>
 #include <cstdio>
+#include <span>
 #include <vector>
 
 #include "fmpart/fm_buckets.hpp"
+#include "fmpart/fmpart.hpp"
 
 namespace {
 
@@ -76,6 +79,150 @@ void TestBucketsDegenerate()
     ExpectEq("gmax0 consistency", b.check_consistency(), 0);
 }
 
+// 第二个实例化用的最小图类型（spec §6.1）
+struct SimpleHypergraph {
+    int nv = 0;
+    std::vector<std::vector<int>> pins;      // 每条 net 的顶点列表，无重复
+    std::vector<int> vweights;               // 空 = 全 1
+    std::vector<int> nweights;               // 空 = 全 1
+
+    int num_vertices() const { return nv; }
+    int num_nets() const { return (int)pins.size(); }
+    int vertex_weight(int v) const { return vweights.empty() ? 1 : vweights[v]; }
+    int net_weight(int e) const { return nweights.empty() ? 1 : nweights[e]; }
+    const std::vector<int> &pins_of(int e) const { return pins[e]; }
+};
+
+struct NotAGraph {
+    int num_vertices() const { return 0; }
+};
+
+static_assert(fox::fmpart::FMHypergraph<SimpleHypergraph>);
+static_assert(!fox::fmpart::FMHypergraph<NotAGraph>);
+
+// 测试侧独立重算 cut，作为增量值的对照（spec §6.2）
+int RefCut(const SimpleHypergraph &g, const std::vector<uint8_t> &part)
+{
+    int cut = 0;
+    for (int e = 0; e < g.num_nets(); ++e) {
+        bool s0 = false, s1 = false;
+        for (int v : g.pins[e])
+            (part[v] ? s1 : s0) = true;
+        if (s0 && s1)
+            cut += g.net_weight(e);
+    }
+    return cut;
+}
+
+// 8 顶点两团 + 一条桥；最优 2-way cut = 1（spec §6.3.1）
+SimpleHypergraph TwoClusters()
+{
+    SimpleHypergraph g;
+    g.nv = 8;
+    g.pins = {{0,1},{1,2},{2,3},{0,2},{1,3},{4,5},{5,6},{6,7},{4,6},{5,7},{3,4}};
+    return g;
+}
+
+void TestEchoWithZeroPasses()
+{
+    SimpleHypergraph g = TwoClusters();
+    fox::fmpart::Config cfg;
+    cfg.max_passes = 0;
+    fox::fmpart::FMPart<SimpleHypergraph> fm(g, cfg);
+    const std::vector<uint8_t> init = {0,0,0,0,1,1,1,1};
+    auto r = fm.run(init);
+    ExpectEq("echo cut", r.cut, 1);
+    ExpectEq("echo initial_cut", r.initial_cut, 1);
+    ExpectEq("echo ref", RefCut(g, r.part), r.cut);
+    ExpectEq("echo passes", r.passes, 0);
+    ExpectTrue("echo balanced", r.balanced);
+    for (int v = 0; v < 8; ++v)
+        ExpectEq("echo part", r.part[v], v < 4 ? 0 : 1);
+}
+
+void TestFixedOverridesInit()
+{
+    SimpleHypergraph g = TwoClusters();
+    const std::vector<uint8_t> init = {0,0,0,0,1,1,1,1};
+    std::vector<int8_t> fixed(8, -1);
+    fixed[0] = 1;
+    fox::fmpart::Config cfg;
+    cfg.max_passes = 0;
+    fox::fmpart::FMPart<SimpleHypergraph> fm(g, cfg);
+    auto r = fm.run(init, fixed);
+    ExpectEq("fixed wins over init", r.part[0], 1);
+    ExpectEq("others follow init", r.part[1], 0);
+    ExpectEq("cut echoes input", r.cut, r.initial_cut);
+    ExpectEq("ref agrees", RefCut(g, r.part), r.cut);
+}
+
+void TestRandomInitBalanced()
+{
+    SimpleHypergraph g;
+    g.nv = 9;
+    g.pins = {{0,1,2},{3,4,5},{6,7,8},{0,4,8}};
+    fox::fmpart::Config cfg;
+    cfg.max_passes = 0;
+    fox::fmpart::FMPart<SimpleHypergraph> fm(g, cfg);
+    auto r = fm.run();
+    ExpectTrue("random init balanced", r.balanced);
+    int w1 = 0;
+    for (auto p : r.part) w1 += p;
+    ExpectTrue("both sides used", w1 > 0 && w1 < 9);
+    std::vector<int8_t> fixed(9, -1);
+    fixed[2] = 1; fixed[5] = 1; fixed[6] = 0;
+    auto rf = fm.run({}, fixed);
+    ExpectEq("fx2", rf.part[2], 1);
+    ExpectEq("fx5", rf.part[5], 1);
+    ExpectEq("fx6", rf.part[6], 0);
+}
+
+void TestRunReuse()
+{
+    SimpleHypergraph g = TwoClusters();
+    fox::fmpart::Config cfg;
+    fox::fmpart::FMPart<SimpleHypergraph> fm(g, cfg);
+    auto r1 = fm.run();
+    auto r2 = fm.run();
+    ExpectTrue("deterministic across runs", r1.part == r2.part && r1.cut == r2.cut);
+}
+
+void TestDegenerate()
+{
+    fox::fmpart::Config cfg;
+    {
+        SimpleHypergraph g;                          // 空图
+        fox::fmpart::FMPart<SimpleHypergraph> fm(g, cfg);
+        auto r = fm.run();
+        ExpectEq("empty cut", r.cut, 0);
+        ExpectTrue("empty part", r.part.empty());
+    }
+    {
+        SimpleHypergraph g;                          // 单顶点
+        g.nv = 1;
+        fox::fmpart::FMPart<SimpleHypergraph> fm(g, cfg);
+        auto r = fm.run();
+        ExpectEq("single cut", r.cut, 0);
+        ExpectTrue("single balanced", r.balanced);
+    }
+    {
+        SimpleHypergraph g;                          // 全部 1-pin net
+        g.nv = 3;
+        g.pins = {{0},{1},{2}};
+        fox::fmpart::FMPart<SimpleHypergraph> fm(g, cfg);
+        auto r = fm.run();
+        ExpectEq("1-pin nets never cut", r.cut, 0);
+    }
+    {
+        SimpleHypergraph g;                          // 无 net
+        g.nv = 4;
+        fox::fmpart::FMPart<SimpleHypergraph> fm(g, cfg);
+        auto r = fm.run();
+        ExpectEq("no nets cut", r.cut, 0);
+        ExpectTrue("no nets balanced", r.balanced);
+    }
+}
+
 } // namespace
 
 int main()
@@ -83,6 +230,11 @@ int main()
     TestBucketsBasic();
     TestBucketsFindTop();
     TestBucketsDegenerate();
+    TestEchoWithZeroPasses();
+    TestFixedOverridesInit();
+    TestRandomInitBalanced();
+    TestRunReuse();
+    TestDegenerate();
     if (g_fail == 0) std::printf("all fmpart tests passed\n");
     return g_fail == 0 ? 0 : 1;
 }
