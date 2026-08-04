@@ -127,3 +127,6 @@ target_link_libraries(test_csr4 PRIVATE
     timer
     csr4
 )
+
+add_executable(test_fmpart "test_fmpart.cpp")
+target_include_directories(test_fmpart PRIVATE ${CMAKE_SOURCE_DIR})
