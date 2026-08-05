@@ -232,3 +232,5 @@ read design.v; st; if -K 6; hpart -N 2; csr3 -v
 - **detected-floor 而非 zero**：只测组合 SDC。可达性水分（如 one-hot 总线 `m=2^k`）、ODC 水分完全不计。报表说"至少有 N 根"，不说"只有 N 根"。
 - **Jaccard 分组是启发式**：分组质量影响能发现多少联合冗余；support 完全不相交的线永远分不到一组（这是对的），但同一簇内的切块顺序会影响结果。保守方向：切块不会制造假水分（每组独立数 m，守恒律仍成立），只会漏发现跨块的联合冗余。
 - **大 support 组的 SAT 成本**：cut 线的锥停在 FF/PI，联合 support 可能几十上百位。SAT 变量规模随之上升，但 All-SAT 早退（`2^(k-1)`，k≤16）把求解次数压在 32768 以内，且大 m 组会很快在仿真预筛阶段被淘汰，真正进 SAT 的应是少数小 m 组。
+- **枚举壁垒（线性冗余不可见）**：All-SAT 只在 `m ≤ 2^(k-1)` 且枚举得完时才报得出收益。若冗余以"依赖关系"存在而非"小基数"存在（如一根线 = 其余线的 parity，真实可省 1 根但 `m = 2^(k-1)`），枚举跑不完，超时后保守判为无水。修法（future work）：GF(2) signature 消元 pre-pass，见 `docs/csr3.md` §12.1。
+- **预筛死区**：剪枝条件 `distinct > 2^(k-1)` 受 pattern 数 `64 × sim_words` 封顶，默认 `-P 16` 下 k ≥ 11 的组数学上不可能被剪。修法（future work）：按 k 自适应 pattern 数 / 饱和启发剪枝，见 `docs/csr3.md` §12.1。
