@@ -65,6 +65,7 @@ target_link_libraries(FoxSYN PRIVATE
     supper
     partsyn
     hpart
+    fmpart
     timer
     cpr
     cmfs

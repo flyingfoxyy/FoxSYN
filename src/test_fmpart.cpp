@@ -1,11 +1,16 @@
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <random>
 #include <set>
 #include <span>
+#include <string>
 #include <vector>
 
 #include "base/abc/abc.h"
+#include "base/io/ioAbc.h"
 #include "base/main/main.h"
 #include "fmpart/abc_wrapper.hpp"
 #include "fmpart/fm_buckets.hpp"
@@ -469,11 +474,97 @@ void TestAbcWrapper()
     Abc_NtkDelete(pNtk);
 }
 
+// patoh 参考解：工具不在 PATH 或跑失败时返回 -1
+int RunPatohReference(const fox::fmpart::AbcNtkWrapper &g)
+{
+    if (std::system("command -v HgrToPaToH >/dev/null 2>&1") != 0
+        || std::system("command -v patoh >/dev/null 2>&1") != 0)
+        return -1;
+
+    char tmpl[] = "/tmp/fmpart_XXXXXX";
+    char *dir = mkdtemp(tmpl);
+    if (dir == nullptr)
+        return -1;
+
+    int patoh_cut = -1;
+    const std::string hgr = std::string(dir) + "/net.hgr";
+    const std::string pat = std::string(dir) + "/net.patoh";
+    {
+        std::ofstream out(hgr);
+        out << g.num_nets() << ' ' << g.num_vertices() << '\n';
+        for (int e = 0; e < g.num_nets(); ++e) {
+            const auto &pins = g.pins_of(e);
+            for (std::size_t k = 0; k < pins.size(); ++k)
+                out << (k ? " " : "") << pins[k] + 1;   // hgr 格式 1 基
+            out << '\n';
+        }
+    }
+    const std::string cmd =
+        "HgrToPaToH '" + hgr + "' '" + pat + "' >/dev/null 2>&1 && "
+        "patoh '" + pat + "' 2 UM=O IB=0.02 >/dev/null 2>&1";
+    const int rc = std::system(cmd.c_str());
+    std::ifstream in(pat + ".part.2");
+    std::vector<int> parts;
+    int p;
+    while (in >> p)
+        parts.push_back(p);
+    if (rc == 0 && (int)parts.size() == g.num_vertices()) {
+        patoh_cut = 0;
+        for (int e = 0; e < g.num_nets(); ++e) {
+            bool s0 = false, s1 = false;
+            for (int v : g.pins_of(e))
+                (parts[v] ? s1 : s0) = true;
+            if (s0 && s1)
+                ++patoh_cut;
+        }
+    }
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    return patoh_cut;
+}
+
+// 真实电路模式（spec §6.5）：打印 FM 与 patoh 的 cut，不设断言、不算门禁
+int RunCircuitFile(const char *path)
+{
+    Abc_Ntk_t *pNtk = Io_Read(const_cast<char *>(path),
+                              Io_ReadFileType(const_cast<char *>(path)), 1, 0);
+    if (pNtk == nullptr) {
+        std::fprintf(stderr, "fmpart: cannot read %s\n", path);
+        return 1;
+    }
+
+    fox::fmpart::AbcNtkWrapper g(pNtk);
+    fox::fmpart::Config cfg;
+    fox::fmpart::FMPart<fox::fmpart::AbcNtkWrapper> fm(g, cfg);
+    auto r = fm.run();
+
+    int patoh_cut = RunPatohReference(g);
+
+    std::printf("%-16s v=%6d nets=%6d | fm cut %5d (init %5d, %2d passes, balanced=%d) | patoh cut ",
+                std::filesystem::path(path).filename().c_str(),
+                g.num_vertices(), g.num_nets(),
+                r.cut, r.initial_cut, r.passes, (int)r.balanced);
+    if (patoh_cut >= 0)
+        std::printf("%5d\n", patoh_cut);
+    else
+        std::printf("  n/a\n");
+
+    Abc_NtkDelete(pNtk);
+    return 0;
+}
+
 } // namespace
 
-int main()
+int main(int argc, char **argv)
 {
     Abc_Start();
+    int ret = 0;
+    if (argc > 1) {
+        for (int i = 1; i < argc; ++i)
+            ret |= RunCircuitFile(argv[i]);
+        Abc_Stop();
+        return ret;
+    }
     TestBucketsBasic();
     TestBucketsFindTop();
     TestBucketsDegenerate();
