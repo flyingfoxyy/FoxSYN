@@ -260,11 +260,15 @@ key(状态, cum) = (wsum[0] <= max_weight 且 wsum[1] <= max_weight,  cum)
 ```
 initial_cut = compute_cut()
 for p in 1..max_passes:
+    was_balanced = is_balanced()
     g = run_one_pass()
     passes = p
-    if g < min_gain: break
+    now_balanced = is_balanced()
+    // 平衡修复趟（false -> true）可能返回负收益，不据此终止；
+    // 否则起点不平衡时第一趟就会被 g < min_gain 打断，永远没有机会优化
+    if !(now_balanced && !was_balanced) 且 g < min_gain: break
 cut = compute_cut()
-balanced = (wsum[0] <= max_weight && wsum[1] <= max_weight)
+balanced = is_balanced()
 ```
 
 **单调性**：起点平衡时，前缀 0 本身就是一个「平衡且 `cum = 0`」的候选，任何被选中的前缀都不会比它差，因此 cut 跨 pass **单调不增**。

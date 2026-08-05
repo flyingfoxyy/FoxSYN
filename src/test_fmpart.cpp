@@ -223,6 +223,47 @@ void TestDegenerate()
     }
 }
 
+void TestKnownOptimal()
+{
+    SimpleHypergraph g = TwoClusters();
+    fox::fmpart::Config cfg;
+    cfg.self_check = true;
+    fox::fmpart::FMPart<SimpleHypergraph> fm(g, cfg);
+    const std::vector<uint8_t> init = {0,1,0,1,0,1,0,1};   // 交错起点，cut = 9
+    auto r = fm.run(init);
+    ExpectEq("self-check clean", r.self_check_failures, 0);
+    ExpectEq("optimal cut", r.cut, 1);
+    ExpectTrue("balanced", r.balanced);
+    ExpectTrue("cluster A together",
+               r.part[0] == r.part[1] && r.part[1] == r.part[2] && r.part[2] == r.part[3]);
+    ExpectTrue("cluster B together",
+               r.part[4] == r.part[5] && r.part[5] == r.part[6] && r.part[6] == r.part[7]);
+    ExpectTrue("clusters apart", r.part[0] != r.part[4]);
+    ExpectEq("ref cut agrees", RefCut(g, r.part), r.cut);
+}
+
+void TestMonotonicPasses()
+{
+    // 逐趟观察：max_passes=1 反复 run，把上一轮 part 作为下一轮 init，
+    // 语义上等价于连续的 pass（spec §6.3.5）
+    SimpleHypergraph g = TwoClusters();
+    fox::fmpart::Config cfg;
+    cfg.max_passes = 1;
+    cfg.self_check = true;
+    fox::fmpart::FMPart<SimpleHypergraph> fm(g, cfg);
+    std::vector<uint8_t> cur = {0,1,0,1,0,1,0,1};
+    int prev_cut = RefCut(g, cur);
+    for (int p = 0; p < 5; ++p) {
+        auto r = fm.run(cur);
+        ExpectEq("pass self-check", r.self_check_failures, 0);
+        ExpectTrue("cut monotonic non-increasing", r.cut <= prev_cut);
+        ExpectEq("pass ref agrees", RefCut(g, r.part), r.cut);
+        prev_cut = r.cut;
+        cur = r.part;
+    }
+    ExpectEq("converged to optimum", prev_cut, 1);
+}
+
 } // namespace
 
 int main()
@@ -235,6 +276,8 @@ int main()
     TestRandomInitBalanced();
     TestRunReuse();
     TestDegenerate();
+    TestKnownOptimal();
+    TestMonotonicPasses();
     if (g_fail == 0) std::printf("all fmpart tests passed\n");
     return g_fail == 0 ? 0 : 1;
 }
