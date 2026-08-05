@@ -5,6 +5,9 @@
 #include <span>
 #include <vector>
 
+#include "base/abc/abc.h"
+#include "base/main/main.h"
+#include "fmpart/abc_wrapper.hpp"
 #include "fmpart/fm_buckets.hpp"
 #include "fmpart/fmpart.hpp"
 
@@ -426,10 +429,51 @@ void TestRandomStress()
     }
 }
 
+void TestAbcWrapper()
+{
+    // 手搭 4 顶点逻辑网络：pi0,pi1 -> n0 -> n1 -> po，pi1 同时扇出到 n1。
+    // 期望超图（hpart.cpp:164 同口径）：
+    //   vertices = {pi0, pi1, n0, n1}（PO 不是超图顶点）
+    //   edges: pi0:{pi0,n0}  pi1:{pi1,n0,n1}  n0:{n0,n1}；n1 的边只剩 1 pin，弃
+    Abc_Ntk_t *pNtk = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    Abc_Obj_t *pi0 = Abc_NtkCreatePi(pNtk);
+    Abc_Obj_t *pi1 = Abc_NtkCreatePi(pNtk);
+    Abc_Obj_t *n0 = Abc_NtkCreateNode(pNtk);
+    Abc_ObjAddFanin(n0, pi0);
+    Abc_ObjAddFanin(n0, pi1);
+    n0->pData = Abc_SopCreateAnd((Mem_Flex_t *)pNtk->pManFunc, 2, NULL);
+    Abc_Obj_t *n1 = Abc_NtkCreateNode(pNtk);
+    Abc_ObjAddFanin(n1, n0);
+    Abc_ObjAddFanin(n1, pi1);
+    n1->pData = Abc_SopCreateAnd((Mem_Flex_t *)pNtk->pManFunc, 2, NULL);
+    Abc_Obj_t *po = Abc_NtkCreatePo(pNtk);
+    Abc_ObjAddFanin(po, n1);
+
+    fox::fmpart::AbcNtkWrapper g(pNtk);
+    ExpectEq("wrapper vertices", g.num_vertices(), 4);
+    ExpectEq("wrapper nets", g.num_nets(), 3);
+    int total_pins = 0;
+    for (int e = 0; e < g.num_nets(); ++e)
+        total_pins += (int)g.pins_of(e).size();
+    ExpectEq("wrapper pins", total_pins, 7);
+    ExpectTrue("vertex_to_obj works", g.vertex_to_obj(0) != nullptr);
+
+    fox::fmpart::Config cfg;
+    cfg.self_check = true;
+    fox::fmpart::FMPart<fox::fmpart::AbcNtkWrapper> fm(g, cfg);   // 第二个实例化（spec §6.1）
+    auto r = fm.run();
+    ExpectEq("wrapper fm self-check", r.self_check_failures, 0);
+    ExpectTrue("wrapper fm balanced", r.balanced);
+    ExpectEq("wrapper fm ref-free cut sane", r.cut >= 0 && r.cut <= 3 ? 1 : 0, 1);
+
+    Abc_NtkDelete(pNtk);
+}
+
 } // namespace
 
 int main()
 {
+    Abc_Start();
     TestBucketsBasic();
     TestBucketsFindTop();
     TestBucketsDegenerate();
@@ -447,6 +491,9 @@ int main()
     TestWeightedNets();
     TestWeightedVertices();
     TestRandomStress();
+    TestAbcWrapper();
     if (g_fail == 0) std::printf("all fmpart tests passed\n");
-    return g_fail == 0 ? 0 : 1;
+    const int result = g_fail == 0 ? 0 : 1;
+    Abc_Stop();
+    return result;
 }

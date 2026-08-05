@@ -52,6 +52,7 @@ add_subdirectory(pdecomp)
 add_subdirectory(pst)
 add_subdirectory(agdmap)
 add_subdirectory(curvemap)
+add_subdirectory(fmpart)
 
 add_compile_options(-fexceptions)
 
@@ -129,4 +130,4 @@ target_link_libraries(test_csr4 PRIVATE
 )
 
 add_executable(test_fmpart "test_fmpart.cpp")
-target_include_directories(test_fmpart PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(test_fmpart PRIVATE fmpart libabc timer)
