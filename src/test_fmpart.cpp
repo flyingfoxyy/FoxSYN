@@ -1,5 +1,7 @@
 #include <cstdint>
 #include <cstdio>
+#include <random>
+#include <set>
 #include <span>
 #include <vector>
 
@@ -264,6 +266,166 @@ void TestMonotonicPasses()
     ExpectEq("converged to optimum", prev_cut, 1);
 }
 
+void TestFixedPins()
+{
+    SimpleHypergraph g = TwoClusters();
+    std::vector<int8_t> fixed(8, -1);
+    fixed[0] = 1;                        // 逆着自然聚类方向钉
+    fixed[7] = 0;
+    fox::fmpart::Config cfg;
+    cfg.self_check = true;
+    fox::fmpart::FMPart<SimpleHypergraph> fm(g, cfg);
+    auto r = fm.run({}, fixed);
+    ExpectEq("fixed v0 stays", r.part[0], 1);
+    ExpectEq("fixed v7 stays", r.part[7], 0);
+    ExpectEq("fixed self-check clean", r.self_check_failures, 0);
+    ExpectTrue("fixed balanced", r.balanced);
+    ExpectEq("fixed optimal cut", r.cut, 1);     // 两团整体换边即可
+    ExpectEq("fixed ref agrees", RefCut(g, r.part), r.cut);
+}
+
+void TestOneSideAllFixed()
+{
+    // 起点全在 side0（不平衡），0..3 钉死：自由团 {4..7} 必须整体迁走。
+    // 这条同时验证平衡修复趟例外：第一趟 cum 为负（0 -> 1 条 cut），
+    // 但换来了 balanced，驱动循环不得在这里终止。
+    SimpleHypergraph g = TwoClusters();
+    const std::vector<uint8_t> init(8, 0);
+    const std::vector<int8_t> fixed = {0,0,0,0,-1,-1,-1,-1};
+    fox::fmpart::Config cfg;
+    cfg.self_check = true;
+    fox::fmpart::FMPart<SimpleHypergraph> fm(g, cfg);
+    auto r = fm.run(init, fixed);
+    ExpectEq("oneside self-check clean", r.self_check_failures, 0);
+    ExpectTrue("oneside balanced", r.balanced);
+    for (int v = 0; v < 4; ++v)
+        ExpectEq("oneside fixed intact", r.part[v], 0);
+    ExpectEq("oneside cut", r.cut, 1);
+    ExpectEq("oneside ref agrees", RefCut(g, r.part), r.cut);
+}
+
+void TestAllFixed()
+{
+    SimpleHypergraph g = TwoClusters();
+    const std::vector<uint8_t> init = {0,1,0,1,0,1,0,1};
+    const std::vector<int8_t> fixed = {0,1,0,1,0,1,0,1};
+    fox::fmpart::Config cfg;
+    cfg.self_check = true;
+    fox::fmpart::FMPart<SimpleHypergraph> fm(g, cfg);
+    auto r = fm.run(init, fixed);
+    ExpectEq("allfixed cut unchanged", r.cut, r.initial_cut);
+    ExpectEq("allfixed ref agrees", RefCut(g, r.part), r.cut);
+    ExpectTrue("allfixed terminates", r.passes >= 1);
+    for (int v = 0; v < 8; ++v)
+        ExpectEq("allfixed pinned", r.part[v], v % 2);
+    ExpectEq("allfixed self-check clean", r.self_check_failures, 0);
+}
+
+void TestInfeasibleFixed()
+{
+    // total 13, avg 6, max_weight 7；v0 (weight 10) 单独超重 -> 约束无解
+    SimpleHypergraph g;
+    g.nv = 4;
+    g.pins = {{0,1},{1,2},{2,3}};
+    g.vweights = {10, 1, 1, 1};
+    const std::vector<uint8_t> init = {0,0,0,0};
+    const std::vector<int8_t> fixed = {0,-1,-1,-1};
+    fox::fmpart::Config cfg;
+    cfg.self_check = true;
+    fox::fmpart::FMPart<SimpleHypergraph> fm(g, cfg);
+    auto r = fm.run(init, fixed);                 // 不死循环、不崩即通过大半
+    ExpectTrue("infeasible reports unbalanced", !r.balanced);
+    ExpectEq("infeasible self-check clean", r.self_check_failures, 0);
+    ExpectEq("infeasible ref agrees", RefCut(g, r.part), r.cut);
+}
+
+void TestWeightedNets()
+{
+    // 最优 {0,1}|{2,3}：只切两条轻 net（cut 2），重 net (5) 保持完整
+    SimpleHypergraph g;
+    g.nv = 4;
+    g.pins = {{0,1},{2,3},{0,2},{1,3}};
+    g.nweights = {5, 5, 1, 1};
+    const std::vector<uint8_t> init = {0,1,0,1};  // 起点切开两条重 net，cut 10
+    fox::fmpart::Config cfg;
+    cfg.self_check = true;
+    fox::fmpart::FMPart<SimpleHypergraph> fm(g, cfg);
+    auto r = fm.run(init);
+    ExpectEq("weighted nets cut", r.cut, 2);
+    ExpectEq("weighted nets self-check", r.self_check_failures, 0);
+    ExpectEq("weighted nets ref agrees", RefCut(g, r.part), r.cut);
+}
+
+void TestWeightedVertices()
+{
+    // total 8, avg 4, slack 1, max_weight 5：环 {0,1,2,3} 权重 6 放不进一侧，
+    // 必须切开环（2 条），{4,5} 保持一侧 -> 最优可行 cut 2
+    SimpleHypergraph g;
+    g.nv = 6;
+    g.pins = {{0,1},{1,2},{2,3},{0,3},{4,5}};
+    g.vweights = {3,1,1,1,1,1};
+    fox::fmpart::Config cfg;
+    cfg.self_check = true;
+    fox::fmpart::FMPart<SimpleHypergraph> fm(g, cfg);
+    ExpectEq("weighted max_weight", fm.max_weight(), 5);
+    auto r = fm.run();
+    ExpectTrue("weighted vertices balanced", r.balanced);
+    ExpectEq("weighted vertices cut", r.cut, 2);
+    ExpectEq("weighted vertices self-check", r.self_check_failures, 0);
+}
+
+SimpleHypergraph RandomHypergraph(std::mt19937 &rng)
+{
+    std::uniform_int_distribution<int> nvd(2, 40), ned(1, 80), pind(2, 5);
+    SimpleHypergraph g;
+    g.nv = nvd(rng);
+    const int ne = ned(rng);
+    std::uniform_int_distribution<int> vd(0, g.nv - 1);
+    for (int e = 0; e < ne; ++e) {
+        std::set<int> s;
+        const int k = std::min(pind(rng), g.nv);
+        while ((int)s.size() < k)
+            s.insert(vd(rng));
+        g.pins.emplace_back(s.begin(), s.end());
+    }
+    return g;
+}
+
+void TestRandomStress()
+{
+    // 种子写死，失败可复现（spec §6.4）
+    for (unsigned seed = 1; seed <= 20; ++seed) {
+        std::mt19937 rng(seed);
+        SimpleHypergraph g = RandomHypergraph(rng);
+        fox::fmpart::Config cfg;
+        cfg.self_check = true;
+        cfg.seed = seed;
+        fox::fmpart::FMPart<SimpleHypergraph> fm(g, cfg);
+        auto r = fm.run();
+        char label[64];
+        std::snprintf(label, sizeof label, "stress seed %u self-check", seed);
+        ExpectEq(label, r.self_check_failures, 0);
+        std::snprintf(label, sizeof label, "stress seed %u balanced", seed);
+        ExpectTrue(label, r.balanced);       // 全 1 权重下平衡总可行
+        std::snprintf(label, sizeof label, "stress seed %u ref cut", seed);
+        ExpectEq(label, RefCut(g, r.part), r.cut);
+
+        // 单趟续跑 3 次验证单调性
+        fox::fmpart::Config c1 = cfg;
+        c1.max_passes = 1;
+        fox::fmpart::FMPart<SimpleHypergraph> fm1(g, c1);
+        std::vector<uint8_t> cur = r.part;
+        int prev = r.cut;
+        for (int p = 0; p < 3; ++p) {
+            auto rr = fm1.run(cur);
+            std::snprintf(label, sizeof label, "stress seed %u monotonic", seed);
+            ExpectTrue(label, rr.cut <= prev);
+            prev = rr.cut;
+            cur = rr.part;
+        }
+    }
+}
+
 } // namespace
 
 int main()
@@ -278,6 +440,13 @@ int main()
     TestDegenerate();
     TestKnownOptimal();
     TestMonotonicPasses();
+    TestFixedPins();
+    TestOneSideAllFixed();
+    TestAllFixed();
+    TestInfeasibleFixed();
+    TestWeightedNets();
+    TestWeightedVertices();
+    TestRandomStress();
     if (g_fail == 0) std::printf("all fmpart tests passed\n");
     return g_fail == 0 ? 0 : 1;
 }
