@@ -772,6 +772,54 @@ void TestIntermediateCapRejected()
     ExpectEq("stuck at seed", (long)gr.report.member_ids.size(), 1);
     Abc_NtkDelete(p);
 }
+
+void TestRunHiveDedupAndConsistency()
+{
+    // Two seeds inside one tight 3-cluster grow to overlapping regions;
+    // dedup must keep one (spec 4.5). Cluster: sh->g1->g2->g3->PO.
+    Abc_Ntk_t *p = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    Abc_Obj_t *sh = Abc_NtkCreatePi(p);
+    Abc_Obj_t *g1 = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(g1, sh); SetAnd(g1);
+    Abc_Obj_t *g2 = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(g2, g1); SetAnd(g2);
+    Abc_Obj_t *g3 = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(g3, g2); SetAnd(g3);
+    Abc_Obj_t *po = Abc_NtkCreatePo(p); Abc_ObjAddFanin(po, g3);
+    fox::hive::Config cfg;
+    fox::hive::Result res = fox::hive::RunHive(p, cfg);
+    ExpectTrue("ok", res.ok);
+    ExpectEq("dedup to one region", (long)res.regions.size(), 1);
+
+    // report fields match an independent recompute
+    fox::hive::CombGraph g(p);
+    for (const fox::hive::RegionReport &rep : res.regions)
+    {
+        fox::hive::Region r(g);
+        r.init(rep.member_ids);
+        fox::hive::Metrics m = r.recompute(cfg.lut_k);
+        ExpectEq("rep n", rep.n, m.n);
+        ExpectEq("rep in", rep.in, m.in);
+        ExpectEq("rep out", rep.out, m.out);
+        ExpectEq("rep lb", rep.lb, m.lb);
+        ExpectNear("rep q", rep.q, m.q);
+        ExpectTrue("rep convex", fox::hive::IsConvexBrute(g, rep.member_ids));
+    }
+    Abc_NtkDelete(p);
+}
+
+void TestRunHiveSeedCapAndSort()
+{
+    // num_seeds=1 must still work; regions sorted Q-descending
+    Diamond d = BuildDiamond();
+    fox::hive::Config cfg;
+    cfg.num_seeds = 1;
+    fox::hive::Result res = fox::hive::RunHive(d.ntk, cfg);
+    ExpectTrue("ok with 1 seed", res.ok);
+    for (size_t i = 1; i < res.regions.size(); ++i)
+        ExpectTrue("q descending", res.regions[i - 1].q >= res.regions[i].q);
+    Abc_NtkDelete(d.ntk);
+}
 } // namespace
 
 int main()
@@ -799,6 +847,8 @@ int main()
     TestBestPrefix();
     TestTopLMissBaseline();
     TestIntermediateCapRejected();
+    TestRunHiveDedupAndConsistency();
+    TestRunHiveSeedCapAndSort();
     if (g_fail == 0) std::printf("all hive tests passed\n");
     const int result = g_fail == 0 ? 0 : 1;
     Abc_Stop();

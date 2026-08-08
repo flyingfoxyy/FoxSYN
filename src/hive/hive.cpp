@@ -154,13 +154,87 @@ GrowResult GrowFromSeed(const CombGraph &g, int rootId, const Config &cfg)
     return out;
 }
 
+namespace {
+
+int JaccardPct(const std::vector<int> &a, const std::vector<int> &b)
+{
+    // both sorted ascending
+    size_t i = 0, j = 0;
+    int inter = 0;
+    while (i < a.size() && j < b.size())
+    {
+        if (a[i] < b[j])
+            ++i;
+        else if (a[i] > b[j])
+            ++j;
+        else
+        {
+            ++inter;
+            ++i;
+            ++j;
+        }
+    }
+    const int uni = (int)a.size() + (int)b.size() - inter;
+    return uni > 0 ? (int)(100LL * inter / uni) : 0;
+}
+
+} // namespace
+
 Result RunHive(Abc_Ntk_t *pNtk, const Config &cfg)
 {
-    (void)cfg;
     Result res;
     if (!pNtk || !Abc_NtkIsLogic(pNtk))
         return res;
+    CombGraph g(pNtk);
+    if (!g.acyclic())
+    {
+        printf("hive: combinational loop detected\n");
+        return res;
+    }
     res.ok = true;
+    if (g.vertices().empty())
+        return res;   // no internal nodes: normal empty result (spec 6)
+
+    // seeds: MFFC size descending, ties by id, top num_seeds (spec 4.1)
+    std::vector<std::pair<int, int>> sized;   // (mffc_size, id)
+    sized.reserve(g.vertices().size());
+    for (int id : g.vertices())
+        // Abc_NodeMffcSize hardcodes Abc_ObjFanin0/Abc_ObjFanin1 (2-input AIG
+        // only); mapped LUTs can have any fanin count, so use
+        // Abc_NodeMffcLabel (generic Abc_ObjForEachFanin) with vNodes=NULL
+        // to get just the size, matching what GrowFromSeed's MFFC call does.
+        sized.push_back({Abc_NodeMffcLabel(Abc_NtkObj(pNtk, id), NULL), id});
+    std::sort(sized.begin(), sized.end(), [](const auto &a, const auto &b) {
+        return a.first != b.first ? a.first > b.first : a.second < b.second;
+    });
+    const int nseeds = cfg.num_seeds == 0
+                           ? (int)sized.size()
+                           : std::min<int>(cfg.num_seeds, (int)sized.size());
+
+    std::vector<RegionReport> cands;
+    for (int k = 0; k < nseeds; ++k)
+    {
+        GrowResult gr = GrowFromSeed(g, sized[k].second, cfg);
+        if (gr.has_region)
+            cands.push_back(std::move(gr.report));
+    }
+    std::sort(cands.begin(), cands.end(),
+              [](const RegionReport &a, const RegionReport &b) { return a.q > b.q; });
+
+    for (RegionReport &c : cands)
+    {
+        if ((int)res.regions.size() >= cfg.num_regions)
+            break;
+        bool dup = false;
+        for (const RegionReport &acc : res.regions)
+            if (JaccardPct(c.member_ids, acc.member_ids) > kJaccardPct)
+            {
+                dup = true;
+                break;
+            }
+        if (!dup)
+            res.regions.push_back(std::move(c));
+    }
     return res;
 }
 

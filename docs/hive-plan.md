@@ -2081,7 +2081,13 @@ Result RunHive(Abc_Ntk_t *pNtk, const Config &cfg)
     std::vector<std::pair<int, int>> sized;   // (mffc_size, id)
     sized.reserve(g.vertices().size());
     for (int id : g.vertices())
-        sized.push_back({Abc_NodeMffcSize(Abc_NtkObj(pNtk, id)), id});
+        // Abc_NodeMffcSize hardcodes Abc_ObjFanin0/Abc_ObjFanin1 (2-input AIG
+        // only, see abcRefs.c:48-59's commented-out Abc_NtkIsStrash assert);
+        // mapped LUTs can have any fanin count, so this crashes on a 1-fanin
+        // node. Use Abc_NodeMffcLabel (generic Abc_ObjForEachFanin) with
+        // vNodes=NULL for just the size instead -- same call GrowFromSeed's
+        // MFFC seeding already uses.
+        sized.push_back({Abc_NodeMffcLabel(Abc_NtkObj(pNtk, id), NULL), id});
     std::sort(sized.begin(), sized.end(), [](const auto &a, const auto &b) {
         return a.first != b.first ? a.first > b.first : a.second < b.second;
     });
