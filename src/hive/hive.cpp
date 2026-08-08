@@ -251,8 +251,53 @@ bool ApplyHive(Abc_Frame_t *pAbc, const Config &cfg)
         printf("hive: network must be logic (run if -K first)\n");
         return false;
     }
+
+    const int nNodes = Abc_NtkNodeNum(pNtk);
+    const int nSeeds = cfg.num_seeds == 0 ? nNodes : std::min(cfg.num_seeds, nNodes);
     Result res = RunHive(pNtk, cfg);
-    return res.ok;
+    if (!res.ok)
+        return false;
+
+    printf("hive: %d nodes, K=%d, %d seeds\n", nNodes, cfg.lut_k, nSeeds);
+    printf("hive: gap is against LB under model M1-M3 (structural-pin-preserving, LUT-only);\n");
+    printf("      it is NOT a lower bound for functional resynthesis -- see docs/hive-design.md 2.5\n");
+    if (res.regions.empty())
+    {
+        printf("hive: 0 regions\n");
+        return true;
+    }
+
+    printf("  #  root          N   in  out      Q    LB   gap  rank\n");
+    std::unordered_set<int> distinct;
+    for (size_t idx = 0; idx < res.regions.size(); ++idx)
+    {
+        const RegionReport &r = res.regions[idx];
+        printf("%3zu  %-12s %4d %4d %4d %6.2f %5d %5d  %d..%d\n",
+               idx, Abc_ObjName(Abc_NtkObj(pNtk, r.root_id)),
+               r.n, r.in, r.out, r.q, r.lb, r.gap, r.rank_min, r.rank_max);
+        distinct.insert(r.member_ids.begin(), r.member_ids.end());
+        if (cfg.verbose)
+        {
+            CombGraph g(pNtk);
+            Region reg(g);
+            reg.init(r.member_ids);
+            printf("     members:");
+            for (int id : r.member_ids)
+                printf(" %d", id);
+            printf("\n     in:");
+            for (int id : reg.in_objects())
+                printf(" %d", id);
+            printf("\n     out:");
+            for (int id : reg.out_members())
+                printf(" %d", id);
+            printf("\n");
+        }
+    }
+    printf("hive: %zu regions, %zu distinct nodes (%.1f%% of netlist), Q in [%.2f, %.2f]\n",
+           res.regions.size(), distinct.size(),
+           nNodes > 0 ? 100.0 * (double)distinct.size() / nNodes : 0.0,
+           res.regions.back().q, res.regions.front().q);
+    return true;
 }
 
 } // namespace fox::hive

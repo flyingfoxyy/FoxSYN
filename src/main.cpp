@@ -26,6 +26,7 @@
 #include "csr4/csr4.hpp"
 #include "pdecomp/pdecomp.hpp"
 #include "pst/pst.hpp"
+#include "hive/hive.hpp"
 #include "agdmap/AgdmapCommand.h"
 #include "curvemap/curvemap.h"
 
@@ -1172,6 +1173,80 @@ usage:
     return 1;
 }
 
+int Hive_Command(Abc_Frame_t *pAbc, int argc, char **argv)
+{
+    fox::hive::Config cfg;
+
+    if (argc > 1 && !strcmp(argv[1], "-h"))
+        goto usage;
+
+    for (int i = 1; i != argc; ++i)
+    {
+        if (argv[i][0] != '-')
+        {
+            std::cout << "hive: unexpected argument " << argv[i] << "\n";
+            goto usage;
+        }
+        const char arg = *(argv[i] + 1);
+        switch (arg)
+        {
+        case 'N':
+            if (i + 1 >= argc) { printf("hive: -N requires a number\n"); return 1; }
+            cfg.num_regions = std::atoi(argv[++i]);
+            if (cfg.num_regions < 1) { printf("hive: -N must be >= 1\n"); return 1; }
+            break;
+        case 'M':
+            if (i + 1 >= argc) { printf("hive: -M requires a number\n"); return 1; }
+            cfg.max_nodes = std::atoi(argv[++i]);
+            if (cfg.max_nodes < 1) { printf("hive: -M must be >= 1\n"); return 1; }
+            break;
+        case 'I':
+            if (i + 1 >= argc) { printf("hive: -I requires a number\n"); return 1; }
+            cfg.max_in = std::atoi(argv[++i]);
+            if (cfg.max_in < 1) { printf("hive: -I must be >= 1\n"); return 1; }
+            break;
+        case 'O':
+            if (i + 1 >= argc) { printf("hive: -O requires a number\n"); return 1; }
+            cfg.max_out = std::atoi(argv[++i]);
+            if (cfg.max_out < 1) { printf("hive: -O must be >= 1\n"); return 1; }
+            break;
+        case 'K':
+            if (i + 1 >= argc) { printf("hive: -K requires a number\n"); return 1; }
+            cfg.lut_k = std::atoi(argv[++i]);
+            if (cfg.lut_k < 2 || cfg.lut_k > 16) { printf("hive: -K must be 2-16\n"); return 1; }
+            break;
+        case 'S':
+            if (i + 1 >= argc) { printf("hive: -S requires a number\n"); return 1; }
+            cfg.num_seeds = std::atoi(argv[++i]);
+            if (cfg.num_seeds < 0) { printf("hive: -S must be >= 0\n"); return 1; }
+            break;
+        case 'v':
+            cfg.verbose = true;
+            break;
+        case 'h':
+            goto usage;
+        default:
+            std::cout << "hive: unknown argument -" << arg << "\n";
+            goto usage;
+        }
+    }
+
+    return fox::hive::ApplyHive(pAbc, cfg) ? 0 : 1;
+
+usage:
+    Abc_Print(-2, "usage: hive [-N num] [-M num] [-I num] [-O num] [-K num] [-S num] [-v]\n");
+    Abc_Print(-2, "\t           find dense low-boundary logic clusters (read-only report)\n");
+    Abc_Print(-2, "\t-N num  : number of regions to report (>=1) [default = 20]\n");
+    Abc_Print(-2, "\t-M num  : region node cap (>=1) [default = 64]\n");
+    Abc_Print(-2, "\t-I num  : region input cap (>=1) [default = 32]\n");
+    Abc_Print(-2, "\t-O num  : region output cap (>=1) [default = 8]\n");
+    Abc_Print(-2, "\t-K num  : LUT width for the lower bound (2-16) [default = 6]\n");
+    Abc_Print(-2, "\t-S num  : seed cap, 0 = all nodes [default = 2000]\n");
+    Abc_Print(-2, "\t-v      : print member and boundary object ids\n");
+    Abc_Print(-2, "\n");
+    return 1;
+}
+
 struct CmdRegister
 {
     CmdRegister()
@@ -1189,6 +1264,7 @@ struct CmdRegister
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "csr4", Csr4_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "pst", Pst_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "pdecomp", Pdecomp_Command, 1);
+        Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "hive", Hive_Command, 0);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FoxSYN", "curvemap", Curvemap_Command, 1);
         Cmd_CommandAdd(Abc_FrameGetGlobalFrame(), "FPGA mapping", "agdmap", Agdmap, 1);
     }
