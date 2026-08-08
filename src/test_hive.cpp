@@ -10,6 +10,7 @@
 #include "hive/hive.hpp"
 #include "hive/region.hpp"
 #include "hive/convex.hpp"
+#include "hive/hive_internal.hpp"
 
 namespace {
 
@@ -577,6 +578,200 @@ void TestClosureBudget()
     ExpectEq("ten violators", (long)wide.violators.size(), 10);
     Abc_NtkDelete(p);
 }
+
+void TestMffcSeedConvexOutOne()
+{
+    // Reconvergent MFFC: a -> pp -> {q1,q2} -> root; root drives PO and ext e.
+    // MFFC(root) = {root,q1,q2,pp}; must be convex with out == 1 (spec 4.1).
+    Abc_Ntk_t *p = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    Abc_Obj_t *a = Abc_NtkCreatePi(p);
+    Abc_Obj_t *pp = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(pp, a); SetAnd(pp);
+    Abc_Obj_t *q1 = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(q1, pp); SetAnd(q1);
+    Abc_Obj_t *q2 = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(q2, pp); SetAnd(q2);
+    Abc_Obj_t *root = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(root, q1); Abc_ObjAddFanin(root, q2); SetAnd(root);
+    Abc_Obj_t *e = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(e, root); SetAnd(e);
+    Abc_Obj_t *po1 = Abc_NtkCreatePo(p); Abc_ObjAddFanin(po1, root);
+    Abc_Obj_t *po2 = Abc_NtkCreatePo(p); Abc_ObjAddFanin(po2, e);
+    fox::hive::CombGraph g(p);
+
+    Vec_Ptr_t *vNodes = Vec_PtrAlloc(8);
+    Abc_NodeMffcLabel(root, vNodes);
+    std::vector<int> seed;
+    Abc_Obj_t *pObj;
+    int i;
+    Vec_PtrForEachEntry(Abc_Obj_t *, vNodes, pObj, i)
+        seed.push_back((int)Abc_ObjId(pObj));
+    Vec_PtrFree(vNodes);
+    ExpectEq("mffc size", (long)seed.size(), 4);
+    ExpectTrue("mffc convex", fox::hive::IsConvexBrute(g, seed));
+    fox::hive::Region r(g);
+    r.init(seed);
+    ExpectEq("mffc out==1", r.metrics(6).out, 1);
+    Abc_NtkDelete(p);
+}
+
+void TestSeedOverCapsSkipped()
+{
+    // in > Imax: one node with 33 PI fanins under default -I 32 (spec 4.1)
+    Abc_Ntk_t *p = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    Abc_Obj_t *n = Abc_NtkCreateNode(p);
+    for (int i = 0; i < 33; ++i)
+        Abc_ObjAddFanin(n, Abc_NtkCreatePi(p));
+    SetAnd(n);
+    Abc_Obj_t *po = Abc_NtkCreatePo(p); Abc_ObjAddFanin(po, n);
+    fox::hive::CombGraph g(p);
+    fox::hive::Config cfg;
+    fox::hive::GrowResult gr = fox::hive::GrowFromSeed(g, (int)Abc_ObjId(n), cfg);
+    ExpectTrue("oversized-in seed skipped", !gr.has_region);
+    Abc_NtkDelete(p);
+
+    // N > M: 6-node single-fanout chain, cfg.max_nodes = 4
+    p = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    Abc_Obj_t *prev = Abc_NtkCreatePi(p);
+    Abc_Obj_t *last = nullptr;
+    for (int i = 0; i < 6; ++i)
+    {
+        Abc_Obj_t *ni = Abc_NtkCreateNode(p);
+        Abc_ObjAddFanin(ni, prev); SetAnd(ni);
+        prev = ni;
+        last = ni;
+    }
+    po = Abc_NtkCreatePo(p); Abc_ObjAddFanin(po, last);
+    fox::hive::CombGraph g2(p);
+    fox::hive::Config small;
+    small.max_nodes = 4;
+    fox::hive::GrowResult gr2 = fox::hive::GrowFromSeed(g2, (int)Abc_ObjId(last), small);
+    ExpectTrue("oversized-N seed skipped", !gr2.has_region);
+    Abc_NtkDelete(p);
+}
+
+void TestBestPrefix()
+{
+    // c1 -> c2 (tight pair, Q=1.0), c2 -> j1,j2,j3 junk star, each j_i also
+    // reads a fresh PI and drives its own PO. Growth must keep moving into
+    // junk (feasible moves exist), Q declines; report = peak (spec 4.4).
+    Abc_Ntk_t *p = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    Abc_Obj_t *sh = Abc_NtkCreatePi(p);
+    Abc_Obj_t *c1 = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(c1, sh); SetAnd(c1);
+    Abc_Obj_t *c2 = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(c2, c1); SetAnd(c2);
+    for (int i = 0; i < 3; ++i)
+    {
+        Abc_Obj_t *ji = Abc_NtkCreateNode(p);
+        Abc_ObjAddFanin(ji, c2);
+        Abc_ObjAddFanin(ji, Abc_NtkCreatePi(p));
+        SetAnd(ji);
+        Abc_Obj_t *poi = Abc_NtkCreatePo(p);
+        Abc_ObjAddFanin(poi, ji);
+    }
+    fox::hive::CombGraph g(p);
+    fox::hive::Config cfg;
+    fox::hive::GrowResult gr = fox::hive::GrowFromSeed(g, (int)Abc_ObjId(c2), cfg);
+    ExpectTrue("has region", gr.has_region);
+    ExpectEq("peak members", (long)gr.report.member_ids.size(), 2);
+    ExpectNear("peak q = 1.0", gr.report.q, 1.0);
+    ExpectTrue("c1 in region", std::binary_search(gr.report.member_ids.begin(),
+               gr.report.member_ids.end(), (int)Abc_ObjId(c1)));
+    Abc_NtkDelete(p);
+}
+
+void TestTopLMissBaseline()
+{
+    // Regression baseline for spec 4.3's known loss: the best exact move is
+    // ranked 5th+ optimistically and never evaluated.
+    //   s: fanins sh(PI), d1..d4; fanouts x, e.
+    //   d_i: fanin p_i (fresh PI); fanouts s and PO_i  (2 fanouts => not in MFFC(s))
+    //   x: fanins s, k(fresh PI); fanout e.
+    //   e: fanins s, x; fanout PO_e.
+    // R={s}: in=5 {sh,d1..d4}, out=1 {s}, Q=1/6.
+    // optimistic: d_i -> 2/7; x -> 2/8; e -> 2/8.  top4 = the four decoys.
+    // exact e (closure pulls x): n=3, in=6 {sh,d1..4,k}, out=1 {e} -> 3/7 BEST.
+    // With cfg.max_nodes=3: step0 absorbs a decoy (2/7), step1 absorbs another
+    // (n=3, in: -d+p -> 5, out {s,d_i,d_j} = 3 -> 3/8), n==cap stops.
+    // Expected report: q = 0.375, e and x never members.
+    Abc_Ntk_t *p = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    Abc_Obj_t *sh = Abc_NtkCreatePi(p);
+    Abc_Obj_t *s = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(s, sh);
+    std::vector<Abc_Obj_t *> decoys;
+    for (int i = 0; i < 4; ++i)
+    {
+        Abc_Obj_t *di = Abc_NtkCreateNode(p);
+        Abc_ObjAddFanin(di, Abc_NtkCreatePi(p)); SetAnd(di);
+        Abc_ObjAddFanin(s, di);
+        Abc_Obj_t *poi = Abc_NtkCreatePo(p);
+        Abc_ObjAddFanin(poi, di);
+        decoys.push_back(di);
+    }
+    SetAnd(s);
+    Abc_Obj_t *x = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(x, s); Abc_ObjAddFanin(x, Abc_NtkCreatePi(p)); SetAnd(x);
+    Abc_Obj_t *e = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(e, s); Abc_ObjAddFanin(e, x); SetAnd(e);
+    Abc_Obj_t *poe = Abc_NtkCreatePo(p); Abc_ObjAddFanin(poe, e);
+
+    fox::hive::CombGraph g(p);
+    // manual: the e-move's exact value, via the same Region/Closure APIs
+    fox::hive::Region manual(g);
+    manual.init({(int)Abc_ObjId(s)});
+    fox::hive::ClosureResult cl = fox::hive::ComputeClosure(
+        g, manual, {(int)Abc_ObjId(e)}, fox::hive::kClosureBudget);
+    ExpectTrue("manual closure ok", cl.ok);
+    ExpectEq("manual closure pulls x", (long)cl.violators.size(), 1);
+    manual.add((int)Abc_ObjId(e));
+    for (int v : cl.violators)
+        manual.add(v);
+    const double manualQ = manual.metrics(6).q;   // 3/7
+
+    fox::hive::Config cfg;
+    cfg.max_nodes = 3;
+    fox::hive::GrowResult gr = fox::hive::GrowFromSeed(g, (int)Abc_ObjId(s), cfg);
+    ExpectTrue("has region", gr.has_region);
+    ExpectNear("greedy q = 3/8", gr.report.q, 0.375);
+    ExpectTrue("greedy misses the better move", gr.report.q < manualQ);
+    ExpectTrue("e not in members", !std::binary_search(gr.report.member_ids.begin(),
+               gr.report.member_ids.end(), (int)Abc_ObjId(e)));
+    ExpectTrue("x not in members", !std::binary_search(gr.report.member_ids.begin(),
+               gr.report.member_ids.end(), (int)Abc_ObjId(x)));
+    Abc_NtkDelete(p);
+}
+
+void TestIntermediateCapRejected()
+{
+    // Baseline for spec 4.4: a move that transiently exceeds Imax is rejected
+    // even though later absorptions could shrink the boundary again.
+    // seed {m}: two vertex drivers u1,u2 (each 2 fresh-PI fanins, each also
+    // drives a PO so it stays out of MFFC(m)). cfg.max_in = 2.
+    // Absorbing u1: in = 2 - 1 + 2 = 3 > 2 -> infeasible; same for u2.
+    Abc_Ntk_t *p = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    std::vector<Abc_Obj_t *> us;
+    for (int i = 0; i < 2; ++i)
+    {
+        Abc_Obj_t *ui = Abc_NtkCreateNode(p);
+        Abc_ObjAddFanin(ui, Abc_NtkCreatePi(p));
+        Abc_ObjAddFanin(ui, Abc_NtkCreatePi(p));
+        SetAnd(ui);
+        Abc_Obj_t *poi = Abc_NtkCreatePo(p);
+        Abc_ObjAddFanin(poi, ui);
+        us.push_back(ui);
+    }
+    Abc_Obj_t *m = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(m, us[0]); Abc_ObjAddFanin(m, us[1]); SetAnd(m);
+    Abc_Obj_t *po = Abc_NtkCreatePo(p); Abc_ObjAddFanin(po, m);
+    fox::hive::CombGraph g(p);
+    fox::hive::Config cfg;
+    cfg.max_in = 2;
+    fox::hive::GrowResult gr = fox::hive::GrowFromSeed(g, (int)Abc_ObjId(m), cfg);
+    ExpectTrue("has region", gr.has_region);
+    ExpectEq("stuck at seed", (long)gr.report.member_ids.size(), 1);
+    Abc_NtkDelete(p);
+}
 } // namespace
 
 int main()
@@ -599,6 +794,11 @@ int main()
     TestClosureChainedAndMultiPair();
     TestClosureLatchNotViolation();
     TestClosureBudget();
+    TestMffcSeedConvexOutOne();
+    TestSeedOverCapsSkipped();
+    TestBestPrefix();
+    TestTopLMissBaseline();
+    TestIntermediateCapRejected();
     if (g_fail == 0) std::printf("all hive tests passed\n");
     const int result = g_fail == 0 ? 0 : 1;
     Abc_Stop();
