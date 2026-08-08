@@ -53,6 +53,7 @@ add_subdirectory(pst)
 add_subdirectory(agdmap)
 add_subdirectory(curvemap)
 add_subdirectory(fmpart)
+add_subdirectory(hive)
 
 add_compile_options(-fexceptions)
 
@@ -66,6 +67,7 @@ target_link_libraries(FoxSYN PRIVATE
     partsyn
     hpart
     fmpart
+    hive
     timer
     cpr
     cmfs
@@ -132,3 +134,6 @@ target_link_libraries(test_csr4 PRIVATE
 
 add_executable(test_fmpart "test_fmpart.cpp")
 target_link_libraries(test_fmpart PRIVATE fmpart libabc timer)
+
+add_executable(test_hive "test_hive.cpp")
+target_link_libraries(test_hive PRIVATE hive libabc timer)
