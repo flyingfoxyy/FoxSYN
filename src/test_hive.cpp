@@ -773,6 +773,19 @@ void TestIntermediateCapRejected()
     Abc_NtkDelete(p);
 }
 
+void TestRunHiveSeedCapAndSort()
+{
+    // num_seeds=1 must still work; regions sorted Q-descending
+    Diamond d = BuildDiamond();
+    fox::hive::Config cfg;
+    cfg.num_seeds = 1;
+    fox::hive::Result res = fox::hive::RunHive(d.ntk, cfg);
+    ExpectTrue("ok with 1 seed", res.ok);
+    for (size_t i = 1; i < res.regions.size(); ++i)
+        ExpectTrue("q descending", res.regions[i - 1].q >= res.regions[i].q);
+    Abc_NtkDelete(d.ntk);
+}
+
 void TestRunHiveDedupAndConsistency()
 {
     // Two seeds inside one tight 3-cluster grow to overlapping regions;
@@ -808,23 +821,122 @@ void TestRunHiveDedupAndConsistency()
     Abc_NtkDelete(p);
 }
 
-void TestRunHiveSeedCapAndSort()
+struct ObjSnapshot {
+    unsigned type;
+    int nFanins, nFanouts;
+    unsigned level;
+    std::vector<int> fanins;
+};
+
+std::vector<ObjSnapshot> SnapshotNtk(Abc_Ntk_t *pNtk)
 {
-    // num_seeds=1 must still work; regions sorted Q-descending
-    Diamond d = BuildDiamond();
+    std::vector<ObjSnapshot> snap(Abc_NtkObjNumMax(pNtk));
+    Abc_Obj_t *pObj;
+    int i;
+    Abc_NtkForEachObj(pNtk, pObj, i)
+    {
+        ObjSnapshot &s = snap[i];
+        s.type = pObj->Type;
+        s.nFanins = Abc_ObjFaninNum(pObj);
+        s.nFanouts = Abc_ObjFanoutNum(pObj);
+        s.level = pObj->Level;
+        Abc_Obj_t *pFanin;
+        int k;
+        Abc_ObjForEachFanin(pObj, pFanin, k)
+            s.fanins.push_back((int)Abc_ObjId(pFanin));
+    }
+    return snap;
+}
+
+int RunCircuitFile(const char *path)
+{
+    Abc_Ntk_t *pRead = Io_Read((char *)path, Io_ReadFileType((char *)path), 1, 0);
+    if (!pRead)
+    {
+        std::fprintf(stderr, "FAIL cannot read %s\n", path);
+        return ++g_fail, 1;
+    }
+    Abc_Ntk_t *pNtk = Abc_NtkIsNetlist(pRead) ? Abc_NtkToLogic(pRead) : pRead;
+    if (pNtk != pRead)
+        Abc_NtkDelete(pRead);
+
+    std::vector<ObjSnapshot> before = SnapshotNtk(pNtk);
     fox::hive::Config cfg;
-    cfg.num_seeds = 1;
-    fox::hive::Result res = fox::hive::RunHive(d.ntk, cfg);
-    ExpectTrue("ok with 1 seed", res.ok);
-    for (size_t i = 1; i < res.regions.size(); ++i)
-        ExpectTrue("q descending", res.regions[i - 1].q >= res.regions[i].q);
-    Abc_NtkDelete(d.ntk);
+    fox::hive::Result res = fox::hive::RunHive(pNtk, cfg);
+    ExpectTrue("integration ok", res.ok);
+
+    fox::hive::CombGraph g(pNtk);
+    for (size_t a = 0; a < res.regions.size(); ++a)
+    {
+        const fox::hive::RegionReport &r = res.regions[a];
+        ExpectTrue("convex (brute)", fox::hive::IsConvexBrute(g, r.member_ids));
+        ExpectTrue("cap N", r.n <= cfg.max_nodes);
+        ExpectTrue("cap in", r.in <= cfg.max_in);
+        ExpectTrue("cap out", r.out <= cfg.max_out);
+        ExpectTrue("lb <= n", r.lb <= r.n);
+        for (int id : r.member_ids)
+        {
+            Abc_Obj_t *pObj = Abc_NtkObj(pNtk, id);
+            ExpectTrue("member is node", pObj && Abc_ObjIsNode(pObj));
+        }
+        fox::hive::Region reg(g);
+        reg.init(r.member_ids);
+        fox::hive::Metrics m = reg.recompute(cfg.lut_k);
+        ExpectEq("int n", r.n, m.n);
+        ExpectEq("int in", r.in, m.in);
+        ExpectEq("int out", r.out, m.out);
+        ExpectEq("int lb", r.lb, m.lb);
+        ExpectEq("int rank_min", r.rank_min, m.rank_min);
+        ExpectEq("int rank_max", r.rank_max, m.rank_max);
+        ExpectNear("int q", r.q, m.q);
+        for (size_t b = 0; b < a; ++b)
+        {
+            // reuse the same two-pointer Jaccard the library uses, inline here
+            const std::vector<int> &x = r.member_ids;
+            const std::vector<int> &y = res.regions[b].member_ids;
+            size_t ii = 0, jj = 0;
+            int inter = 0;
+            while (ii < x.size() && jj < y.size())
+            {
+                if (x[ii] < y[jj]) ++ii;
+                else if (x[ii] > y[jj]) ++jj;
+                else { ++inter; ++ii; ++jj; }
+            }
+            const int uni = (int)x.size() + (int)y.size() - inter;
+            ExpectTrue("pairwise jaccard <= threshold",
+                       uni == 0 || 100LL * inter / uni <= fox::hive::kJaccardPct);
+        }
+    }
+
+    // read-only: structure and Level unchanged object-by-object
+    std::vector<ObjSnapshot> after = SnapshotNtk(pNtk);
+    ExpectEq("obj count unchanged", (long)after.size(), (long)before.size());
+    for (size_t i = 0; i < before.size() && i < after.size(); ++i)
+    {
+        ExpectTrue("type unchanged", before[i].type == after[i].type);
+        ExpectTrue("fanins unchanged", before[i].fanins == after[i].fanins);
+        ExpectEq("fanout count restored", after[i].nFanouts, before[i].nFanouts);
+        ExpectTrue("Level unchanged", before[i].level == after[i].level);
+    }
+
+    std::printf("integration %s: %zu regions\n", path, res.regions.size());
+    Abc_NtkDelete(pNtk);
+    return 0;
 }
 } // namespace
 
-int main()
+int main(int argc, char **argv)
 {
     Abc_Start();
+    if (argc > 1) {
+        for (int i = 1; i < argc; ++i)
+            RunCircuitFile(argv[i]);
+        const int r = g_fail == 0 ? 0 : 1;
+        if (g_fail == 0) std::printf("all hive integration checks passed\n");
+        Abc_Stop();
+        return r;
+    }
+    // when argc == 1, run all 24 existing unit tests exactly as before (no loss)
     TestConfigDefaults();
     TestRunHivePreconditions();
     TestCombGraphDiamond();
