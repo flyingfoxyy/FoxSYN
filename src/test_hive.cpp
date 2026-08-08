@@ -9,6 +9,7 @@
 #include "base/io/ioAbc.h"
 #include "hive/hive.hpp"
 #include "hive/region.hpp"
+#include "hive/convex.hpp"
 
 namespace {
 
@@ -444,6 +445,138 @@ void TestLbHandVerifiedOptimal()
     }
     Abc_NtkDelete(d.ntk);
 }
+
+struct Reconv {
+    Abc_Ntk_t *ntk;
+    Abc_Obj_t *r1, *v, *r2;
+};
+
+Reconv BuildReconv()
+{
+    Reconv c;
+    c.ntk = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    Abc_Obj_t *a = Abc_NtkCreatePi(c.ntk);
+    c.r1 = Abc_NtkCreateNode(c.ntk);
+    Abc_ObjAddFanin(c.r1, a); SetAnd(c.r1);
+    c.v = Abc_NtkCreateNode(c.ntk);
+    Abc_ObjAddFanin(c.v, c.r1); SetAnd(c.v);
+    c.r2 = Abc_NtkCreateNode(c.ntk);
+    Abc_ObjAddFanin(c.r2, c.r1); Abc_ObjAddFanin(c.r2, c.v); SetAnd(c.r2);
+    Abc_Obj_t *po = Abc_NtkCreatePo(c.ntk);
+    Abc_ObjAddFanin(po, c.r2);
+    return c;
+}
+
+void TestClosureSimple()
+{
+    Reconv c = BuildReconv();
+    fox::hive::CombGraph g(c.ntk);
+    fox::hive::Region r(g);
+    r.init({(int)Abc_ObjId(c.r1), (int)Abc_ObjId(c.r2)});
+    ExpectTrue("nonconvex detected by brute",
+               !fox::hive::IsConvexBrute(g, r.member_ids()));
+    fox::hive::ClosureResult cl =
+        fox::hive::ComputeClosure(g, r, {}, fox::hive::kClosureBudget);
+    ExpectTrue("closure ok", cl.ok);
+    ExpectEq("one violator", (long)cl.violators.size(), 1);
+    ExpectEq("violator is v", cl.violators[0], (long)Abc_ObjId(c.v));
+    r.add((int)Abc_ObjId(c.v));
+    ExpectTrue("convex after absorb", fox::hive::IsConvexBrute(g, r.member_ids()));
+    fox::hive::ClosureResult cl2 =
+        fox::hive::ComputeClosure(g, r, {}, fox::hive::kClosureBudget);
+    ExpectTrue("second closure ok", cl2.ok);
+    ExpectEq("second closure no-op", (long)cl2.violators.size(), 0);  // spec 3.2
+    Abc_NtkDelete(c.ntk);
+}
+
+void TestClosureChainedAndMultiPair()
+{
+    // r1 -> w1 -> w2 -> r2, r1 -> r2, and r2 -> y -> r3, r2 -> r3:
+    // members {r1,r2,r3}, violators {w1,w2,y} in ONE pass (spec 3.2).
+    Abc_Ntk_t *p = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    Abc_Obj_t *a = Abc_NtkCreatePi(p);
+    Abc_Obj_t *r1 = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(r1, a); SetAnd(r1);
+    Abc_Obj_t *w1 = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(w1, r1); SetAnd(w1);
+    Abc_Obj_t *w2 = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(w2, w1); SetAnd(w2);
+    Abc_Obj_t *r2 = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(r2, r1); Abc_ObjAddFanin(r2, w2); SetAnd(r2);
+    Abc_Obj_t *y = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(y, r2); SetAnd(y);
+    Abc_Obj_t *r3 = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(r3, r2); Abc_ObjAddFanin(r3, y); SetAnd(r3);
+    Abc_Obj_t *po = Abc_NtkCreatePo(p); Abc_ObjAddFanin(po, r3);
+    fox::hive::CombGraph g(p);
+    fox::hive::Region r(g);
+    r.init({(int)Abc_ObjId(r1), (int)Abc_ObjId(r2), (int)Abc_ObjId(r3)});
+    fox::hive::ClosureResult cl =
+        fox::hive::ComputeClosure(g, r, {}, fox::hive::kClosureBudget);
+    ExpectTrue("chained ok", cl.ok);
+    ExpectEq("three violators", (long)cl.violators.size(), 3);
+    // one pass == repeated pass == brute hull
+    fox::hive::Region r2x(g);
+    std::vector<int> hull = r.member_ids();
+    hull.insert(hull.end(), cl.violators.begin(), cl.violators.end());
+    r2x.init(hull);
+    ExpectTrue("hull convex (brute)", fox::hive::IsConvexBrute(g, r2x.member_ids()));
+    fox::hive::ClosureResult again =
+        fox::hive::ComputeClosure(g, r2x, {}, fox::hive::kClosureBudget);
+    ExpectTrue("hull fixpoint", again.ok && again.violators.empty());
+    Abc_NtkDelete(p);
+}
+
+void TestClosureLatchNotViolation()
+{
+    // r1 -> [latch] -> r2: no combinational path, absorbing both is convex.
+    Abc_Ntk_t *p = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    Abc_Obj_t *a = Abc_NtkCreatePi(p);
+    Abc_Obj_t *r1 = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(r1, a); SetAnd(r1);
+    Abc_Obj_t *bo = Abc_NtkAddLatch(p, r1, ABC_INIT_ZERO);
+    Abc_Obj_t *r2 = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(r2, bo); SetAnd(r2);
+    Abc_Obj_t *po = Abc_NtkCreatePo(p); Abc_ObjAddFanin(po, r2);
+    fox::hive::CombGraph g(p);
+    fox::hive::Region r(g);
+    r.init({(int)Abc_ObjId(r1), (int)Abc_ObjId(r2)});
+    fox::hive::ClosureResult cl =
+        fox::hive::ComputeClosure(g, r, {}, fox::hive::kClosureBudget);
+    ExpectTrue("latch path ok", cl.ok);
+    ExpectEq("latch path no violators", (long)cl.violators.size(), 0);
+    ExpectTrue("latch path convex (brute)", fox::hive::IsConvexBrute(g, r.member_ids()));
+    Abc_NtkDelete(p);
+}
+
+void TestClosureBudget()
+{
+    // r1 -> c1..c10 -> r2 plus r1 -> r2: 10 violators; budget 3 -> rejected.
+    Abc_Ntk_t *p = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    Abc_Obj_t *a = Abc_NtkCreatePi(p);
+    Abc_Obj_t *r1 = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(r1, a); SetAnd(r1);
+    Abc_Obj_t *prev = r1;
+    for (int i = 0; i < 10; ++i)
+    {
+        Abc_Obj_t *ci = Abc_NtkCreateNode(p);
+        Abc_ObjAddFanin(ci, prev); SetAnd(ci);
+        prev = ci;
+    }
+    Abc_Obj_t *r2 = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(r2, r1); Abc_ObjAddFanin(r2, prev); SetAnd(r2);
+    Abc_Obj_t *po = Abc_NtkCreatePo(p); Abc_ObjAddFanin(po, r2);
+    fox::hive::CombGraph g(p);
+    fox::hive::Region r(g);
+    r.init({(int)Abc_ObjId(r1), (int)Abc_ObjId(r2)});
+    fox::hive::ClosureResult tight = fox::hive::ComputeClosure(g, r, {}, 3);
+    ExpectTrue("budget exceeded -> not ok", !tight.ok);
+    fox::hive::ClosureResult wide =
+        fox::hive::ComputeClosure(g, r, {}, fox::hive::kClosureBudget);
+    ExpectTrue("wide ok", wide.ok);
+    ExpectEq("ten violators", (long)wide.violators.size(), 10);
+    Abc_NtkDelete(p);
+}
 } // namespace
 
 int main()
@@ -462,6 +595,10 @@ int main()
     TestLbEdgeCases();
     TestLbFunctionalCounterexample();
     TestLbHandVerifiedOptimal();
+    TestClosureSimple();
+    TestClosureChainedAndMultiPair();
+    TestClosureLatchNotViolation();
+    TestClosureBudget();
     if (g_fail == 0) std::printf("all hive tests passed\n");
     const int result = g_fail == 0 ? 0 : 1;
     Abc_Stop();
