@@ -8,7 +8,7 @@
 #include "base/abc/abc.h"
 #include "base/io/ioAbc.h"
 #include "hive/hive.hpp"
-#include "hive/hive_graph.hpp"
+#include "hive/region.hpp"
 
 namespace {
 
@@ -200,6 +200,78 @@ void TestCombGraphBufferRankAndConst()
     Abc_NtkDelete(p);
 }
 
+void TestRegionBoundary()
+{
+    Diamond d = BuildDiamond();
+    fox::hive::CombGraph g(d.ntk);
+    fox::hive::Region r(g);
+    // {n2,n3,n4}: in = {n1} (n1 drives two members but counts once, spec 2.2)
+    r.init({(int)Abc_ObjId(d.n2), (int)Abc_ObjId(d.n3), (int)Abc_ObjId(d.n4)});
+    fox::hive::Metrics m = r.metrics(6);
+    ExpectEq("in dedup by driver", m.in, 1);
+    ExpectEq("out = n4 (drives PO)", m.out, 1);
+    ExpectEq("n", m.n, 3);
+    ExpectNear("q = 3/2", m.q, 1.5);
+    // mixed fanout: {n1,n2}: n1 out (n3 external); absorb n3 -> n1 leaves out
+    fox::hive::Region r2(g);
+    r2.init({(int)Abc_ObjId(d.n1), (int)Abc_ObjId(d.n2)});
+    ExpectEq("n1+n2 out", r2.metrics(6).out, 2);   // n1 (n3 ext), n2 (n4 ext)
+    r2.add((int)Abc_ObjId(d.n3));
+    ExpectEq("after n3: out", r2.metrics(6).out, 2); // n1 internal now; n2,n3 -> n4 ext
+    r2.add((int)Abc_ObjId(d.n4));
+    ExpectEq("after n4: out", r2.metrics(6).out, 1); // only n4 (PO)
+    ExpectEq("after n4: in", r2.metrics(6).in, 2);   // a, b
+    Abc_NtkDelete(d.ntk);
+}
+
+void TestRegionConst1Ordinary()
+{
+    // const1 external: counts in `in` and is an entrance candidate (spec 2.1)
+    Abc_Ntk_t *p = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    Abc_Obj_t *a = Abc_NtkCreatePi(p);
+    Abc_Obj_t *c = Abc_NtkCreateNodeConst1(p);
+    Abc_Obj_t *n = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(n, a); Abc_ObjAddFanin(n, c); SetAnd(n);
+    Abc_Obj_t *po = Abc_NtkCreatePo(p); Abc_ObjAddFanin(po, n);
+    fox::hive::CombGraph g(p);
+    fox::hive::Region r(g);
+    r.init({(int)Abc_ObjId(n)});
+    ExpectEq("const1 in `in`", r.metrics(6).in, 2);
+    std::vector<int> cands = r.entrance_candidates();
+    ExpectEq("const1 is the only entrance candidate", (long)cands.size(), 1);
+    ExpectEq("candidate is const1", cands[0], (long)Abc_ObjId(c));
+    r.add((int)Abc_ObjId(c));
+    ExpectEq("absorbed: in", r.metrics(6).in, 1);
+    ExpectEq("absorbed: n", r.metrics(6).n, 2);
+    Abc_NtkDelete(p);
+}
+
+void TestRegionIncrementalVsRecompute()
+{
+    Diamond d = BuildDiamond();
+    fox::hive::CombGraph g(d.ntk);
+    fox::hive::Region r(g);
+    r.init({(int)Abc_ObjId(d.n1)});
+    // deterministic walk: repeatedly absorb the smallest-id vertex neighbor
+    for (int step = 0; step < 3; ++step)
+    {
+        std::vector<int> cands = r.entrance_candidates();
+        for (int om : r.out_members())
+            for (int s : g.succs(om))
+                if (!r.contains(s))
+                    cands.push_back(s);
+        std::sort(cands.begin(), cands.end());
+        cands.erase(std::unique(cands.begin(), cands.end()), cands.end());
+        if (cands.empty()) break;
+        r.add(cands[0]);
+        fox::hive::Metrics a = r.metrics(6), b = r.recompute(6);
+        ExpectEq("inc n == recompute n", a.n, b.n);
+        ExpectEq("inc in == recompute in", a.in, b.in);
+        ExpectEq("inc out == recompute out", a.out, b.out);
+        ExpectNear("inc q == recompute q", a.q, b.q);
+    }
+    Abc_NtkDelete(d.ntk);
+}
 } // namespace
 
 int main()
@@ -211,6 +283,9 @@ int main()
     TestCombGraphDedup();
     TestCombGraphLatch();
     TestCombGraphBufferRankAndConst();
+    TestRegionBoundary();
+    TestRegionConst1Ordinary();
+    TestRegionIncrementalVsRecompute();
     if (g_fail == 0) std::printf("all hive tests passed\n");
     const int result = g_fail == 0 ? 0 : 1;
     Abc_Stop();
