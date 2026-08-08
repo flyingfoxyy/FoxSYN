@@ -272,6 +272,178 @@ void TestRegionIncrementalVsRecompute()
     }
     Abc_NtkDelete(d.ntk);
 }
+
+void TestLbThreeTerms()
+{
+    // Term 1 wins: 3 parallel PI->node->PO columns; in=3 out=3, K=6 -> LB=3
+    Abc_Ntk_t *p = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    std::vector<int> ids;
+    for (int i = 0; i < 3; ++i)
+    {
+        Abc_Obj_t *pi = Abc_NtkCreatePi(p);
+        Abc_Obj_t *n = Abc_NtkCreateNode(p);
+        Abc_ObjAddFanin(n, pi); SetAnd(n);
+        Abc_Obj_t *po = Abc_NtkCreatePo(p); Abc_ObjAddFanin(po, n);
+        ids.push_back((int)Abc_ObjId(n));
+    }
+    {
+        fox::hive::CombGraph g(p);
+        fox::hive::Region r(g);
+        r.init(ids);
+        ExpectEq("term1 lb", r.metrics(6).lb, 3);
+        ExpectEq("term1 gap", r.metrics(6).gap, 0);
+    }
+    Abc_NtkDelete(p);
+
+    // Term 2 wins: j1(6 fresh PIs), j2(6 other fresh PIs), both -> PO. K=4:
+    // in=12 out=2: t1=2, t2=ceil(10/3)=4, t3=ceil(5/3)=2 -> LB=4
+    p = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    ids.clear();
+    for (int j = 0; j < 2; ++j)
+    {
+        Abc_Obj_t *n = Abc_NtkCreateNode(p);
+        for (int i = 0; i < 6; ++i)
+            Abc_ObjAddFanin(n, Abc_NtkCreatePi(p));
+        SetAnd(n);
+        Abc_Obj_t *po = Abc_NtkCreatePo(p); Abc_ObjAddFanin(po, n);
+        ids.push_back((int)Abc_ObjId(n));
+    }
+    {
+        fox::hive::CombGraph g(p);
+        fox::hive::Region r(g);
+        r.init(ids);
+        ExpectEq("term2 lb", r.metrics(4).lb, 4);
+    }
+    Abc_NtkDelete(p);
+
+    // Term 3 wins: o1,o2 both read the same 6 PIs, both -> PO. K=3:
+    // in=6 out=2: t1=2, t2=ceil(4/2)=2, t3=ceil(5/2)=3 -> LB=3
+    p = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    ids.clear();
+    std::vector<Abc_Obj_t *> pis;
+    for (int i = 0; i < 6; ++i)
+        pis.push_back(Abc_NtkCreatePi(p));
+    for (int j = 0; j < 2; ++j)
+    {
+        Abc_Obj_t *n = Abc_NtkCreateNode(p);
+        for (Abc_Obj_t *pi : pis)
+            Abc_ObjAddFanin(n, pi);
+        SetAnd(n);
+        Abc_Obj_t *po = Abc_NtkCreatePo(p); Abc_ObjAddFanin(po, n);
+        ids.push_back((int)Abc_ObjId(n));
+    }
+    {
+        fox::hive::CombGraph g(p);
+        fox::hive::Region r(g);
+        r.init(ids);
+        ExpectEq("term3 lb", r.metrics(3).lb, 3);
+    }
+    Abc_NtkDelete(p);
+}
+
+void TestLbEdgeCases()
+{
+    // (in - out) <= 0 -> term2 is 0, no negative ceiling: p1,p2 both read one
+    // PI, both -> PO: in=1 out=2 -> LB = max(2, 0, 0) = 2
+    Abc_Ntk_t *p = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    Abc_Obj_t *a = Abc_NtkCreatePi(p);
+    std::vector<int> ids;
+    for (int j = 0; j < 2; ++j)
+    {
+        Abc_Obj_t *n = Abc_NtkCreateNode(p);
+        Abc_ObjAddFanin(n, a); SetAnd(n);
+        Abc_Obj_t *po = Abc_NtkCreatePo(p); Abc_ObjAddFanin(po, n);
+        ids.push_back((int)Abc_ObjId(n));
+    }
+    {
+        fox::hive::CombGraph g(p);
+        fox::hive::Region r(g);
+        r.init(ids);
+        ExpectEq("in<out lb", r.metrics(6).lb, 2);
+    }
+    Abc_NtkDelete(p);
+
+    // out = 0 (dead region): u1(PI)->u2, u2 no fanout. in=1 out=0:
+    // LB = max(0, ceil(1/5)=1, 0 since no outputs) = 1
+    p = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    Abc_Obj_t *b = Abc_NtkCreatePi(p);
+    Abc_Obj_t *u1 = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(u1, b); SetAnd(u1);
+    Abc_Obj_t *u2 = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(u2, u1); SetAnd(u2);
+    {
+        fox::hive::CombGraph g(p);
+        fox::hive::Region r(g);
+        r.init({(int)Abc_ObjId(u1), (int)Abc_ObjId(u2)});
+        ExpectEq("dead out", r.metrics(6).out, 0);
+        ExpectEq("dead lb", r.metrics(6).lb, 1);
+    }
+    Abc_NtkDelete(p);
+}
+
+void TestLbFunctionalCounterexample()
+{
+    // Executable documentation of spec 2.5 limitation 1: LB is NOT a lower
+    // bound for functional resynthesis. x = LUT(a,b) ignoring b (SOP "1- 1"),
+    // y = LUT(x,c) ignoring c. Structurally in=3 out=1 supp=3, K=2 ->
+    // LB = max(1, ceil(2/1), ceil(2/1)) = 2, yet the region computes just `a`
+    // (one LUT, even a wire). Do NOT reintroduce a gap<=0 exclusion rule.
+    Abc_Ntk_t *p = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    auto *pMan = static_cast<Mem_Flex_t *>(p->pManFunc);
+    Abc_Obj_t *a = Abc_NtkCreatePi(p);
+    Abc_Obj_t *b = Abc_NtkCreatePi(p);
+    Abc_Obj_t *c = Abc_NtkCreatePi(p);
+    Abc_Obj_t *x = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(x, a); Abc_ObjAddFanin(x, b);
+    x->pData = Abc_SopRegister(pMan, "1- 1\n");
+    Abc_Obj_t *y = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(y, x); Abc_ObjAddFanin(y, c);
+    y->pData = Abc_SopRegister(pMan, "1- 1\n");
+    Abc_Obj_t *po = Abc_NtkCreatePo(p); Abc_ObjAddFanin(po, y);
+    fox::hive::CombGraph g(p);
+    fox::hive::Region r(g);
+    r.init({(int)Abc_ObjId(x), (int)Abc_ObjId(y)});
+    ExpectEq("counterexample lb", r.metrics(2).lb, 2);  // true functional need: 1
+    Abc_NtkDelete(p);
+}
+
+void TestLbHandVerifiedOptimal()
+{
+    // LB <= hand-derived optimal m under model M1-M3 (spec 2.4).
+    // (i) 7-input AND as 2-node tree, K=6: in=7 out=1 ->
+    //     LB = max(1, ceil(6/5)=2, ceil(6/5)=2) = 2; optimal m = 2.
+    Abc_Ntk_t *p = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    Abc_Obj_t *t1 = Abc_NtkCreateNode(p);
+    for (int i = 0; i < 6; ++i)
+        Abc_ObjAddFanin(t1, Abc_NtkCreatePi(p));
+    SetAnd(t1);
+    Abc_Obj_t *t2 = Abc_NtkCreateNode(p);
+    Abc_ObjAddFanin(t2, t1); Abc_ObjAddFanin(t2, Abc_NtkCreatePi(p)); SetAnd(t2);
+    Abc_Obj_t *po = Abc_NtkCreatePo(p); Abc_ObjAddFanin(po, t2);
+    {
+        fox::hive::CombGraph g(p);
+        fox::hive::Region r(g);
+        r.init({(int)Abc_ObjId(t1), (int)Abc_ObjId(t2)});
+        const int lb = r.metrics(6).lb;
+        ExpectEq("and7 lb", lb, 2);
+        ExpectTrue("and7 lb <= optimal 2", lb <= 2);
+    }
+    Abc_NtkDelete(p);
+
+    // (ii) Diamond {n1..n4}, K=6: in=2 out=1 -> LB=1; optimal m = 1
+    //      (a single LUT of (a,b) computes n4).
+    Diamond d = BuildDiamond();
+    {
+        fox::hive::CombGraph g(d.ntk);
+        fox::hive::Region r(g);
+        r.init({(int)Abc_ObjId(d.n1), (int)Abc_ObjId(d.n2),
+                (int)Abc_ObjId(d.n3), (int)Abc_ObjId(d.n4)});
+        const int lb = r.metrics(6).lb;
+        ExpectEq("diamond lb", lb, 1);
+        ExpectTrue("diamond lb <= optimal 1", lb <= 1);
+    }
+    Abc_NtkDelete(d.ntk);
+}
 } // namespace
 
 int main()
@@ -286,6 +458,10 @@ int main()
     TestRegionBoundary();
     TestRegionConst1Ordinary();
     TestRegionIncrementalVsRecompute();
+    TestLbThreeTerms();
+    TestLbEdgeCases();
+    TestLbFunctionalCounterexample();
+    TestLbHandVerifiedOptimal();
     if (g_fail == 0) std::printf("all hive tests passed\n");
     const int result = g_fail == 0 ? 0 : 1;
     Abc_Stop();

@@ -1,6 +1,7 @@
 #include "hive/region.hpp"
 
 #include <algorithm>
+#include <unordered_set>
 
 namespace fox::hive {
 
@@ -165,8 +166,47 @@ Metrics Region::recompute(int lut_k) const
 
 int Region::lower_bound_luts(int lut_k) const
 {
-    (void)lut_k;
-    return 0;   // Task 4
+    const CombGraph &g = *m_g;
+    const int km1 = lut_k - 1;
+    auto ceil_div_or_0 = [km1](int x)
+    {
+        return x > 0 ? (x + km1 - 1) / km1 : 0;
+    };
+
+    int term1 = m_out;
+    int term2 = ceil_div_or_0(m_in - m_out);
+
+    // term3: per-output structural support inside the region (spec 2.4)
+    int term3 = 0;
+    for (const auto &kv : m_ext_succ)
+    {
+        const int j = kv.first;
+        if (!(g.has_ext_out(j) || kv.second > 0))
+            continue;   // not an output
+        std::unordered_set<int> supp, seen;
+        std::vector<int> stack{j};
+        seen.insert(j);
+        while (!stack.empty())
+        {
+            const int v = stack.back();
+            stack.pop_back();
+            for (int p : g.preds(v))
+            {
+                if (m_members.count(p))
+                {
+                    if (seen.insert(p).second)
+                        stack.push_back(p);
+                }
+                else
+                    supp.insert(p);
+            }
+            for (int x : g.ext_ins(v))
+                supp.insert(x);
+        }
+        term3 = std::max(term3, ceil_div_or_0((int)supp.size() - 1));
+    }
+
+    return std::max(term1, std::max(term2, term3));
 }
 
 } // namespace fox::hive
