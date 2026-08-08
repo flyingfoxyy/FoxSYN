@@ -6,8 +6,9 @@
 
 namespace fox::fmpart {
 
-// FM 增益桶：每侧一个桶数组，桶内侵入式双向链表，max 指针懒下降。
-// 除 find_top 的向下扫描外全部 O(1)（见 docs/fmpart-design.md §5.2.1）。
+// FM gain buckets: one bucket array per side, intrusive doubly-linked lists inside
+// each bucket, with lazy-descending max pointers. Everything is O(1) except the
+// downward scan in find_top (see docs/fmpart-design.md §5.2.1).
 class GainBuckets {
 public:
     static constexpr int kNone = -1;
@@ -22,7 +23,7 @@ public:
         m_gain.assign(num_vertices, 0);
         m_side.assign(num_vertices, 0);
         m_in.assign(num_vertices, 0);
-        m_max[0] = m_max[1] = -m_gmax - 1;   // 低于一切合法增益 == 空
+        m_max[0] = m_max[1] = -m_gmax - 1;   // below every legal gain == empty
     }
 
     bool contains(int v) const { return m_in[v] != 0; }
@@ -31,7 +32,7 @@ public:
 
     void insert(int v, int side, int gain)
     {
-        // 调用方保证 !contains(v) 且 -gmax <= gain <= gmax
+        // Caller guarantees !contains(v) and -gmax <= gain <= gmax
         const int b = bucket_index(side, gain);
         m_gain[v] = gain;
         m_side[v] = side;
@@ -58,7 +59,7 @@ public:
             m_prev[m_next[v]] = m_prev[v];
         m_next[v] = m_prev[v] = kNone;
         m_in[v] = 0;
-        // m_max 允许暂时虚高，max_gain() 查询时懒下降
+        // m_max may stay temporarily high; max_gain() settles it lazily
     }
 
     void update_gain(int v, int gain)
@@ -70,7 +71,7 @@ public:
 
     bool empty(int side) { return max_gain(side) < -m_gmax; }
 
-    // 该侧当前最大增益；空侧返回 -gmax-1
+    // Current max gain on this side; empty side returns -gmax-1
     int max_gain(int side)
     {
         int g = m_max[side];
@@ -80,8 +81,8 @@ public:
         return g;
     }
 
-    // 从 side 顶端向下找第一个满足 feasible 的顶点，找不到返回 kNone。
-    // 只经由 max_gain() 跳过空桶；不会把 max 指针降过仍有元素的桶。
+    // From the top of side downward, first vertex satisfying feasible; kNone if none.
+    // Skips empty buckets only via max_gain(); does not drop max past a non-empty bucket.
     template <typename Pred>
     int find_top(int side, Pred feasible)
     {
@@ -92,7 +93,7 @@ public:
         return kNone;
     }
 
-    // 结构自检：返回不一致数（0 = 一致），逐条打印到 stderr
+    // Structural self-check: returns mismatch count (0 = ok); prints each to stderr
     int check_consistency()
     {
         int bad = 0;

@@ -69,10 +69,10 @@ void TestBucketsFindTop()
     b.insert(0, 0, 5);
     b.insert(1, 0, 5);
     b.insert(2, 0, 2);
-    // 两个增益 5 的都不可行 -> 落到增益 2
+    // Both gain-5 vertices infeasible -> falls through to gain 2
     int v = b.find_top(0, [](int u) { return u == 2; });
     ExpectEq("find_top skips infeasible", v, 2);
-    ExpectEq("max pointer intact", b.max_gain(0), 5);   // 不许降过非空桶
+    ExpectEq("max pointer intact", b.max_gain(0), 5);   // must not drop past a non-empty bucket
     v = b.find_top(0, [](int) { return false; });
     ExpectEq("find_top none", v, (long)fox::fmpart::GainBuckets::kNone);
     ExpectEq("consistency2", b.check_consistency(), 0);
@@ -81,20 +81,20 @@ void TestBucketsFindTop()
 void TestBucketsDegenerate()
 {
     fox::fmpart::GainBuckets b;
-    b.reset(0, 0);                       // 空图
+    b.reset(0, 0);                       // empty graph
     ExpectTrue("empty graph buckets", b.empty(0) && b.empty(1));
-    b.reset(2, 0);                       // gmax 0：唯一合法增益是 0
+    b.reset(2, 0);                       // gmax 0: only legal gain is 0
     b.insert(0, 0, 0);
     ExpectEq("gmax0 max", b.max_gain(0), 0);
     ExpectEq("gmax0 consistency", b.check_consistency(), 0);
 }
 
-// 第二个实例化用的最小图类型（spec §6.1）
+// Minimal graph type for a second template instantiation (spec §6.1)
 struct SimpleHypergraph {
     int nv = 0;
-    std::vector<std::vector<int>> pins;      // 每条 net 的顶点列表，无重复
-    std::vector<int> vweights;               // 空 = 全 1
-    std::vector<int> nweights;               // 空 = 全 1
+    std::vector<std::vector<int>> pins;      // pin list per net, no duplicates
+    std::vector<int> vweights;               // empty = all 1
+    std::vector<int> nweights;               // empty = all 1
 
     int num_vertices() const { return nv; }
     int num_nets() const { return (int)pins.size(); }
@@ -110,7 +110,7 @@ struct NotAGraph {
 static_assert(fox::fmpart::FMHypergraph<SimpleHypergraph>);
 static_assert(!fox::fmpart::FMHypergraph<NotAGraph>);
 
-// 测试侧独立重算 cut，作为增量值的对照（spec §6.2）
+// Independent cut recompute on the test side as a check against incremental values (spec §6.2)
 int RefCut(const SimpleHypergraph &g, const std::vector<uint8_t> &part)
 {
     int cut = 0;
@@ -124,7 +124,7 @@ int RefCut(const SimpleHypergraph &g, const std::vector<uint8_t> &part)
     return cut;
 }
 
-// 8 顶点两团 + 一条桥；最优 2-way cut = 1（spec §6.3.1）
+// 8 vertices, two clusters + one bridge; optimal 2-way cut = 1 (spec §6.3.1)
 SimpleHypergraph TwoClusters()
 {
     SimpleHypergraph g;
@@ -201,14 +201,14 @@ void TestDegenerate()
 {
     fox::fmpart::Config cfg;
     {
-        SimpleHypergraph g;                          // 空图
+        SimpleHypergraph g;                          // empty graph
         fox::fmpart::FMPart<SimpleHypergraph> fm(g, cfg);
         auto r = fm.run();
         ExpectEq("empty cut", r.cut, 0);
         ExpectTrue("empty part", r.part.empty());
     }
     {
-        SimpleHypergraph g;                          // 单顶点
+        SimpleHypergraph g;                          // single vertex
         g.nv = 1;
         fox::fmpart::FMPart<SimpleHypergraph> fm(g, cfg);
         auto r = fm.run();
@@ -216,7 +216,7 @@ void TestDegenerate()
         ExpectTrue("single balanced", r.balanced);
     }
     {
-        SimpleHypergraph g;                          // 全部 1-pin net
+        SimpleHypergraph g;                          // all 1-pin nets
         g.nv = 3;
         g.pins = {{0},{1},{2}};
         fox::fmpart::FMPart<SimpleHypergraph> fm(g, cfg);
@@ -224,7 +224,7 @@ void TestDegenerate()
         ExpectEq("1-pin nets never cut", r.cut, 0);
     }
     {
-        SimpleHypergraph g;                          // 无 net
+        SimpleHypergraph g;                          // no nets
         g.nv = 4;
         fox::fmpart::FMPart<SimpleHypergraph> fm(g, cfg);
         auto r = fm.run();
@@ -239,7 +239,7 @@ void TestKnownOptimal()
     fox::fmpart::Config cfg;
     cfg.self_check = true;
     fox::fmpart::FMPart<SimpleHypergraph> fm(g, cfg);
-    const std::vector<uint8_t> init = {0,1,0,1,0,1,0,1};   // 交错起点，cut = 9
+    const std::vector<uint8_t> init = {0,1,0,1,0,1,0,1};   // alternating start, cut = 9
     auto r = fm.run(init);
     ExpectEq("self-check clean", r.self_check_failures, 0);
     ExpectEq("optimal cut", r.cut, 1);
@@ -254,8 +254,8 @@ void TestKnownOptimal()
 
 void TestMonotonicPasses()
 {
-    // 逐趟观察：max_passes=1 反复 run，把上一轮 part 作为下一轮 init，
-    // 语义上等价于连续的 pass（spec §6.3.5）
+    // Observe pass-by-pass: max_passes=1, feed previous part as next init;
+    // semantically equivalent to consecutive passes (spec §6.3.5)
     SimpleHypergraph g = TwoClusters();
     fox::fmpart::Config cfg;
     cfg.max_passes = 1;
@@ -278,7 +278,7 @@ void TestFixedPins()
 {
     SimpleHypergraph g = TwoClusters();
     std::vector<int8_t> fixed(8, -1);
-    fixed[0] = 1;                        // 逆着自然聚类方向钉
+    fixed[0] = 1;                        // pin against the natural cluster direction
     fixed[7] = 0;
     fox::fmpart::Config cfg;
     cfg.self_check = true;
@@ -288,15 +288,15 @@ void TestFixedPins()
     ExpectEq("fixed v7 stays", r.part[7], 0);
     ExpectEq("fixed self-check clean", r.self_check_failures, 0);
     ExpectTrue("fixed balanced", r.balanced);
-    ExpectEq("fixed optimal cut", r.cut, 1);     // 两团整体换边即可
+    ExpectEq("fixed optimal cut", r.cut, 1);     // swapping the two clusters as wholes is enough
     ExpectEq("fixed ref agrees", RefCut(g, r.part), r.cut);
 }
 
 void TestOneSideAllFixed()
 {
-    // 起点全在 side0（不平衡），0..3 钉死：自由团 {4..7} 必须整体迁走。
-    // 这条同时验证平衡修复趟例外：第一趟 cum 为负（0 -> 1 条 cut），
-    // 但换来了 balanced，驱动循环不得在这里终止。
+    // Start all on side0 (unbalanced); 0..3 fixed: free cluster {4..7} must move as a whole.
+    // Also checks the balance-repair exception: first pass cum is negative (0 -> 1 cut)
+    // but achieves balanced, so the driver loop must not stop here.
     SimpleHypergraph g = TwoClusters();
     const std::vector<uint8_t> init(8, 0);
     const std::vector<int8_t> fixed = {0,0,0,0,-1,-1,-1,-1};
@@ -331,7 +331,7 @@ void TestAllFixed()
 
 void TestInfeasibleFixed()
 {
-    // total 13, avg 6, max_weight 7；v0 (weight 10) 单独超重 -> 约束无解
+    // total 13, avg 6, max_weight 7; v0 alone (weight 10) exceeds cap -> infeasible
     SimpleHypergraph g;
     g.nv = 4;
     g.pins = {{0,1},{1,2},{2,3}};
@@ -341,7 +341,7 @@ void TestInfeasibleFixed()
     fox::fmpart::Config cfg;
     cfg.self_check = true;
     fox::fmpart::FMPart<SimpleHypergraph> fm(g, cfg);
-    auto r = fm.run(init, fixed);                 // 不死循环、不崩即通过大半
+    auto r = fm.run(init, fixed);                 // no infinite loop / crash is most of the pass
     ExpectTrue("infeasible reports unbalanced", !r.balanced);
     ExpectEq("infeasible self-check clean", r.self_check_failures, 0);
     ExpectEq("infeasible ref agrees", RefCut(g, r.part), r.cut);
@@ -349,12 +349,12 @@ void TestInfeasibleFixed()
 
 void TestWeightedNets()
 {
-    // 最优 {0,1}|{2,3}：只切两条轻 net（cut 2），重 net (5) 保持完整
+    // Optimum {0,1}|{2,3}: only the two light nets cut (cut 2); heavy nets (5) stay intact
     SimpleHypergraph g;
     g.nv = 4;
     g.pins = {{0,1},{2,3},{0,2},{1,3}};
     g.nweights = {5, 5, 1, 1};
-    const std::vector<uint8_t> init = {0,1,0,1};  // 起点切开两条重 net，cut 10
+    const std::vector<uint8_t> init = {0,1,0,1};  // start cuts both heavy nets, cut 10
     fox::fmpart::Config cfg;
     cfg.self_check = true;
     fox::fmpart::FMPart<SimpleHypergraph> fm(g, cfg);
@@ -366,8 +366,8 @@ void TestWeightedNets()
 
 void TestWeightedVertices()
 {
-    // total 8, avg 4, slack 1, max_weight 5：环 {0,1,2,3} 权重 6 放不进一侧，
-    // 必须切开环（2 条），{4,5} 保持一侧 -> 最优可行 cut 2
+    // total 8, avg 4, slack 1, max_weight 5: ring {0,1,2,3} weight 6 cannot fit one side,
+    // so the ring must be cut (2 edges); {4,5} stay together -> best feasible cut 2
     SimpleHypergraph g;
     g.nv = 6;
     g.pins = {{0,1},{1,2},{2,3},{0,3},{4,5}};
@@ -401,7 +401,7 @@ SimpleHypergraph RandomHypergraph(std::mt19937 &rng)
 
 void TestRandomStress()
 {
-    // 种子写死，失败可复现（spec §6.4）
+    // Fixed seeds so failures are reproducible (spec §6.4)
     for (unsigned seed = 1; seed <= 20; ++seed) {
         std::mt19937 rng(seed);
         SimpleHypergraph g = RandomHypergraph(rng);
@@ -414,11 +414,11 @@ void TestRandomStress()
         std::snprintf(label, sizeof label, "stress seed %u self-check", seed);
         ExpectEq(label, r.self_check_failures, 0);
         std::snprintf(label, sizeof label, "stress seed %u balanced", seed);
-        ExpectTrue(label, r.balanced);       // 全 1 权重下平衡总可行
+        ExpectTrue(label, r.balanced);       // with unit weights, balance is always feasible
         std::snprintf(label, sizeof label, "stress seed %u ref cut", seed);
         ExpectEq(label, RefCut(g, r.part), r.cut);
 
-        // 单趟续跑 3 次验证单调性
+        // Three single-pass continuations to check monotonicity
         fox::fmpart::Config c1 = cfg;
         c1.max_passes = 1;
         fox::fmpart::FMPart<SimpleHypergraph> fm1(g, c1);
@@ -436,10 +436,10 @@ void TestRandomStress()
 
 void TestAbcWrapper()
 {
-    // 手搭 4 顶点逻辑网络：pi0,pi1 -> n0 -> n1 -> po，pi1 同时扇出到 n1。
-    // 期望超图（hpart.cpp:164 同口径）：
-    //   vertices = {pi0, pi1, n0, n1}（PO 不是超图顶点）
-    //   edges: pi0:{pi0,n0}  pi1:{pi1,n0,n1}  n0:{n0,n1}；n1 的边只剩 1 pin，弃
+    // Hand-built 4-vertex logic net: pi0,pi1 -> n0 -> n1 -> po; pi1 also fans out to n1.
+    // Expected hypergraph (same construction as hpart.cpp:164):
+    //   vertices = {pi0, pi1, n0, n1} (PO is not a hypergraph vertex)
+    //   edges: pi0:{pi0,n0}  pi1:{pi1,n0,n1}  n0:{n0,n1}; n1's edge has 1 pin, dropped
     Abc_Ntk_t *pNtk = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
     Abc_Obj_t *pi0 = Abc_NtkCreatePi(pNtk);
     Abc_Obj_t *pi1 = Abc_NtkCreatePi(pNtk);
@@ -465,7 +465,7 @@ void TestAbcWrapper()
 
     fox::fmpart::Config cfg;
     cfg.self_check = true;
-    fox::fmpart::FMPart<fox::fmpart::AbcNtkWrapper> fm(g, cfg);   // 第二个实例化（spec §6.1）
+    fox::fmpart::FMPart<fox::fmpart::AbcNtkWrapper> fm(g, cfg);   // second instantiation (spec §6.1)
     auto r = fm.run();
     ExpectEq("wrapper fm self-check", r.self_check_failures, 0);
     ExpectTrue("wrapper fm balanced", r.balanced);
@@ -474,7 +474,7 @@ void TestAbcWrapper()
     Abc_NtkDelete(pNtk);
 }
 
-// patoh 参考解：工具不在 PATH 或跑失败时返回 -1
+// patoh reference: returns -1 if tools are not on PATH or the run fails
 int RunPatohReference(const fox::fmpart::AbcNtkWrapper &g)
 {
     if (std::system("command -v HgrToPaToH >/dev/null 2>&1") != 0
@@ -495,7 +495,7 @@ int RunPatohReference(const fox::fmpart::AbcNtkWrapper &g)
         for (int e = 0; e < g.num_nets(); ++e) {
             const auto &pins = g.pins_of(e);
             for (std::size_t k = 0; k < pins.size(); ++k)
-                out << (k ? " " : "") << pins[k] + 1;   // hgr 格式 1 基
+                out << (k ? " " : "") << pins[k] + 1;   // hgr format is 1-based
             out << '\n';
         }
     }
@@ -523,7 +523,7 @@ int RunPatohReference(const fox::fmpart::AbcNtkWrapper &g)
     return patoh_cut;
 }
 
-// 真实电路模式（spec §6.5）：打印 FM 与 patoh 的 cut，不设断言、不算门禁
+// Real-circuit mode (spec §6.5): print FM vs patoh cuts; no asserts, not a gate
 int RunCircuitFile(const char *path)
 {
     Abc_Ntk_t *pNtk = Io_Read(const_cast<char *>(path),

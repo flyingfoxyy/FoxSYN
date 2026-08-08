@@ -15,11 +15,11 @@
 
 namespace fox::fmpart {
 
-// concept 之外的契约（docs/fmpart-design.md §3.1）：
-//  - 顶点 id 连续覆盖 [0, num_vertices())，net id 连续覆盖 [0, num_nets())
-//  - pins_of(e) 产出合法顶点 id，内部无重复
-//  - vertex_weight(v) >= 0，net_weight(e) >= 0
-//  - 所有成员仅在 FMPart 构造期间被调用，需可重入
+// Extra contracts beyond the concept (docs/fmpart-design.md §3.1):
+//  - vertex ids cover [0, num_vertices()) contiguously; net ids cover [0, num_nets())
+//  - pins_of(e) yields valid vertex ids with no duplicates
+//  - vertex_weight(v) >= 0, net_weight(e) >= 0
+//  - all members are called only during FMPart construction and must be re-entrant
 template <typename G>
 concept FMHypergraph = requires(const G &g, int v, int e) {
     { g.num_vertices()   } -> std::convertible_to<int>;
@@ -30,21 +30,21 @@ concept FMHypergraph = requires(const G &g, int v, int e) {
 };
 
 struct Config {
-    int      balance_pct = 2;    // 平衡松弛百分比，语义同 cpr.cpp:254
-    int      max_passes  = 10;   // pass 数上限
-    int      min_gain    = 1;    // 一趟收益 < min_gain 即收敛退出
-    unsigned seed        = 1;    // 随机初始解种子
+    int      balance_pct = 2;    // balance slack percent; same semantics as cpr.cpp:254
+    int      max_passes  = 10;   // max number of passes
+    int      min_gain    = 1;    // stop when a pass gain is < min_gain
+    unsigned seed        = 1;    // seed for random initial solution
     bool     verbose     = false;
-    bool     self_check  = false; // 仅测试用：每次移动后跑 O(pins) 不变量检查
+    bool     self_check  = false; // test only: O(pins) invariant check after each move
 };
 
 struct Result {
-    std::vector<uint8_t> part;        // 每个顶点所属分区，0 或 1
-    int  cut         = 0;             // 最终 cut：被切开的 net 权重和
-    int  initial_cut = 0;             // 优化前的 cut
-    int  passes      = 0;             // 实际执行的 pass 数
-    bool balanced    = false;         // 最终解是否满足平衡约束
-    int  self_check_failures = 0;     // cfg.self_check 发现的不一致计数
+    std::vector<uint8_t> part;        // partition of each vertex, 0 or 1
+    int  cut         = 0;             // final cut: sum of weights of cut nets
+    int  initial_cut = 0;             // cut before optimization
+    int  passes      = 0;             // number of passes actually run
+    bool balanced    = false;         // whether the final solution meets the balance constraint
+    int  self_check_failures = 0;     // mismatch count found when cfg.self_check is on
 };
 
 template <FMHypergraph G>
@@ -63,7 +63,7 @@ public:
         for (int e = 0; e < m_ne; ++e)
             m_nw[e] = static_cast<int>(g.net_weight(e));
 
-        // net -> 顶点 CSR（spec §4.1）
+        // net -> vertices CSR (spec §4.1)
         m_pin_start.assign(m_ne + 1, 0);
         for (int e = 0; e < m_ne; ++e)
             for (auto pv : g.pins_of(e)) {
@@ -83,7 +83,7 @@ public:
                 }
         }
 
-        // 顶点 -> net CSR（转置）
+        // vertex -> nets CSR (transpose)
         m_net_start.assign(m_nv + 1, 0);
         for (int idx = 0; idx < (int)m_pin_list.size(); ++idx)
             ++m_net_start[m_pin_list[idx] + 1];
@@ -99,7 +99,7 @@ public:
                 }
         }
 
-        // 平衡上界，cpr.cpp:254 语义（spec §5.1）
+        // balance upper bound; cpr.cpp:254 semantics (spec §5.1)
         m_total_weight = 0;
         for (int v = 0; v < m_nv; ++v)
             m_total_weight += m_vw[v];
@@ -109,7 +109,7 @@ public:
 
         m_min_vw = m_nv > 0 ? *std::min_element(m_vw.begin(), m_vw.end()) : 0;
 
-        // Gmax = max_v Σ 关联 net 权重（spec §4.4）
+        // Gmax = max_v Σ weights of incident nets (spec §4.4)
         m_gmax = 0;
         for (int v = 0; v < m_nv; ++v) {
             int s = 0;
@@ -152,7 +152,7 @@ public:
             if (m_cfg.verbose)
                 std::printf("fmpart: pass %d gain %d cut %d w0 %d w1 %d\n",
                             p, g, m_cut, m_wsum[0], m_wsum[1]);
-            // 平衡修复趟（false -> true）不计入收敛判断，见 spec §5.3
+            // balance-repair pass (false -> true) does not count toward convergence; see spec §5.3
             if (!(now_balanced && !was_balanced) && g < m_cfg.min_gain)
                 break;
         }
@@ -165,7 +165,7 @@ public:
     }
 
 private:
-    // 固定点先落位，自由点按随机顺序贪心放到较轻一侧
+    // Place fixed vertices first; free vertices go greedily to the lighter side in random order
     void random_init()
     {
         std::mt19937 rng(m_cfg.seed);
@@ -188,7 +188,7 @@ private:
         }
     }
 
-    // 从 m_part 整体重建 cnt / wsum / cut
+    // Rebuild cnt / wsum / cut from m_part
     void rebuild_counts()
     {
         m_cnt.assign(2 * m_ne, 0);
@@ -209,7 +209,7 @@ private:
         return m_wsum[0] <= m_max_weight && m_wsum[1] <= m_max_weight;
     }
 
-    // 按 spec §4.3 定义从头计算 v 的增益
+    // Recompute gain of v from scratch per spec §4.3
     int compute_gain(int v) const
     {
         const int F = m_part[v], T = 1 - F;
@@ -222,7 +222,8 @@ private:
         return gain;
     }
 
-    // side 侧桶顶向下第一个可移入对侧的顶点；min_vw 早退见 spec §5.2
+    // First vertex from the top of side's buckets that can move to the other side;
+    // early-out via min_vw, see spec §5.2
     int pick_from(int side)
     {
         const int T = 1 - side;
@@ -232,21 +233,22 @@ private:
         return m_buckets.find_top(side, [&](int v) { return m_vw[v] <= cap; });
     }
 
-    // 移动 v 到对侧：锁定、cnt/wsum/cut 增量、邻居增益两趟式更新（spec §5.4）。
-    // 必须分两趟：「移动前」分支要求 m_part[v] 仍在 F，「移动后」分支要求已在 T。
+    // Move v to the other side: lock, incremental cnt/wsum/cut, two-pass neighbor gain
+    // update (spec §5.4). Must be two passes: pre-move branches need m_part[v] still on F;
+    // post-move branches need it already on T.
     void move_vertex(int v)
     {
         const int F = m_part[v], T = 1 - F;
         m_locked[v] = 1;
         m_buckets.erase(v);
 
-        // 第一趟：读 pre-move 计数；v 仍在 F 侧
+        // Pass 1: read pre-move counts; v still on F
         for (int idx = m_net_start[v]; idx < m_net_start[v + 1]; ++idx) {
             const int e = m_net_list[idx];
             const int cF = m_cnt[2 * e + F], cT = m_cnt[2 * e + T];
             if (cT == 0) {
                 if (cF > 1)
-                    m_cut += m_nw[e];                 // net 变为被切
+                    m_cut += m_nw[e];                 // net becomes cut
                 for (int j = m_pin_start[e]; j < m_pin_start[e + 1]; ++j) {
                     const int u = m_pin_list[j];
                     if (!m_locked[u])
@@ -255,7 +257,7 @@ private:
             } else if (cT == 1) {
                 for (int j = m_pin_start[e]; j < m_pin_start[e + 1]; ++j) {
                     const int u = m_pin_list[j];
-                    if (m_part[u] == T) {             // T 侧唯一 pin，必非 v
+                    if (m_part[u] == T) {             // sole pin on T; cannot be v
                         if (!m_locked[u])
                             m_buckets.update_gain(u, m_buckets.gain_of(u) - m_nw[e]);
                         break;
@@ -263,7 +265,7 @@ private:
                 }
             }
             if (cT > 0 && cF == 1)
-                m_cut -= m_nw[e];                     // net 变为不切
+                m_cut -= m_nw[e];                     // net becomes uncut
             m_cnt[2 * e + F] -= 1;
             m_cnt[2 * e + T] += 1;
         }
@@ -272,7 +274,7 @@ private:
         m_wsum[F] -= m_vw[v];
         m_wsum[T] += m_vw[v];
 
-        // 第二趟：读 post-move 计数；v 已在 T 侧
+        // Pass 2: read post-move counts; v already on T
         for (int idx = m_net_start[v]; idx < m_net_start[v + 1]; ++idx) {
             const int e = m_net_list[idx];
             const int cF = m_cnt[2 * e + F];
@@ -285,7 +287,7 @@ private:
             } else if (cF == 1) {
                 for (int j = m_pin_start[e]; j < m_pin_start[e + 1]; ++j) {
                     const int u = m_pin_list[j];
-                    if (m_part[u] == F) {             // F 侧唯一 pin，必非 v
+                    if (m_part[u] == F) {             // sole pin on F; cannot be v
                         if (!m_locked[u])
                             m_buckets.update_gain(u, m_buckets.gain_of(u) + m_nw[e]);
                         break;
@@ -295,10 +297,11 @@ private:
         }
     }
 
-    // 回滚一次移动：只恢复 part/cnt/wsum/cut，不碰 gain（下趟整体重算，spec §5.3）
+    // Undo one move: restore only part/cnt/wsum/cut, leave gains alone
+    // (recomputed from scratch next pass, spec §5.3)
     void undo_move(int v)
     {
-        const int T = m_part[v], F = 1 - T;   // v 现在 T 侧，送回 F 侧
+        const int T = m_part[v], F = 1 - T;   // v is on T now; send it back to F
         for (int idx = m_net_start[v]; idx < m_net_start[v + 1]; ++idx) {
             const int e = m_net_list[idx];
             const int cF = m_cnt[2 * e + F], cT = m_cnt[2 * e + T];
@@ -314,8 +317,9 @@ private:
         m_wsum[F] += m_vw[v];
     }
 
-    // 不变量自检：返回不一致数（0 = 干净），逐条打印到 stderr。
-    // check_gain 仅在移动后、回滚前为真（此时增量 gain / 桶才有定义）。
+    // Invariant self-check: returns mismatch count (0 = clean); prints each to stderr.
+    // check_gain is true only after a move and before rollback (when incremental gains /
+    // buckets are well-defined).
     int verify_invariants(bool check_gain)
     {
         int bad = 0;
@@ -370,7 +374,7 @@ private:
         return bad;
     }
 
-    // 一趟 FM pass（spec §5.3），返回被采纳前缀的累积增益
+    // One FM pass (spec §5.3); returns cumulative gain of the accepted prefix
     int run_one_pass()
     {
         m_locked.assign(m_nv, 0);
@@ -386,7 +390,7 @@ private:
         int cum = 0;
         int best_prefix = 0;
         int best_cum = 0;
-        bool best_balanced = is_balanced();   // 前缀键 (balanced, cum) 字典序
+        bool best_balanced = is_balanced();   // prefix key: (balanced, cum) lexicographic
 
         for (;;) {
             int side;
@@ -446,7 +450,7 @@ private:
         return best_cum;
     }
 
-    // ---- 图快照（构造后只读） ----
+    // ---- graph snapshot (read-only after construction) ----
     Config m_cfg;
     int m_nv = 0, m_ne = 0;
     std::vector<int> m_vw, m_nw;
@@ -457,10 +461,10 @@ private:
     int m_min_vw = 0;
     int m_gmax = 0;
 
-    // ---- 每次 run() 重置的 FM 状态 ----
+    // ---- FM state reset on every run() ----
     std::vector<uint8_t> m_part;
     std::vector<int8_t> m_fixed;
-    std::vector<int> m_cnt;              // 扁平 [2*e + side]
+    std::vector<int> m_cnt;              // flat [2*e + side]
     std::vector<char> m_locked;
     int m_wsum[2] = {0, 0};
     int m_cut = 0;

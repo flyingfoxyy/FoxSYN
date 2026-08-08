@@ -5,7 +5,7 @@
 namespace fox::fmpart {
 
 namespace {
-// 与 hpart.cpp 的 IsHyperNode 相同（那边的 IsCarrierNode 是它的重复体，此处合一）
+// Same as IsHyperNode in hpart.cpp (IsCarrierNode there is a duplicate; unified here)
 bool IsHyperNode(Abc_Obj_t *pObj)
 {
     return pObj != nullptr
@@ -37,7 +37,7 @@ void CollectSinks(Abc_Obj_t *pObj, const std::vector<int> &obj_to_vertex,
     if (IsHyperNode(pObjR)) {
         const int vertex_id = obj_to_vertex[pObjR->Id];
         if (vertex_id >= 0)
-            sinks.push_back(vertex_id);       // 0 基；hpart 为 hmetis 格式用 1 基
+            sinks.push_back(vertex_id);       // 0-based; hpart uses 1-based for hmetis
         return;
     }
     if (!ShouldTraverseInterconnect(pObjR))
