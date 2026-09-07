@@ -54,6 +54,7 @@ add_subdirectory(agdmap)
 add_subdirectory(curvemap)
 add_subdirectory(fmpart)
 add_subdirectory(hive)
+add_subdirectory(../test test_build)
 
 add_compile_options(-fexceptions)
 
@@ -80,60 +81,3 @@ target_link_libraries(FoxSYN PRIVATE
     agdmap
     curvemap
 )
-
-# Add test_dot executable to demonstrate the DOT file generation
-add_executable(test_dot "test_dot.cpp")
-target_link_libraries(test_dot PRIVATE
-    supper
-    libabc
-    timer
-)
-
-# Add test_verilog executable to demonstrate the Verilog netlist generation
-add_executable(test_verilog "test_verilog.cpp")
-target_link_libraries(test_verilog PRIVATE
-    supper
-    libabc
-    timer
-)
-
-add_executable(test_hop "test_hop.cpp")
-target_link_libraries(test_hop PRIVATE
-    libabc
-    timer
-)
-
-add_executable(test_cpr "test_cpr.cpp")
-target_link_libraries(test_cpr PRIVATE
-    libabc
-    timer
-    cpr
-)
-
-add_executable(test_csr2 "test_csr2.cpp")
-target_link_libraries(test_csr2 PRIVATE
-    libabc
-    timer
-    cpr
-    csr2
-)
-
-add_executable(test_csr3 "test_csr3.cpp")
-target_link_libraries(test_csr3 PRIVATE
-    libabc
-    timer
-    csr3
-)
-
-add_executable(test_csr4 "test_csr4.cpp")
-target_link_libraries(test_csr4 PRIVATE
-    libabc
-    timer
-    csr4
-)
-
-add_executable(test_fmpart "test_fmpart.cpp")
-target_link_libraries(test_fmpart PRIVATE fmpart libabc timer)
-
-add_executable(test_hive "test_hive.cpp")
-target_link_libraries(test_hive PRIVATE hive libabc timer)
