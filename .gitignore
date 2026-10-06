@@ -66,6 +66,8 @@ compile_commands.json
 regression/*.v
 regression/*
 !regression/*_baseline*.json
+!regression/*.py
+!regression/*.sh
 build-clang
 .claude
 .codex
