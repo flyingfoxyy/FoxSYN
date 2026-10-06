@@ -1,5 +1,9 @@
 #pragma once
 
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "basic.hpp"
 
 namespace fox::supper {
@@ -18,24 +22,34 @@ public:
 
     class node_t
     {
-        uint        _size : 28;
-        node_type_t _type :  4;
-        Lit         _fanins[2];
+        node_type_t     _type {node_type_t::NONE};
+        std::vector<Lit> _fanins;
+        word            _truth {0};
+        bool            _has_truth {false};
     public:
-        node_t()                                 : _size(0), _type(node_type_t::NONE), _fanins{} {}
-        node_t(node_type_t type)                 : _size(0), _type(type), _fanins{}              {}
-        node_t(node_type_t type, Lit f0)         : _size(1), _type(type), _fanins{f0, Lit(0)}    {}
-        node_t(node_type_t type, Lit f0, Lit f1) : _size(2), _type(type), _fanins{f0, f1}        {}
+        node_t()                         = default;
+        node_t(node_type_t type)         : _type(type) {}
+        node_t(node_type_t type, Lit f0) : _type(type), _fanins{f0} {}
+        node_t(node_type_t type, Lit f0, Lit f1) : _type(type), _fanins{f0, f1} {}
+        node_t(node_type_t type, std::vector<Lit> fanins, word truth)
+            : _type(type), _fanins(std::move(fanins)), _truth(truth), _has_truth(true) {}
        ~node_t() = default;
 
-        Inline uint        size()     const { return _size;      }
+        Inline uint        size()     const { return _fanins.size(); }
         Inline node_type_t type()     const { return _type;      }
         Inline Lit operator[](uint i) const { return _fanins[i]; }
+        Inline word        truth()    const { return _truth;     }
+        Inline bool        has_truth() const { return _has_truth; }
 
         Inline bool null    () const { return _type == node_type_t::NONE;  }
         Inline bool is_logic() const { return _type == node_type_t::LOGIC; }
         Inline bool is_pi   () const { return _type == node_type_t::PI;    }
         Inline bool is_po   () const { return _type == node_type_t::PO;    }
+
+        Inline void set_fanin(Lit fanin) {
+            _fanins.clear();
+            _fanins.push_back(fanin);
+        }
 
        friend class graph_t;
     };
@@ -44,12 +58,16 @@ protected:
     std::vector<node_t> _nodes;
     std::vector<uint>   _pi;
     std::vector<uint>   _po;
+    std::vector<std::string> _pi_names;
+    std::vector<std::string> _po_names;
 
 public:
     graph_t(uint max_node_num, uint num_pi = 0, uint num_po = 0) {
-        _nodes.reserve(max_node_num);
-        _pi   .reserve(num_pi);
-        _po   .reserve(num_po);
+        _nodes   .reserve(max_node_num);
+        _pi      .reserve(num_pi);
+        _po      .reserve(num_po);
+        _pi_names.reserve(num_pi);
+        _po_names.reserve(num_po);
     }
 
     ~graph_t() = default;
@@ -80,6 +98,14 @@ public:
 
     Inline uint po_id(uint idx) const { return _po[idx]; }
     Inline uint pi_id(uint idx) const { return _pi[idx]; }
+    Inline const std::string &pi_name(uint idx) const { return _pi_names[idx]; }
+    Inline const std::string &po_name(uint idx) const { return _po_names[idx]; }
+
+    uint add_const1();
+    uint add_pi(std::string name = {});
+    uint add_po(std::string name = {});
+    uint add_lut(std::vector<Lit> fanins, word truth);
+    void set_po_fanin(uint po_idx, Lit fanin);
 
     void report(std::ostream &os);
 

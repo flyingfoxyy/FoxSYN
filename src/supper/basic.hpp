@@ -255,7 +255,6 @@ public:
         PRINT_TIME("create_gate"   )
         PRINT_TIME("forward"       )
         PRINT_TIME("backward"      )
-        PRINT_TIME("exact_imp"     )
         PRINT_TIME("create_abc_ntk")
     }
 };

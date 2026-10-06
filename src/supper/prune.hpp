@@ -41,7 +41,7 @@ public:
         } else {
             _separated_set.clear();
             _separated_set.resize(new_max_size + 1);
-            for (int i = 2; i != _separated_set.size(); ++i) {
+            for (int i = 1; i != _separated_set.size(); ++i) {
                 _separated_set[i].reserve(max_num);
             }
             _capacity.resize(new_max_size + 1, max_num);
@@ -72,7 +72,7 @@ public:
         }
     }
 
-    void get(std::vector<T> &set, size_t n = 0)
+    void get(std::vector<T> &set, size_t n = 0, bool filter = true)
     {
         set.reserve(n);
         if constexpr (M == PMT::Unified)
@@ -87,8 +87,14 @@ public:
             return;
         }
         else if constexpr (M == PMT::Separated) {
+            if (!filter) {
+                for (auto &vec : _separated_set) {
+                    std::copy(vec.begin(), vec.end(), std::back_inserter(set));
+                }
+                return;
+            }
             Area last = kMaxArea;
-            for (size_t sz = 2; sz != _separated_set.size(); ++sz)
+            for (size_t sz = 0; sz != _separated_set.size(); ++sz)
             {
                 auto &vec = _separated_set[sz];
                 for (auto it = vec.rbegin(); it != vec.rend(); ++it) {

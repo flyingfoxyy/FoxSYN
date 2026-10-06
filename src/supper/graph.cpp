@@ -1,10 +1,53 @@
 #include <iostream>
 #include <fstream>
+#include <limits>
 
 #include "graph.hpp"
 #include "base/abc/abc.h"
 
 namespace fox::supper {
+uint
+graph_t::add_const1()
+{
+    Assert(_nodes.empty());
+    _nodes.emplace_back(node_type_t::ONE);
+    return _nodes.size() - 1;
+}
+
+uint
+graph_t::add_pi(std::string name)
+{
+    _nodes.emplace_back(node_type_t::PI);
+    uint id = _nodes.size() - 1;
+    _pi.push_back(id);
+    _pi_names.push_back(std::move(name));
+    return id;
+}
+
+uint
+graph_t::add_po(std::string name)
+{
+    _nodes.emplace_back(node_type_t::PO);
+    uint id = _nodes.size() - 1;
+    _po.push_back(id);
+    _po_names.push_back(std::move(name));
+    return id;
+}
+
+uint
+graph_t::add_lut(std::vector<Lit> fanins, word truth)
+{
+    _nodes.emplace_back(node_type_t::LOGIC, std::move(fanins), truth);
+    return _nodes.size() - 1;
+}
+
+void
+graph_t::set_po_fanin(uint po_idx, Lit fanin)
+{
+    Assert(po_idx < _po.size());
+    _nodes[_po[po_idx]].set_fanin(fanin);
+}
+
 bool
 graph_t::is_topologically_sorted() const
 {
@@ -31,11 +74,121 @@ graph_t::report(std::ostream &os)
 void *
 graph_t::to_abc_ntk()
 {
-    Abc_Ntk_t *pNtk = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
-    if (!pNtk)
-        return nullptr;
+    Abc_Ntk_t *ntk = Abc_NtkAlloc(ABC_NTK_LOGIC, ABC_FUNC_SOP, 1);
+    std::vector<Abc_Obj_t *> cache(num_nodes(), nullptr);
 
-    return static_cast<void *>(pNtk);
+    Abc_Obj_t *const1 = nullptr;
+    Abc_Obj_t *const0 = nullptr;
+
+    auto get_const1 = [&]() -> Abc_Obj_t * {
+        if (!const1)
+            const1 = Abc_NtkCreateNodeConst1(ntk);
+        return const1;
+    };
+    auto get_const0 = [&]() -> Abc_Obj_t * {
+        if (!const0)
+            const0 = Abc_NtkCreateNodeConst0(ntk);
+        return const0;
+    };
+    auto maybe_invert = [&](Abc_Obj_t *obj, bool sign) -> Abc_Obj_t * {
+        return sign ? Abc_NtkCreateNodeInv(ntk, obj) : obj;
+    };
+
+    cache[0] = get_const1();
+
+    // A complemented PO fanin must not be materialized as an inverter node: that costs
+    // one node and one logic level on the PO path. Mirror the reference exporter
+    // (agdmap.cpp agdmapToAbcLogic) -- absorb the inversion into the driver's truth
+    // table when this PO is the driver's only user, otherwise leave the driver alone and
+    // mark the PO fanin complemented, which ABC logic networks represent natively.
+    std::vector<uint> ref_count(num_nodes(), 0);
+    ForEachGraphLogicNode(*this) {
+        const node_t &node = _nodes[idx];
+        for (uint i = 0; i < node.size(); ++i)
+            ++ref_count[node[i].id()];
+    }
+    ForEachGraphPo(*this) {
+        const node_t &node = get_po(idx);
+        if (node.size())
+            ++ref_count[node[0].id()];
+    }
+
+    std::vector<bool> invert_truth(num_nodes(), false);
+    ForEachGraphPo(*this) {
+        const node_t &node = get_po(idx);
+        if (node.size() == 0 || !node[0].sign())
+            continue;
+        const uint driver = node[0].id();
+        if (_nodes[driver].is_logic() && ref_count[driver] == 1)
+            invert_truth[driver] = true;
+    }
+
+    ForEachGraphPi(*this) {
+        Abc_Obj_t *pi = Abc_NtkCreatePi(ntk);
+        std::string fallback = "pi" + std::to_string(idx);
+        const std::string &stored = (idx < _pi_names.size() && !_pi_names[idx].empty()) ? _pi_names[idx] : fallback;
+        Abc_ObjAssignName(pi, const_cast<char *>(stored.c_str()), nullptr);
+        cache[pi_id(idx)] = pi;
+    }
+
+    ForEachGraphLogicNode(*this) {
+        const node_t &node = _nodes[idx];
+        Assert(node.size() <= 6);
+        word truth = node.has_truth() ? node.truth() :
+            (node.size() == 2 ? 0x8888888888888888ULL : 0xAAAAAAAAAAAAAAAAULL);
+        if (invert_truth[idx])
+            truth = ~truth;
+
+        const word mask = node.size() >= 6 ? ~0ULL : ((1ULL << (1u << node.size())) - 1ULL);
+        if ((truth & mask) == 0) {
+            cache[idx] = get_const0();
+            continue;
+        }
+        if ((truth & mask) == mask) {
+            cache[idx] = get_const1();
+            continue;
+        }
+
+        Abc_Obj_t *lut = Abc_NtkCreateObj(ntk, ABC_OBJ_NODE);
+        lut->pData = Abc_SopRegister(
+            (Mem_Flex_t *)ntk->pManFunc,
+            Abc_SopCreateFromTruth((Mem_Flex_t *)ntk->pManFunc, node.size(), (unsigned *)&truth));
+
+        for (uint i = 0; i < node.size(); ++i) {
+            Lit fanin = node[i];
+            Assert(fanin.id() < cache.size());
+            Assert(cache[fanin.id()]);
+            Abc_ObjAddFanin(lut, maybe_invert(cache[fanin.id()], fanin.sign()));
+        }
+        cache[idx] = lut;
+    }
+
+    ForEachGraphPo(*this) {
+        Abc_Obj_t *po = Abc_NtkCreatePo(ntk);
+        std::string fallback = "po" + std::to_string(idx);
+        const std::string &stored = (idx < _po_names.size() && !_po_names[idx].empty()) ? _po_names[idx] : fallback;
+        Abc_ObjAssignName(po, const_cast<char *>(stored.c_str()), nullptr);
+
+        const node_t &node = get_po(idx);
+        if (node.size() == 0) {
+            Abc_ObjAddFanin(po, get_const0());
+            continue;
+        }
+
+        Lit fanin = node[0];
+        Assert(fanin.id() < cache.size());
+        Assert(cache[fanin.id()]);
+        Abc_ObjAddFanin(po, cache[fanin.id()]);
+        if (fanin.sign() && !invert_truth[fanin.id()])
+            Abc_ObjSetFaninC(po, 0);
+    }
+
+    if (const1 && Abc_ObjFanoutNum(const1) == 0)
+        Abc_NtkDeleteObj(const1);
+    if (const0 && Abc_ObjFanoutNum(const0) == 0)
+        Abc_NtkDeleteObj(const0);
+
+    return static_cast<void *>(ntk);
 }
 
 bool

@@ -40,6 +40,7 @@ public:
     uint      ms   : 11; // the number of bytes pointed by this cut
     uint      fid_h {0}; // truth table high part.
     uint      fid_l {0}; // truth table low  part.
+    Area      area_cost {0}; // persistent agdmap paper area-flow cost; set once at merge time
 private:
     uint      data[0];   // cut-data. Leaves or extended data.
 public:
@@ -168,6 +169,7 @@ public:
         ptr->sign = SIGNATURE(id);
         ptr->size = 1;
         ptr->ms   = num_bytes;
+        ptr->area_cost = 1.0f;
         ptr->data[0] = id;
         return ptr;
     }
